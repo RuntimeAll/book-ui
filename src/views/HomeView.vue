@@ -1,33 +1,32 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { getHealth, type HealthStatus } from '@/api/health/index'
+import { pingBackend, type PingResponse } from '@/api/health/index'
 
 const apiBase = import.meta.env.VITE_API_BASE_URL as string
 
-const healthResult = ref<HealthStatus | null>(null)
-const healthError = ref<string | null>(null)
+const result = ref<PingResponse | null>(null)
+const errMsg = ref<string | null>(null)
 const loading = ref(false)
 
-async function checkHealth() {
+async function ping() {
   loading.value = true
-  healthError.value = null
-  healthResult.value = null
+  errMsg.value = null
+  result.value = null
   try {
-    const res = await getHealth()
-    healthResult.value = res.data
-    console.log('[book-ui] health response:', res.data)
+    const res = await pingBackend()
+    result.value = res.data
+    console.log('[book-ui] ping response:', res.data)
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
-    healthError.value = msg
-    console.warn('[book-ui] health check failed (book-server may not be running yet):', msg)
+    errMsg.value = msg
+    console.warn('[book-ui] ping failed (book-server may not be running yet):', msg)
   } finally {
     loading.value = false
   }
 }
 
-// Auto-call on mount
 onMounted(() => {
-  checkHealth()
+  ping()
 })
 </script>
 
@@ -39,21 +38,32 @@ onMounted(() => {
     <section class="health-card">
       <h2>book-server 连通性检测</h2>
       <p class="desc">
-        目标端点：<code>{{ apiBase.replace(/\/api$/, '') }}/actuator/health</code>
+        目标端点：<code>{{ apiBase.replace(/\/api$/, '') }}/auth/code</code>（公开验证码端点）
       </p>
 
-      <button :disabled="loading" @click="checkHealth">
+      <button :disabled="loading" @click="ping">
         {{ loading ? '请求中…' : '重新检测' }}
       </button>
 
-      <div v-if="healthResult" class="result success">
-        <strong>状态：</strong>{{ healthResult.status }}
-        <pre>{{ JSON.stringify(healthResult, null, 2) }}</pre>
+      <div v-if="result" class="result success">
+        <strong>后端返回：</strong>{{ result.msg }}（code {{ result.code }}）
+        <p v-if="result.data?.captchaEnabled !== undefined" style="margin-top:8px">
+          验证码已启用：{{ result.data.captchaEnabled ? '是' : '否' }}
+        </p>
+        <p v-if="result.data?.uuid" style="margin-top:4px;font-size:12px;color:#666">
+          uuid: {{ result.data.uuid }}
+        </p>
+        <img
+          v-if="result.data?.img"
+          :src="`data:image/png;base64,${result.data.img}`"
+          alt="captcha preview"
+          style="margin-top:10px;border:1px solid #ddd;border-radius:4px"
+        />
       </div>
 
-      <div v-else-if="healthError" class="result error">
+      <div v-else-if="errMsg" class="result error">
         <strong>请求失败</strong>（book-server 可能尚未启动，等后端就绪后重试）
-        <pre>{{ healthError }}</pre>
+        <pre>{{ errMsg }}</pre>
       </div>
 
       <div v-else-if="loading" class="result pending">
