@@ -14,3 +14,15 @@ dist
 *.njsproj
 *.sln
 *.sw?
+
+# Playwright 测试运行时产物
+test-results/
+playwright-report/
+.playwright-mcp/
+
+# 凭据（CLAUDE.md §6）
+**/cookie.json
+**/cookies.json
+**/secrets.json
+**/credentials*.json
+**/password*.json
