@@ -72,6 +72,12 @@ const router = createRouter({
         },
       ],
     },
+    // 登录页（无 layout 包裹，Y2 卡 2a 波）
+    {
+      path: '/login',
+      name: 'Login',
+      component: () => import('@/views/login/index.vue'),
+    },
     // Cookie 失效提示页（无 layout 包裹）
     {
       path: '/cookie-expired',
