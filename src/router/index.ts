@@ -62,11 +62,11 @@ const router = createRouter({
           component: () => import('@/views/PlaceholderView.vue'),
           props: { title: '班级管理' },
         },
+        // 卷库主页（D 卡 段③ — 视觉级还原 misikt /papers/index）
         {
           path: '/papers/index',
           name: 'PapersIndex',
-          component: () => import('@/views/PlaceholderView.vue'),
-          props: { title: '卷库' },
+          component: () => import('@/views/papers/index.vue'),
         },
         {
           path: '/materials/index',
