@@ -1,5 +1,9 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 import AppLayout from '@/layout/AppLayout.vue'
+import { useUserStore } from '@/store/user'
+
+// 无需登录即可访问的白名单（Y2 卡 2b 波）
+const PUBLIC_ROUTES = new Set<string>(['/login', '/cookie-expired'])
 
 const router = createRouter({
   history: createWebHashHistory(),
@@ -85,6 +89,28 @@ const router = createRouter({
       component: () => import('@/views/CookieExpired.vue'),
     },
   ],
+})
+
+// ---------------------------------------------------------------------------
+// 全局前置守卫（Y2 卡 2b 波）
+//
+// - 白名单路由（/login / /cookie-expired）→ 直接放行
+// - 其他路由 → 检查 useUserStore().isLoggedIn
+//     已登录 → 放行
+//     未登录 → 跳 /login，带 redirect query 便于登录后回跳
+//
+// main.ts 顺序为 `app.use(createPinia()).use(router)` — guard 触发时 pinia 已 install，
+// 直接 `useUserStore()` 安全。
+// ---------------------------------------------------------------------------
+router.beforeEach((to) => {
+  if (PUBLIC_ROUTES.has(to.path)) {
+    return true
+  }
+  const userStore = useUserStore()
+  if (userStore.isLoggedIn) {
+    return true
+  }
+  return { path: '/login', query: { redirect: to.fullPath } }
 })
 
 export default router
