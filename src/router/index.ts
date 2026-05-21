@@ -15,11 +15,23 @@ const router = createRouter({
           name: 'QuestionIndex',
           component: () => import('@/views/question/index.vue'),
         },
+        // 题目详情独立页（第十二波）
+        {
+          path: '/question/detail/:id',
+          name: 'QuestionDetail',
+          component: () => import('@/views/question/detail.vue'),
+        },
         // 组卷工作台（FE-4 真实现）
         {
           path: '/papers/edit',
           name: 'PapersEdit',
           component: () => import('@/views/papers/edit.vue'),
+        },
+        // 原卷预览页（第十二波）
+        {
+          path: '/papers/source/:id',
+          name: 'PapersSource',
+          component: () => import('@/views/papers/source.vue'),
         },
         // 空壳菜单页
         {

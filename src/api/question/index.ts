@@ -182,3 +182,111 @@ export const genExamData = () =>
  */
 export const removeBasket = (questionId: number) =>
   request.post<unknown, unknown>(`/teacher/question/removeBasket/${questionId}`)
+
+// ── 题目详情 / 原卷 / 错题栏接口（第十二波新增）──────────────────
+
+// 收录情况单条（试卷条目）
+// GET /teacher/question/{id}/sources 真实字段待 playwright 验证
+// 当前基于 A3-question-page.json 字段推断：examPaperId / examPaperName 已在 QuestionItem 里
+export interface QuestionSource {
+  examPaperId: number
+  examPaperName: string
+  examYear?: string | null
+  sort?: number | null
+}
+
+// 我的备注
+// GET /teacher/qd/note/{questionId} 字段待验证
+export interface QuestionNote {
+  id?: number
+  questionId?: number
+  content: string
+  createTime?: string
+  updateTime?: string
+}
+
+// 相似题 — 结构同 QuestionItem
+export type SimilarQuestion = QuestionItem
+
+// 原卷题目单条（GET /teacher/paper/source/{id} 下的题列表项）
+// 字段基于 QuestionItem 推断，是否一致待 playwright 验证
+export interface PaperSourceQuestion extends QuestionItem {
+  sort?: number | null
+}
+
+// 原卷详情响应
+export interface PaperSourceDetail {
+  paperId: number
+  paperName: string
+  examYear?: string | null
+  questions: PaperSourceQuestion[]
+}
+
+/**
+ * 获取题目详情
+ * GET /teacher/question/{id}
+ * ⚠️ 第二波曾 500，兜底走 localStorage 缓存
+ */
+export const getQuestionDetail = (questionId: number) =>
+  request.get<QuestionDetail, QuestionDetail>(`/teacher/question/${questionId}`)
+
+/**
+ * 获取我的备注
+ * GET /teacher/qd/note/{questionId}
+ * 无登录态返 401，待验证
+ */
+export const getQuestionNote = (questionId: number) =>
+  request.get<QuestionNote[], QuestionNote[]>(`/teacher/qd/note/${questionId}`)
+
+/**
+ * 添加/更新备注
+ * POST /teacher/qd/note
+ * 无登录态无法验证 payload 结构
+ */
+export const saveQuestionNote = (questionId: number, content: string) =>
+  request.post<unknown, unknown>('/teacher/qd/note', { questionId, content })
+
+/**
+ * 获取收录情况（这道题被收录进了哪些试卷）
+ * GET /teacher/question/{id}/sources
+ * 无登录态无法验证
+ */
+export const getQuestionSources = (questionId: number) =>
+  request.get<QuestionSource[], QuestionSource[]>(`/teacher/question/${questionId}/sources`)
+
+/**
+ * 获取相似题
+ * GET /teacher/question/similar/{id}
+ * 无登录态无法验证
+ */
+export const getSimilarQuestions = (questionId: number) =>
+  request.get<SimilarQuestion[], SimilarQuestion[]>(`/teacher/question/similar/${questionId}`)
+
+/**
+ * 获取原卷详情（试卷所有题）
+ * GET /teacher/paper/source/{id}
+ * 无登录态无法验证
+ */
+export const getPaperSource = (paperId: number | string) =>
+  request.get<PaperSourceDetail, PaperSourceDetail>(`/teacher/paper/source/${paperId}`)
+
+/**
+ * 加入错题栏
+ * POST /teacher/question/addErrorBasket/{id}（推测端点，待 playwright 验证）
+ */
+export const addErrorBasket = (questionId: number) =>
+  request.post<unknown, unknown>(`/teacher/question/addErrorBasket/${questionId}`)
+
+/**
+ * 从错题栏移除
+ * POST /teacher/question/removeErrorBasket/{id}（推测端点，对称命名）
+ */
+export const removeErrorBasket = (questionId: number) =>
+  request.post<unknown, unknown>(`/teacher/question/removeErrorBasket/${questionId}`)
+
+/**
+ * 题目报错
+ * POST /teacher/question/report（推测端点）
+ */
+export const reportQuestion = (questionId: number, reason?: string) =>
+  request.post<unknown, unknown>('/teacher/question/report', { questionId, reason })

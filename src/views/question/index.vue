@@ -17,7 +17,8 @@ import {
   type QuestionPageParams,
 } from '@/api/question/index'
 import { useRouter } from 'vue-router'
-import QuestionDetailDrawer from './QuestionDetailDrawer.vue'
+// QuestionDetailDrawer 已被第十二波路由替代（/question/detail/:id），文件保留供后续清理
+// import QuestionDetailDrawer from './QuestionDetailDrawer.vue'
 import FavoriteFolderDrawer from '@/components/FavoriteFolderDrawer/index.vue'
 import ContentWrap from '@/components/ContentWrap/index.vue'
 import SearchWrap from '@/components/SearchWrap/index.vue'
@@ -445,12 +446,20 @@ function handleFavDrawerSuccess(_folderId: number | string | undefined) {
 }
 
 function handleDetail(q: QuestionItem) {
-  currentQuestionId.value = q.id
-  currentQuestionData.value = q
-  detailDrawerVisible.value = true
+  // 第十二波：改为独立页面路由，不再用 Drawer
+  // 存 cache 供详情页兜底使用（接口 500 时从 localStorage 读）
+  try {
+    const cacheKey = 'book-ui:question-cache-by-id'
+    const existing: Record<string, QuestionItem> = JSON.parse(localStorage.getItem(cacheKey) || '{}')
+    existing[String(q.id)] = q
+    localStorage.setItem(cacheKey, JSON.stringify(existing))
+  } catch (e) {
+    console.warn('[detail] cache write failed', e)
+  }
+  router.push(`/question/detail/${q.id}`)
 }
 
-// ── 题详情 drawer ─────────────────────────────────────────────
+// 保留变量供 QuestionDetailDrawer 组件 props 兼容（已从 template 移除但保留导入）
 const detailDrawerVisible = ref(false)
 const currentQuestionId = ref<number | null>(null)
 const currentQuestionData = ref<QuestionItem | null>(null)
@@ -867,12 +876,8 @@ onMounted(async () => {
       </template>
     </el-dialog>
 
-    <!-- 题详情 drawer -->
-    <QuestionDetailDrawer
-      v-model:visible="detailDrawerVisible"
-      :question-id="currentQuestionId"
-      :question-data="currentQuestionData"
-    />
+    <!-- 题详情 drawer（第十二波已改为路由 /question/detail/:id，此组件不再使用） -->
+    <!-- QuestionDetailDrawer 已保留文件但不再在此 mount -->
 
     <!-- 收藏抽屉（子任务 D）— 未收藏时点⭐打开，选择收藏目录后调 addFavorite -->
     <FavoriteFolderDrawer
