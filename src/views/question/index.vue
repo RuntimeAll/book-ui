@@ -7,6 +7,7 @@ import {
   questionPage,
   basketNum,
   addBasket,
+  removeBasket,
   getFavorite,
   addFavorite,
   removeFavorite,
@@ -301,27 +302,54 @@ const basketItems = computed<QuestionItem[]>(() => {
   return items
 })
 
-async function handleAddBasket(question: QuestionItem) {
-  if (inBasketIds.value.has(question.id)) {
-    ElMessage.info('该题已在试题栏中')
-    return
-  }
-  inBasketIds.value = new Set([...inBasketIds.value, question.id])
-  if (!questionCache.has(question.id)) {
-    questionCache.set(question.id, question)
-  }
-  ElMessage.success('已加入试题栏')
+// ── 试题栏 toggle loading set（防连点）──────────────────────
+const basketToggleLoading = reactive<Set<number>>(new Set())
 
-  addBasket(question.id)
-    .then(() => loadBasketNum())
-    .catch((e) => console.warn('[basket] addBasket notify failed (local state OK):', e))
+async function handleBasketToggle(question: QuestionItem) {
+  if (basketToggleLoading.has(question.id)) return
+  basketToggleLoading.add(question.id)
+
+  const isInBasket = inBasketIds.value.has(question.id)
+
+  if (isInBasket) {
+    // 已加入 → 移除
+    const newSet = new Set(inBasketIds.value)
+    newSet.delete(question.id)
+    inBasketIds.value = newSet
+    ElMessage.success('已从试题栏移除')
+
+    // 调 removeBasket 接口（乐观更新，本地状态已先更新）
+    // TODO: 端点 POST /teacher/question/removeBasket/{id} 待真实验证
+    removeBasket(question.id)
+      .then(() => loadBasketNum())
+      .catch((e) => console.warn('[basket] removeBasket notify failed (local state OK):', e))
+  } else {
+    // 未加入 → 加入
+    inBasketIds.value = new Set([...inBasketIds.value, question.id])
+    if (!questionCache.has(question.id)) {
+      questionCache.set(question.id, question)
+    }
+    ElMessage.success('已加入试题栏')
+
+    addBasket(question.id)
+      .then(() => loadBasketNum())
+      .catch((e) => console.warn('[basket] addBasket notify failed (local state OK):', e))
+  }
+
+  basketToggleLoading.delete(question.id)
 }
 
+// 保留 handleRemoveBasket 供 dialog 内移除按钮使用
 function handleRemoveBasket(id: number) {
   const newSet = new Set(inBasketIds.value)
   newSet.delete(id)
   inBasketIds.value = newSet
   ElMessage.success('已从试题栏移除')
+
+  // 同步调 removeBasket 接口
+  removeBasket(id)
+    .then(() => loadBasketNum())
+    .catch((e) => console.warn('[basket] removeBasket (dialog) notify failed:', e))
 }
 
 function handleClearBasket() {
@@ -603,15 +631,18 @@ onMounted(async () => {
                   <el-icon><Star /></el-icon>
                   {{ favoriteMap[q.id] ? '已收藏' : '收藏' }}
                 </el-button>
+                <!-- 试题栏 toggle 按钮（子任务 C）：未加入=蓝色描边 / 已加入=灰色+hover danger -->
                 <el-button
                   size="small"
                   class="action-btn action-btn--basket"
-                  :type="inBasketIds.has(q.id) ? 'success' : 'primary'"
-                  plain
-                  @click="handleAddBasket(q)"
+                  :class="{ 'action-btn--basket-added': inBasketIds.has(q.id) }"
+                  :type="inBasketIds.has(q.id) ? undefined : 'primary'"
+                  :plain="!inBasketIds.has(q.id)"
+                  :loading="basketToggleLoading.has(q.id)"
+                  @click="handleBasketToggle(q)"
                 >
-                  <el-icon><ShoppingCart /></el-icon>
-                  {{ inBasketIds.has(q.id) ? '已加入' : '+ 试题栏' }}
+                  <el-icon v-if="!inBasketIds.has(q.id)"><ShoppingCart /></el-icon>
+                  {{ inBasketIds.has(q.id) ? '取消' : '+ 试题栏' }}
                 </el-button>
               </div>
             </div>
@@ -641,6 +672,22 @@ onMounted(async () => {
             <div v-if="q.examPaperName || q.examYear" class="card-source-row">
               <span v-if="q.examPaperName" class="source-text">来源: {{ q.examPaperName }}</span>
               <span v-if="q.examYear" class="source-text">年份: {{ q.examYear }}</span>
+            </div>
+
+            <!-- 底部知识点彩色 tag 行（子任务 E）：展示全部 questionKnowledges，多色轮换 -->
+            <div
+              v-if="q.questionKnowledges && q.questionKnowledges.length > 0"
+              class="card-knowledge-tags-row"
+            >
+              <el-tag
+                v-for="(k, idx) in q.questionKnowledges"
+                :key="k.knowledgeId || idx"
+                :type="(['success', 'primary', 'warning', 'danger', 'info'] as const)[idx % 5]"
+                size="small"
+                class="knowledge-bottom-tag"
+              >
+                {{ k.knowledgeName || k.knowledgeId }}
+              </el-tag>
             </div>
 
             <!-- 卡片底部操作行（详情按钮）-->
@@ -1103,6 +1150,41 @@ onMounted(async () => {
 
 .action-btn--basket {
   min-width: 80px;
+}
+
+/* 已加入试题栏 → 灰色态 + hover danger 描边（子任务 C）*/
+.action-btn--basket-added {
+  color: #86909c !important;
+  border-color: #c9cdd4 !important;
+  background: #f7f8fa !important;
+  min-width: 60px;
+  transition: all 0.2s ease;
+}
+
+.action-btn--basket-added:hover {
+  color: #f56c6c !important;
+  border-color: #f56c6c !important;
+  background: #fff5f5 !important;
+}
+
+/* ── 底部知识点彩色 tag 行（子任务 E）── */
+.card-knowledge-tags-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+  margin-top: 2px;
+}
+
+.knowledge-bottom-tag {
+  cursor: default;
+  transition: background 0.18s ease, box-shadow 0.18s ease;
+  border-radius: 4px;
+}
+
+.knowledge-bottom-tag:hover {
+  filter: brightness(0.94);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
 }
 
 /* ── 卡片底部行（详情按钮）── */

@@ -145,3 +145,11 @@ export const queryBasket = () =>
  */
 export const genExamData = () =>
   request.post<unknown, unknown>('/teacher/question/genExamData/')
+
+/**
+ * 从试题栏移除题目
+ * 端点推测：POST /teacher/question/removeBasket/{id}（命名对称 addBasket）
+ * TODO: playwright 抓取真实端点 — 无登录态时 misikt 不触发 API，待有 session 后验证
+ */
+export const removeBasket = (questionId: number) =>
+  request.post<unknown, unknown>(`/teacher/question/removeBasket/${questionId}`)
