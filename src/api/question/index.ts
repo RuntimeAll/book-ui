@@ -224,11 +224,10 @@ export interface PaperSourceDetail {
 
 /**
  * 获取题目详情
- * GET /teacher/question/{id}
- * ⚠️ 第二波曾 500，兜底走 localStorage 缓存
+ * POST /teacher/question/select/{id}（A4 抓包证据 — misikt 真端点）
  */
 export const getQuestionDetail = (questionId: number) =>
-  request.get<QuestionDetail, QuestionDetail>(`/teacher/question/${questionId}`)
+  request.post<QuestionDetail, QuestionDetail>(`/teacher/question/select/${questionId}`)
 
 /**
  * 获取我的备注
@@ -248,11 +247,10 @@ export const saveQuestionNote = (questionId: number, content: string) =>
 
 /**
  * 获取收录情况（这道题被收录进了哪些试卷）
- * GET /teacher/question/{id}/sources
- * 无登录态无法验证
+ * GET /teacher/qd/papers/{id}（A 端点清单 / 抓包确认）
  */
 export const getQuestionSources = (questionId: number) =>
-  request.get<QuestionSource[], QuestionSource[]>(`/teacher/question/${questionId}/sources`)
+  request.get<QuestionSource[], QuestionSource[]>(`/teacher/qd/papers/${questionId}`)
 
 /**
  * 获取相似题
