@@ -78,6 +78,18 @@ export interface QuestionPageParams {
 // 题目详情（GET /teacher/question/{id} 返）
 export interface QuestionDetail extends QuestionItem {}
 
+// 收藏夹文件夹（GET /teacher/center/q-folder/tree 返回树结构）
+// misikt 真站端点：/api/teacher/center/q-folder/tree（playwright 已抓取确认）
+export interface FavoriteFolder {
+  id: number | string
+  name: string
+  pid?: number | string | null
+  count?: number           // 已收藏题数
+  children?: FavoriteFolder[]
+  sort?: number
+  createTime?: string
+}
+
 // 收藏状态响应
 export interface FavoriteResult {
   favorite?: boolean
@@ -124,9 +136,19 @@ export const getFavorite = (questionId: number) =>
 
 /**
  * 收藏题目（POST /teacher/qd/favorite/{id}）
+ * folderId 可选 — misikt 真站接口是否支持 folderId 参数待验证（需登录态 playwright 才能抓 payload）
+ * 当前：不带 folderId 调用（兼容现状），folderId 本地记录
  */
-export const addFavorite = (questionId: number) =>
-  request.post<unknown, unknown>(`/teacher/qd/favorite/${questionId}`)
+export const addFavorite = (questionId: number, folderId?: number | string) =>
+  request.post<unknown, unknown>(`/teacher/qd/favorite/${questionId}`, folderId ? { folderId } : undefined)
+
+/**
+ * 拉收藏夹目录树（GET /teacher/center/q-folder/tree）
+ * misikt 真站端点：playwright 已确认（无登录态返 401，有登录态时 response 待验证字段结构）
+ * 推测响应：{ code: 200, response: FavoriteFolder[] }（树形结构，一级为收藏夹，children 为子夹）
+ */
+export const getFavoriteFolderTree = () =>
+  request.get<FavoriteFolder[], FavoriteFolder[]>('/teacher/center/q-folder/tree')
 
 /**
  * 取消收藏（DELETE /teacher/qd/favorite/{id}）

@@ -18,6 +18,7 @@ import {
 } from '@/api/question/index'
 import { useRouter } from 'vue-router'
 import QuestionDetailDrawer from './QuestionDetailDrawer.vue'
+import FavoriteFolderDrawer from '@/components/FavoriteFolderDrawer/index.vue'
 import ContentWrap from '@/components/ContentWrap/index.vue'
 import SearchWrap from '@/components/SearchWrap/index.vue'
 import Icon from '@/components/Icon/index.vue'
@@ -404,25 +405,42 @@ function handleDraft(q: QuestionItem) {
 
 const favoriteLoading = reactive<Set<number>>(new Set())
 
-async function handleFavorite(q: QuestionItem) {
+// ── 收藏抽屉（子任务 D）──────────────────────────────────────
+// 未收藏 → 打开 FavoriteFolderDrawer 选择收藏目录
+// 已收藏 → 直接调 removeFavorite（不弹抽屉）
+const favDrawerVisible = ref(false)
+const favDrawerQuestionId = ref<number>(0)
+
+function handleFavorite(q: QuestionItem) {
   if (favoriteLoading.has(q.id)) return
-  favoriteLoading.add(q.id)
   const isFav = favoriteMap[q.id]
-  try {
-    if (isFav) {
-      await removeFavorite(q.id)
-      favoriteMap[q.id] = false
-      ElMessage.success('已取消收藏')
-    } else {
-      await addFavorite(q.id)
-      favoriteMap[q.id] = true
-      ElMessage.success('收藏成功')
-    }
-  } catch (e) {
-    console.warn('[favorite] toggle failed', e)
-    ElMessage.warning(isFav ? '取消收藏失败，请稍后重试' : '收藏失败，可能暂不支持该操作')
-  } finally {
-    favoriteLoading.delete(q.id)
+  if (isFav) {
+    // 已收藏 → 直接取消，不弹抽屉
+    handleRemoveFavorite(q)
+  } else {
+    // 未收藏 → 打开抽屉选择收藏目录
+    favDrawerQuestionId.value = q.id
+    favDrawerVisible.value = true
+  }
+}
+
+function handleRemoveFavorite(q: QuestionItem) {
+  if (favoriteLoading.has(q.id)) return
+
+  // 乐观更新：先更新本地状态 + toast，再异步调 API
+  favoriteMap[q.id] = false
+  ElMessage.success('已取消收藏')
+
+  removeFavorite(q.id)
+    .catch((e) => {
+      console.warn('[favorite] removeFavorite API failed (local state already updated):', e)
+    })
+}
+
+function handleFavDrawerSuccess(_folderId: number | string | undefined) {
+  // 收藏抽屉内成功收藏 → 更新本地 favoriteMap
+  if (favDrawerQuestionId.value) {
+    favoriteMap[favDrawerQuestionId.value] = true
   }
 }
 
@@ -854,6 +872,13 @@ onMounted(async () => {
       v-model:visible="detailDrawerVisible"
       :question-id="currentQuestionId"
       :question-data="currentQuestionData"
+    />
+
+    <!-- 收藏抽屉（子任务 D）— 未收藏时点⭐打开，选择收藏目录后调 addFavorite -->
+    <FavoriteFolderDrawer
+      v-model="favDrawerVisible"
+      :question-id="favDrawerQuestionId"
+      @success="handleFavDrawerSuccess"
     />
   </div>
 </template>
