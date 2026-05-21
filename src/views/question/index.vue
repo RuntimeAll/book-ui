@@ -82,7 +82,7 @@ const treeRef = ref()
 
 function filterTreeNode(value: string, data: SubjectNode) {
   if (!value) return true
-  return data.name.includes(value)
+  return (data.title ?? '').includes(value)
 }
 
 watch(treeFilterKeyword, (val) => {
@@ -505,7 +505,7 @@ onMounted(async () => {
             v-else
             ref="treeRef"
             :data="treeData"
-            :props="{ label: 'name', children: 'children' }"
+            :props="{ label: 'title', children: 'children' }"
             node-key="id"
             highlight-current
             :expand-on-click-node="false"

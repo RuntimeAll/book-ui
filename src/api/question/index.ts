@@ -2,11 +2,18 @@ import request from '@/http/request'
 
 // ── 类型定义 ────────────────────────────────────────────────
 // lazyTree 节点（misikt 返整棵树，children 嵌套）
+// ⚠️ 真实字段名是 title 不是 name（A2-question-lazyTree.json 抓包证据）
 export interface SubjectNode {
   id: string
-  name: string
+  title: string                  // 节点名称（misikt 真实字段）
   parentId: string | null
-  isShare: string // lazyTree 接口返 STRING '0'/'1'
+  hasChildren?: boolean
+  isShare?: string | null
+  key?: string
+  value?: string
+  level?: number
+  sort?: number
+  nodeDataSum?: number | null
   children?: SubjectNode[]
 }
 
