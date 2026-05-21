@@ -14,7 +14,7 @@ import { DEFAULT_CLIENT_ID } from '@/api/auth'
 //                 code===1 → 返 response；code===401 / HTTP 401 → clear store + 跳 /login；
 //                 其他 → ElMessage error
 //
-// 删除：isLocalApi 判断、LOCAL_API_PREFIXES 白名单、/cookie-expired 跳转、misikt cookie 失效分支。
+// 删除：isLocalApi 判断、LOCAL_API_PREFIXES 白名单、misikt fallback、cookie 失效分支。
 // ---------------------------------------------------------------------------
 
 // misikt envelope structure: { code: 1=success | 401=unauthorized | 500=error, message: string, response: any }

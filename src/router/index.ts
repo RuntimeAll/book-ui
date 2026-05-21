@@ -88,7 +88,7 @@ const router = createRouter({
 // ---------------------------------------------------------------------------
 // 全局前置守卫（Y2 卡 2b 波）
 //
-// - 白名单路由（/login / /cookie-expired）→ 直接放行
+// - 白名单路由（/login）→ 直接放行
 // - 其他路由 → 检查 useUserStore().isLoggedIn
 //     已登录 → 放行
 //     未登录 → 跳 /login，带 redirect query 便于登录后回跳
