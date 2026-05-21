@@ -183,11 +183,10 @@ const pageParams = reactive<QuestionPageParams>({
   notUsedQuestion: 0,
 })
 
-// 空态文案动态切换：
-// - 选了章节/教材且 0 题 → 数据建设中（BUG-2 ETL 错配，PRD §2.4 D-3 待重灌）
-// - 默认 / 改了筛选 0 题 → 引导改筛选
+// 空态文案动态切换（BUG-2 真修后，章节走 biz_question_knowledge JOIN 大多数节点有题；
+// 仅极少叶子节点确实 0 题时显示这条）
 const emptyDescription = computed(() => {
-  if (pageParams.subjectId) return '该章节暂无题目（数据建设中）'
+  if (pageParams.subjectId) return '该章节暂无题目'
   return '暂无题目，请尝试调整筛选条件'
 })
 
