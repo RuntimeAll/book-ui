@@ -26,10 +26,42 @@ instance.interceptors.request.use(
   (error) => Promise.reject(error),
 )
 
-// Response interceptor — handle misikt envelope
-// misikt always returns HTTP 200; errors are in envelope.code
+// ---------------------------------------------------------------------------
+// Response interceptor — 双源 envelope 分支（Y2 卡 PRD §3.2 / §3.3）
+//
+// 分支判断走 response.config.url 的前缀：
+//   - /auth/*   → book-server RuoYi 原生 envelope { code: 200, msg, data }
+//                 code===200 → 返 data；否则 ElMessage 报错 + reject
+//   - 其余       → misikt envelope { code: 1|401|500, message, response }
+//                 （book-server 的 /teacher/* 端点已被 MisiktEnvelopeAdvice 包装成这种形态）
+//                 code===1 → 返 response；code===401 → 跳 cookie-expired；其他报错
+//
+// 注意：axios 的 response.config.url 是业务侧调用时传的原始 path（未拼 baseURL），
+//       例如调 request.post({ url: '/auth/login' }) 时 config.url === '/auth/login'。
+// ---------------------------------------------------------------------------
+
+// RuoYi 原生 envelope（仅 /auth/* 用）
+interface RuoYiEnvelope<T = unknown> {
+  code: number
+  msg: string
+  data: T
+}
+
 instance.interceptors.response.use(
   (response) => {
+    const url = response.config.url ?? ''
+
+    // 分支 1：RuoYi 原生 envelope（book-server /auth/* 直出，未经 MisiktEnvelopeAdvice）
+    if (url.startsWith('/auth/')) {
+      const data = response.data as RuoYiEnvelope
+      if (data.code === 200) {
+        return data.data as any
+      }
+      ElMessage.error(data.msg || `登录接口异常 (code=${data.code})`)
+      return Promise.reject(new Error(data.msg || `登录接口异常 (code=${data.code})`))
+    }
+
+    // 分支 2：misikt envelope（misikt 原生 + book-server /teacher/* 被 advice 包装）
     const data = response.data as MisiktEnvelope
     if (data.code === 1) {
       // success — return inner response payload
