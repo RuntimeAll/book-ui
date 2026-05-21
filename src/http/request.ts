@@ -4,46 +4,31 @@ import router from '@/router'
 import { useUserStore } from '@/store/user'
 import { DEFAULT_CLIENT_ID } from '@/api/auth'
 
-// 防重复跳转标志
-let _cookieExpiredRedirecting = false
-
 // ---------------------------------------------------------------------------
-// 本地 book-server 路由白名单（Y2 卡 2b 波）
+// V1 卡（题库去原网站化）：所有请求统一走本地 book-server（无 misikt fallback）。
 //
-// 用于：
-//   1) 请求拦截器 — 命中本地路径 → 注入 Authorization + clientid header
-//      （misikt 路径继续靠 vite proxy 注入的 cookie，不需要 Bearer）
-//   2) 响应拦截器 — 401 分支拆开：本地 401 → /login；misikt 401 → /cookie-expired
+// 请求拦截器：所有非空 token 的请求统一注入 Authorization Bearer + clientid。
+// 响应拦截器双分支按 URL：
+//   - /auth/*   → RuoYi 原 envelope { code:200, msg, data } → 返 data
+//   - 其他       → misikt envelope { code:1|401|500, message, response }
+//                 code===1 → 返 response；code===401 / HTTP 401 → clear store + 跳 /login；
+//                 其他 → ElMessage error
 //
-// ⚠️ 维护说明：本数组与 vite.config.ts 的 BOOK_SERVER_PATHS 是同一组路径的两种形态。
-//    - vite.config.ts：带 `/api` 前缀（http-proxy-middleware key 需要原始 path）
-//    - 本数组：不带 `/api` 前缀（axios baseURL 已为 `/api`，业务侧 config.url 不含 /api）
-//    新增 / 变更本地端点时，两处务必同步。
-//    (TODO Y3 起若同步频度高，可考虑提到 src/http/route-config.ts 让 vite.config.ts 也 import)
+// 删除：isLocalApi 判断、LOCAL_API_PREFIXES 白名单、/cookie-expired 跳转、misikt cookie 失效分支。
 // ---------------------------------------------------------------------------
-const LOCAL_API_PREFIXES = [
-  '/auth/login',
-  '/teacher/user/current',
-  '/teacher/question/lazyTree',
-  '/teacher/question/page',
-  '/teacher/question/select/',
-  '/teacher/question/addBasket/',
-  '/teacher/question/cancel/',
-  '/teacher/question/queryBasket',
-  '/teacher/question/empty',
-  '/teacher/question/basketNum',
-  '/teacher/question/genExamData/',
-] as const
-
-function isLocalApi(url: string): boolean {
-  return LOCAL_API_PREFIXES.some((p) => url.startsWith(p))
-}
 
 // misikt envelope structure: { code: 1=success | 401=unauthorized | 500=error, message: string, response: any }
 export interface MisiktEnvelope<T = unknown> {
   code: number
   message: string
   response: T
+}
+
+// RuoYi 原生 envelope（仅 /auth/* 用）
+interface RuoYiEnvelope<T = unknown> {
+  code: number
+  msg: string
+  data: T
 }
 
 const instance = axios.create({
@@ -55,21 +40,16 @@ const instance = axios.create({
 })
 
 // ---------------------------------------------------------------------------
-// Request interceptor — 本地后端注入 Authorization + clientid（Y2 卡 2b 波）
+// Request interceptor — 所有请求统一注入 Authorization Bearer + clientid。
 //
-// 只对走 book-server 的 path 注入 Bearer token，misikt path 不动（保留 cookie 鉴权）。
-// /auth/login 自身命中本数组，但登录时 userStore.accessToken 为空，&& 短路自然跳过，
-// 不会污染登录请求的 header。
+// userStore.accessToken 为空时（如登录请求自身）→ 不注入，&& 短路自然跳过。
 // ---------------------------------------------------------------------------
 instance.interceptors.request.use(
   (config) => {
-    const url = config.url ?? ''
-    if (isLocalApi(url)) {
-      const userStore = useUserStore()
-      if (userStore.accessToken) {
-        config.headers.set('Authorization', `Bearer ${userStore.accessToken}`)
-        config.headers.set('clientid', DEFAULT_CLIENT_ID)
-      }
+    const userStore = useUserStore()
+    if (userStore.accessToken) {
+      config.headers.set('Authorization', `Bearer ${userStore.accessToken}`)
+      config.headers.set('clientid', DEFAULT_CLIENT_ID)
     }
     return config
   },
@@ -77,31 +57,22 @@ instance.interceptors.request.use(
 )
 
 // ---------------------------------------------------------------------------
-// Response interceptor — 双源 envelope 分支（Y2 卡 PRD §3.2 / §3.3）
-//
-// 分支判断走 response.config.url 的前缀：
-//   - /auth/*   → book-server RuoYi 原生 envelope { code: 200, msg, data }
-//                 code===200 → 返 data；否则 ElMessage 报错 + reject
-//   - 其余       → misikt envelope { code: 1|401|500, message, response }
-//                 （book-server 的 /teacher/* 端点已被 MisiktEnvelopeAdvice 包装成这种形态）
-//                 code===1 → 返 response；code===401 → 跳 cookie-expired；其他报错
-//
-// 注意：axios 的 response.config.url 是业务侧调用时传的原始 path（未拼 baseURL），
-//       例如调 request.post({ url: '/auth/login' }) 时 config.url === '/auth/login'。
+// Response interceptor — 双源 envelope 分支
 // ---------------------------------------------------------------------------
-
-// RuoYi 原生 envelope（仅 /auth/* 用）
-interface RuoYiEnvelope<T = unknown> {
-  code: number
-  msg: string
-  data: T
+function redirectToLogin() {
+  const userStore = useUserStore()
+  userStore.clear()
+  if (router.currentRoute.value.path !== '/login') {
+    ElMessage.warning('登录已失效，请重新登录')
+    router.push({ path: '/login', query: { redirect: router.currentRoute.value.fullPath } })
+  }
 }
 
 instance.interceptors.response.use(
   (response) => {
     const url = response.config.url ?? ''
 
-    // 分支 1：RuoYi 原生 envelope（book-server /auth/* 直出，未经 MisiktEnvelopeAdvice）
+    // 分支 1：RuoYi 原 envelope（/auth/* 直出，未经 MisiktEnvelopeAdvice）
     if (url.startsWith('/auth/')) {
       const data = response.data as RuoYiEnvelope
       if (data.code === 200) {
@@ -111,52 +82,25 @@ instance.interceptors.response.use(
       return Promise.reject(new Error(data.msg || `登录接口异常 (code=${data.code})`))
     }
 
-    // 分支 2：misikt envelope（misikt 原生 + book-server /teacher/* 被 advice 包装）
+    // 分支 2：misikt envelope（book-server /teacher/* 被 advice 包装）
     const data = response.data as MisiktEnvelope
     if (data.code === 1) {
-      // success — return inner response payload
       return data.response as any
     }
     if (data.code === 401) {
-      // Y2 卡 2b 波：401 按来源拆开
-      //   - 本地 book-server（被 MisiktEnvelopeAdvice 包装）→ 跳 /login + 清登录态
-      //   - misikt 原生 → 跳 /cookie-expired 提示用户更新 cookie
-      if (isLocalApi(url)) {
-        const userStore = useUserStore()
-        userStore.clear()
-        if (router.currentRoute.value.path !== '/login') {
-          ElMessage.warning('登录已失效，请重新登录')
-          router.push({ path: '/login', query: { redirect: router.currentRoute.value.fullPath } })
-        }
-        return Promise.reject(new Error('本地后端未登录 (401)'))
-      }
-      if (!_cookieExpiredRedirecting) {
-        _cookieExpiredRedirecting = true
-        ElMessage.warning('misikt cookie 已失效，正在跳转到更新指引...')
-        setTimeout(() => {
-          router.push('/cookie-expired').finally(() => {
-            _cookieExpiredRedirecting = false
-          })
-        }, 800)
-      }
+      redirectToLogin()
       return Promise.reject(new Error('未登录 (401)'))
     }
-    // 500 or other error codes
+    // 500 / 其他业务错误
     ElMessage.error(data.message || '系统内部错误')
     return Promise.reject(new Error(data.message || '系统内部错误'))
   },
   (error) => {
-    const url: string = error?.config?.url ?? ''
     const status: number | undefined = error?.response?.status
 
-    // Y2 卡 2b 波：本地后端 HTTP 401（Sa-Token 直接拦下，未经 advice 包装）
-    if (status === 401 && isLocalApi(url)) {
-      const userStore = useUserStore()
-      userStore.clear()
-      if (router.currentRoute.value.path !== '/login') {
-        ElMessage.warning('登录已失效，请重新登录')
-        router.push({ path: '/login', query: { redirect: router.currentRoute.value.fullPath } })
-      }
+    // HTTP 401（Sa-Token 拦下未经 advice 包装）
+    if (status === 401) {
+      redirectToLogin()
       return Promise.reject(error)
     }
 

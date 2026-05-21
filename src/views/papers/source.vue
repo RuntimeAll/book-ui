@@ -5,8 +5,6 @@ import { ElMessage } from 'element-plus'
 import { ArrowLeft, Plus, Check } from '@element-plus/icons-vue'
 import {
   getPaperSource,
-  addErrorBasket,
-  removeErrorBasket,
   type PaperSourceQuestion,
 } from '@/api/question/index'
 
@@ -52,24 +50,18 @@ async function handleErrorBookToggle(question: PaperSourceQuestion) {
   const wasIn = errorBookIds.value.has(id)
   const newSet = new Set(errorBookIds.value)
 
+  // V1: 错题栏功能本卡范围未实装 BE 端点，仅 localStorage 持久化（view-only）。
+  // PRD F-5 删除 addErrorBasket / removeErrorBasket API 函数；体验保留前端态。
   if (wasIn) {
-    // 乐观更新：先移除
     newSet.delete(id)
     errorBookIds.value = newSet
     writeErrorBookIds(newSet)
     ElMessage.success('已从错题栏移除')
-
-    removeErrorBasket(id)
-      .catch((e) => console.warn('[errorBook] removeErrorBasket API failed (local state OK):', e))
   } else {
-    // 乐观更新：先加入
     newSet.add(id)
     errorBookIds.value = newSet
     writeErrorBookIds(newSet)
     ElMessage.success('已加入错题栏')
-
-    addErrorBasket(id)
-      .catch((e) => console.warn('[errorBook] addErrorBasket API failed (local state OK):', e))
   }
 
   const doneLoading = new Set(errorBookToggleLoading.value)

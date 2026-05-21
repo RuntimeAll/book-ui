@@ -2,8 +2,8 @@ import { createRouter, createWebHashHistory } from 'vue-router'
 import AppLayout from '@/layout/AppLayout.vue'
 import { useUserStore } from '@/store/user'
 
-// 无需登录即可访问的白名单（Y2 卡 2b 波）
-const PUBLIC_ROUTES = new Set<string>(['/login', '/cookie-expired'])
+// 无需登录即可访问的白名单
+const PUBLIC_ROUTES = new Set<string>(['/login'])
 
 const router = createRouter({
   history: createWebHashHistory(),
@@ -76,17 +76,11 @@ const router = createRouter({
         },
       ],
     },
-    // 登录页（无 layout 包裹，Y2 卡 2a 波）
+    // 登录页（无 layout 包裹）
     {
       path: '/login',
       name: 'Login',
       component: () => import('@/views/login/index.vue'),
-    },
-    // Cookie 失效提示页（无 layout 包裹）
-    {
-      path: '/cookie-expired',
-      name: 'CookieExpired',
-      component: () => import('@/views/CookieExpired.vue'),
     },
   ],
 })

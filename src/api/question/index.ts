@@ -195,14 +195,11 @@ export interface QuestionSource {
   sort?: number | null
 }
 
-// 我的备注
-// GET /teacher/qd/note/{questionId} 字段待验证
+// 我的备注（V1 BE 返单对象 / null — uk_user_question 每用户每题最多 1 条）
+// GET /teacher/qd/note/{questionId}
 export interface QuestionNote {
-  id?: number
-  questionId?: number
   content: string
-  createTime?: string
-  updateTime?: string
+  updateTime?: string | null
 }
 
 // 相似题 — 结构同 QuestionItem
@@ -230,20 +227,18 @@ export const getQuestionDetail = (questionId: number) =>
   request.post<QuestionDetail, QuestionDetail>(`/teacher/question/select/${questionId}`)
 
 /**
- * 获取我的备注
+ * 获取我的备注（V1：BE 返单对象或 null）
  * GET /teacher/qd/note/{questionId}
- * 无登录态返 401，待验证
  */
 export const getQuestionNote = (questionId: number) =>
-  request.get<QuestionNote[], QuestionNote[]>(`/teacher/qd/note/${questionId}`)
+  request.get<QuestionNote | null, QuestionNote | null>(`/teacher/qd/note/${questionId}`)
 
 /**
- * 添加/更新备注
- * POST /teacher/qd/note
- * 无登录态无法验证 payload 结构
+ * 添加/更新备注（V1：upsert，路径带 id + body 仅 content）
+ * POST /teacher/qd/note/{id}
  */
 export const saveQuestionNote = (questionId: number, content: string) =>
-  request.post<unknown, unknown>('/teacher/qd/note', { questionId, content })
+  request.post<unknown, unknown>(`/teacher/qd/note/${questionId}`, { content })
 
 /**
  * 获取收录情况（这道题被收录进了哪些试卷）
@@ -268,23 +263,6 @@ export const getSimilarQuestions = (questionId: number) =>
 export const getPaperSource = (paperId: number | string) =>
   request.get<PaperSourceDetail, PaperSourceDetail>(`/teacher/paper/source/${paperId}`)
 
-/**
- * 加入错题栏
- * POST /teacher/question/addErrorBasket/{id}（推测端点，待 playwright 验证）
- */
-export const addErrorBasket = (questionId: number) =>
-  request.post<unknown, unknown>(`/teacher/question/addErrorBasket/${questionId}`)
-
-/**
- * 从错题栏移除
- * POST /teacher/question/removeErrorBasket/{id}（推测端点，对称命名）
- */
-export const removeErrorBasket = (questionId: number) =>
-  request.post<unknown, unknown>(`/teacher/question/removeErrorBasket/${questionId}`)
-
-/**
- * 题目报错
- * POST /teacher/question/report（推测端点）
- */
-export const reportQuestion = (questionId: number, reason?: string) =>
-  request.post<unknown, unknown>('/teacher/question/report', { questionId, reason })
+// V1 删除：addErrorBasket / removeErrorBasket / reportQuestion 三个 API 函数
+// 原因：错题栏 + 题目报错本卡范围不实现，view 改为 noop + ElMessage warning "功能开发中"。
+// 错题栏体验：localStorage-only（视图层 view-only），不调 BE 端点。

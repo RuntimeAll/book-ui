@@ -21,7 +21,6 @@ import {
   removeBasket,
   addFavorite,
   removeFavorite,
-  reportQuestion,
   type QuestionItem,
   type QuestionNote,
   type QuestionSource,
@@ -169,7 +168,8 @@ const explainExpanded = ref(false)
 const similarExpanded = ref(false)
 
 // ── 我的备注 ─────────────────────────────────────────────────
-const notes = ref<QuestionNote[]>([])
+// V1 BE: GET /qd/note/{id} 返单对象 / null（uk_user_question 每用户每题最多 1 条）
+const note = ref<QuestionNote | null>(null)
 const notesLoading = ref(false)
 const noteInput = ref('')
 const noteSaving = ref(false)
@@ -178,10 +178,10 @@ async function loadNotes() {
   notesLoading.value = true
   try {
     const res = await getQuestionNote(questionId.value)
-    notes.value = Array.isArray(res) ? res : []
+    note.value = res && typeof res === 'object' && 'content' in res ? (res as QuestionNote) : null
   } catch (e) {
-    console.warn('[detail] notes GET failed (API not accessible without login)', e)
-    notes.value = []
+    console.warn('[detail] notes GET failed', e)
+    note.value = null
   } finally {
     notesLoading.value = false
   }
@@ -248,15 +248,9 @@ async function loadSimilar() {
   }
 }
 
-// ── 题目报错 ─────────────────────────────────────────────────
-async function handleReport() {
-  try {
-    await reportQuestion(questionId.value, '题目有误')
-    ElMessage.success('报错已提交，感谢反馈')
-  } catch (e) {
-    console.warn('[detail] report failed', e)
-    ElMessage.warning('报错提交失败（需登录态）')
-  }
+// ── 题目报错（V1：功能开发中，本卡 PRD F-5 删 API 函数 + view 改 noop） ─────
+function handleReport() {
+  ElMessage.info('题目报错功能开发中，敬请期待')
 }
 
 // ── 工具 ─────────────────────────────────────────────────────
@@ -488,17 +482,15 @@ onMounted(async () => {
             <span class="sidebar-card-title">我的备注</span>
           </div>
           <div class="sidebar-card-body" v-loading="notesLoading">
-            <div v-if="notes.length === 0 && !notesLoading" class="no-notes">
+            <div v-if="!note && !notesLoading" class="no-notes">
               还没有备注
             </div>
             <div
-              v-else
-              v-for="note in notes"
-              :key="note.id ?? note.createTime"
+              v-else-if="note"
               class="note-item"
             >
               <span class="note-content">{{ note.content }}</span>
-              <span class="note-time">{{ note.createTime }}</span>
+              <span class="note-time">{{ note.updateTime }}</span>
             </div>
             <!-- 添加备注 -->
             <div class="note-add">
