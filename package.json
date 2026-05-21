@@ -6,7 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:e2e": "playwright test",
+    "test:e2e:v1": "playwright test tests/v1-question-bank-regression.spec.ts",
+    "test:e2e:v1:headed": "playwright test tests/v1-question-bank-regression.spec.ts --headed",
+    "test:e2e:report": "playwright show-report"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",
