@@ -143,7 +143,7 @@ const resetLoading = ref(false)
 
 function onSearch() {
   pageParams.questionType = filter.questionType !== '' ? Number(filter.questionType) : undefined
-  pageParams.difficulty = filter.difficulty !== '' ? Number(filter.difficulty) : undefined
+  pageParams.difficult = filter.difficulty !== '' ? Number(filter.difficulty) : undefined
   pageParams.keyWord = filter.keyWord || undefined
   pageParams.pageIndex = 1
   fetchQuestions()
@@ -154,7 +154,7 @@ function onReset() {
   filter.difficulty = ''
   filter.keyWord = ''
   pageParams.questionType = undefined
-  pageParams.difficulty = undefined
+  pageParams.difficult = undefined
   pageParams.keyWord = undefined
   pageParams.subjectId = undefined
   pageParams.pageIndex = 1
@@ -181,6 +181,14 @@ const pageParams = reactive<QuestionPageParams>({
   pageSize: 10,
   notTaskQuestion: 0,
   notUsedQuestion: 0,
+})
+
+// 空态文案动态切换：
+// - 选了章节/教材且 0 题 → 数据建设中（BUG-2 ETL 错配，PRD §2.4 D-3 待重灌）
+// - 默认 / 改了筛选 0 题 → 引导改筛选
+const emptyDescription = computed(() => {
+  if (pageParams.subjectId) return '该章节暂无题目（数据建设中）'
+  return '暂无题目，请尝试调整筛选条件'
 })
 
 // 全局题目缓存 map（id → QuestionItem）
@@ -599,7 +607,7 @@ onMounted(async () => {
         <div v-loading="listLoading" class="question-list">
           <el-empty
             v-if="!listLoading && questions.length === 0"
-            description="暂无题目，请尝试调整筛选条件"
+            :description="emptyDescription"
             class="empty-state"
           >
             <template #image>

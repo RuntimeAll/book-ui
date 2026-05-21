@@ -70,13 +70,13 @@ export interface QuestionPageResult {
   isLastPage: boolean
 }
 
-// page 入参（⚠️ misikt 用 pageIndex 不是 pageNum）
+// page 入参（⚠️ misikt 用 pageIndex 不是 pageNum；difficult 无 y — BE BO 字段对齐）
 export interface QuestionPageParams {
   pageIndex: number
   pageSize: number
   subjectId?: string
   questionType?: number
-  difficulty?: number  // 入参仍用 difficulty（接口入参名）
+  difficult?: number  // ⚠️ BE QuestionPageBo.difficult 无 y，FE 必须对齐字段名才能让难度筛选生效
   keyWord?: string
   notTaskQuestion?: number
   notUsedQuestion?: number
@@ -177,11 +177,11 @@ export const genExamData = () =>
 
 /**
  * 从试题栏移除题目
- * 端点推测：POST /teacher/question/removeBasket/{id}（命名对称 addBasket）
- * TODO: playwright 抓取真实端点 — 无登录态时 misikt 不触发 API，待有 session 后验证
+ * 端点：POST /teacher/question/cancel/{id}（misikt 真站命名，BE QuestionBasketController 已实现）
+ * 函数名保留 removeBasket — FE 内部语义更清晰，调用方无感
  */
 export const removeBasket = (questionId: number) =>
-  request.post<unknown, unknown>(`/teacher/question/removeBasket/${questionId}`)
+  request.post<unknown, unknown>(`/teacher/question/cancel/${questionId}`)
 
 // ── 题目详情 / 原卷 / 错题栏接口（第十二波新增）──────────────────
 
