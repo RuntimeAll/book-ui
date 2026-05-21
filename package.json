@@ -6,11 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
-    "preview": "vite preview",
-    "test:e2e": "playwright test",
-    "test:e2e:v1": "playwright test tests/v1-question-bank-regression.spec.ts",
-    "test:e2e:v1:headed": "playwright test tests/v1-question-bank-regression.spec.ts --headed",
-    "test:e2e:report": "playwright show-report"
+    "preview": "vite preview"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",
@@ -25,14 +21,12 @@
   "devDependencies": {
     "@iconify-json/ep": "^1.2.4",
     "@iconify/vue": "^5.0.1",
-    "@playwright/test": "^1.60.0",
     "@types/node": "^24.12.3",
     "@unocss/preset-attributify": "^66.6.8",
     "@unocss/preset-icons": "^66.6.8",
     "@unocss/preset-wind3": "^66.6.8",
     "@vitejs/plugin-vue": "^6.0.6",
     "@vue/tsconfig": "^0.9.1",
-    "playwright": "^1.60.0",
     "typescript": "~6.0.2",
     "unocss": "^66.6.8",
     "unplugin-auto-import": "^21.0.0",
