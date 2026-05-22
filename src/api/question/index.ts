@@ -66,6 +66,7 @@ export interface QuestionItem {
   scoreStd?: string | null
   freeTag?: string | null              // 老字段（字符串），段③字典化后保留兼容
   freeTags?: FreeTagVo[]               // X 卡 段② BE 新字段，position asc 已排序
+  isFavorite?: boolean                 // J 卡 段② BE LEFT JOIN biz_question_favorite 返回，FE 列表心形态判断
 }
 
 // page 接口响应（PageHelper 结构）
