@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, computed } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Search, Star, ShoppingCart, Document } from '@element-plus/icons-vue'
+import { Search, Star } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import {
   getPaperLazyTree,
@@ -116,10 +116,6 @@ function handleNotOpen() {
   ElMessage.info('暂未开放')
 }
 
-// ── 浮动按钮角标（硬编码，跟 misikt 真站截图对齐）─────────
-const basketCount = computed(() => 1)
-const questionBarCount = computed(() => 4)
-
 // ── 生命周期 ──────────────────────────────────────────────
 onMounted(() => {
   loadTree()
@@ -227,19 +223,8 @@ onMounted(() => {
       </div>
     </section>
 
-    <!-- 右侧浮动按钮 -->
-    <div class="floating-btns">
-      <div class="floating-btn floating-btn-basket" @click="handleNotOpen">
-        <el-icon size="20" color="#fff"><ShoppingCart /></el-icon>
-        <span class="floating-btn-label">试卷篮</span>
-        <span class="floating-btn-badge">{{ basketCount }}</span>
-      </div>
-      <div class="floating-btn floating-btn-qbar" @click="handleNotOpen">
-        <el-icon size="20" color="#fff"><Document /></el-icon>
-        <span class="floating-btn-label">试题栏</span>
-        <span class="floating-btn-badge">{{ questionBarCount }}</span>
-      </div>
-    </div>
+    <!-- 全局试题栏 FAB 已挂 AppLayout（E 段③' 决策）— 卷库页面不再独立挂浮按钮 -->
+    <!-- "试卷篮"卡片内 el-link 保留 handleNotOpen 行为（F 卡范围，本卡不动）-->
   </div>
 </template>
 
@@ -427,63 +412,5 @@ onMounted(() => {
   padding-left: 20px;
 }
 
-/* ── 右侧浮动按钮 ─────────────────────────── */
-.floating-btns {
-  position: fixed;
-  right: 16px;
-  top: 50%;
-  transform: translateY(-50%);
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  z-index: 100;
-}
-
-.floating-btn {
-  width: 52px;
-  height: 52px;
-  border-radius: 10px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  position: relative;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  transition: transform 0.15s ease;
-  color: #fff;
-}
-
-.floating-btn:hover {
-  transform: scale(1.05);
-}
-
-.floating-btn-basket {
-  background: linear-gradient(135deg, #ffb84d, #ff9933);
-}
-
-.floating-btn-qbar {
-  background: linear-gradient(135deg, #5aa0ff, #409eff);
-}
-
-.floating-btn-label {
-  font-size: 11px;
-  margin-top: 3px;
-}
-
-.floating-btn-badge {
-  position: absolute;
-  top: -6px;
-  right: -6px;
-  background: #f56c6c;
-  color: #fff;
-  font-size: 11px;
-  min-width: 18px;
-  height: 18px;
-  border-radius: 9px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 5px;
-}
+/* 右侧浮动按钮已删 — 全局 <QuestionBasket /> 挂 AppLayout 接管 */
 </style>

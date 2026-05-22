@@ -216,8 +216,11 @@ export type SimilarQuestion = QuestionItem
 
 // 原卷题目单条（GET /teacher/paper/source/{id} 下的题列表项）
 // 字段基于 QuestionItem 推断，是否一致待 playwright 验证
+// E 卡 段② BE 真接口 /teacher/exam/paper/detail 也返这个结构（含 sortNum / pqScore）
 export interface PaperSourceQuestion extends QuestionItem {
-  sort?: number | null
+  sort?: number | null            // biz_paper_question.sort（跨 section 全局题号；BE 也返这个字段）
+  sortNum?: number | null         // E 卡 段② BE 真返：跨 section 全局题号（别名）
+  pqScore?: number | null         // E 卡 段② BE 真返：单题分（biz_paper_question.score）
 }
 
 // 原卷详情响应
@@ -226,6 +229,28 @@ export interface PaperSourceDetail {
   paperName: string
   examYear?: string | null
   questions: PaperSourceQuestion[]
+}
+
+// ── E 卡 段② BE 真接口 /teacher/exam/paper/detail ──
+// 大题分组 VO
+export interface PaperSectionVo {
+  sectionId: number
+  title: string
+  sort: number
+  questions: PaperSourceQuestion[]
+}
+
+// 试卷详情 VO（卷头 + sections 分组）
+export interface PaperDetailVo {
+  paperId: number
+  paperName: string
+  subjectId?: string
+  score: number
+  suggestTime: number
+  questionCount: number
+  examYear?: string
+  paperType?: number
+  sections: PaperSectionVo[]
 }
 
 /**
@@ -271,6 +296,14 @@ export const getSimilarQuestions = (questionId: number) =>
  */
 export const getPaperSource = (paperId: number | string) =>
   request.get<PaperSourceDetail, PaperSourceDetail>(`/teacher/paper/source/${paperId}`)
+
+/**
+ * E 卡 段② — 获取试卷详情（卷头 + 大题分组 + 题）
+ * POST /teacher/exam/paper/detail body={paperId}
+ * BE envelope `{code, message, response}` 已被 advice 解包，拿到的是 response 内层
+ */
+export const getPaperDetail = (paperId: number | string) =>
+  request.post<PaperDetailVo, PaperDetailVo>('/teacher/exam/paper/detail', { paperId })
 
 // V1 删除：addErrorBasket / removeErrorBasket / reportQuestion 三个 API 函数
 // 原因：错题栏 + 题目报错本卡范围不实现，view 改为 noop + ElMessage warning "功能开发中"。
