@@ -2,7 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { ArrowLeft, Plus, Check, View, ShoppingCart } from '@element-plus/icons-vue'
+import { ArrowLeft, Check, View, ShoppingCart } from '@element-plus/icons-vue'
 import {
   getPaperDetail,
   type PaperDetailVo,
@@ -10,7 +10,6 @@ import {
   type PaperSourceQuestion,
 } from '@/api/question/index'
 import FreeTagList from '@/components/business/FreeTagList/index.vue'
-import QuestionDetailDrawer from '@/components/business/QuestionDetailDrawer/index.vue'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
 
 // ── 路由 ────────────────────────────────────────────────────
@@ -21,66 +20,11 @@ const paperId = computed(() => route.params.id as string)
 // ── 试题栏 composable（E 段③ — 全局 singleton，跟题库 / 全局 FAB 联动）──
 const basket = useQuestionBasket()
 
-// ── 错题栏 localStorage（保留 — PRD OOS-7，本卡不在共享范围）──
-const LS_ERROR_BOOK_IDS = 'book-ui:error-book-ids'
-
-function readErrorBookIds(): Set<number> {
-  try {
-    const raw = localStorage.getItem(LS_ERROR_BOOK_IDS)
-    if (!raw) return new Set()
-    const arr: number[] = JSON.parse(raw)
-    return new Set(Array.isArray(arr) ? arr : [])
-  } catch {
-    return new Set()
-  }
-}
-
-function writeErrorBookIds(ids: Set<number>) {
-  try {
-    localStorage.setItem(LS_ERROR_BOOK_IDS, JSON.stringify([...ids]))
-  } catch (e) {
-    console.warn('[errorBook] localStorage write failed', e)
-  }
-}
-
-const errorBookIds = ref<Set<number>>(readErrorBookIds())
-const errorBookToggleLoading = ref<Set<number>>(new Set())
-
-async function handleErrorBookToggle(question: PaperSourceQuestion) {
-  const id = question.id
-  if (errorBookToggleLoading.value.has(id)) return
-
-  // 防连点
-  const newLoading = new Set(errorBookToggleLoading.value)
-  newLoading.add(id)
-  errorBookToggleLoading.value = newLoading
-
-  const wasIn = errorBookIds.value.has(id)
-  const newSet = new Set(errorBookIds.value)
-
-  // V1: 错题栏功能本卡范围未实装 BE 端点，仅 localStorage 持久化（view-only）。
-  if (wasIn) {
-    newSet.delete(id)
-    errorBookIds.value = newSet
-    writeErrorBookIds(newSet)
-    ElMessage.success('已从错题栏移除')
-  } else {
-    newSet.add(id)
-    errorBookIds.value = newSet
-    writeErrorBookIds(newSet)
-    ElMessage.success('已加入错题栏')
-  }
-
-  const doneLoading = new Set(errorBookToggleLoading.value)
-  doneLoading.delete(id)
-  errorBookToggleLoading.value = doneLoading
-}
-
 // ── 卷详情数据（E 段② BE 真接口 POST /teacher/exam/paper/detail） ──
 const detail = ref<PaperDetailVo | null>(null)
 const loading = ref(false)
 
-// 所有题（flatten — 错题栏 / basket 操作遍历用）
+// 所有题（flatten — 空状态判断 + basket 操作遍历用）
 const allQuestions = computed<PaperSourceQuestion[]>(() => {
   if (!detail.value || !Array.isArray(detail.value.sections)) return []
   return detail.value.sections.flatMap((s) => s.questions || [])
@@ -141,15 +85,18 @@ function getQuestionTypeTag(type: number): 'success' | 'warning' | 'info' | 'pri
   return map[type] ?? 'info'
 }
 
-// ── 详情抽屉 ──
-const detailDrawerVisible = ref(false)
-const detailDrawerQuestionId = ref<number | null>(null)
-const detailDrawerQuestionData = ref<PaperSourceQuestion | null>(null)
-
-function openDetailDrawer(q: PaperSourceQuestion) {
-  detailDrawerQuestionId.value = q.id
-  detailDrawerQuestionData.value = q
-  detailDrawerVisible.value = true
+// ── 详情按钮 — 路由跳详情独立页（跟题库 question/index.vue:257-269 一致）──
+function handleDetail(q: PaperSourceQuestion) {
+  // 存 cache 供详情页兜底（接口 500 时从 localStorage 读）
+  try {
+    const cacheKey = 'book-ui:question-cache-by-id'
+    const existing = JSON.parse(localStorage.getItem(cacheKey) || '{}')
+    existing[String(q.id)] = q
+    localStorage.setItem(cacheKey, JSON.stringify(existing))
+  } catch (e) {
+    console.warn('[paper-source] detail cache write failed', e)
+  }
+  router.push(`/question/detail/${q.id}`)
 }
 
 // ── 试题栏 toggle ──
@@ -226,10 +173,7 @@ onMounted(() => {
             v-for="q in section.questions"
             :key="q.id"
             class="source-question-card"
-            :class="{
-              'in-error-book': errorBookIds.has(q.id),
-              'in-basket': basket.basketIds.value.has(q.id),
-            }"
+            :class="{ 'in-basket': basket.basketIds.value.has(q.id) }"
           >
             <!-- 题号行 + 操作按钮组 -->
             <div class="q-header-row">
@@ -244,13 +188,13 @@ onMounted(() => {
               </div>
 
               <div class="q-header-actions">
-                <!-- 详情按钮 -->
+                <!-- 详情按钮 — 跳独立详情页（跟题库一致）-->
                 <el-button
                   size="small"
                   type="primary"
                   plain
                   class="action-btn"
-                  @click="openDetailDrawer(q)"
+                  @click="handleDetail(q)"
                 >
                   <el-icon><View /></el-icon>
                   详情
@@ -270,21 +214,6 @@ onMounted(() => {
                   <el-icon v-else><ShoppingCart /></el-icon>
                   {{ basket.basketIds.value.has(q.id) ? '已在试题栏' : '+ 试题栏' }}
                 </el-button>
-
-                <!-- 错题栏（保留 — 不在 E 卡共享范围）-->
-                <el-button
-                  size="small"
-                  class="action-btn error-book-btn"
-                  :class="{ 'error-book-btn--added': errorBookIds.has(q.id) }"
-                  :type="errorBookIds.has(q.id) ? 'warning' : undefined"
-                  :plain="!errorBookIds.has(q.id)"
-                  :loading="errorBookToggleLoading.has(q.id)"
-                  @click="handleErrorBookToggle(q)"
-                >
-                  <el-icon v-if="errorBookIds.has(q.id)"><Check /></el-icon>
-                  <el-icon v-else><Plus /></el-icon>
-                  {{ errorBookIds.has(q.id) ? '已加错题栏' : '加入错题栏' }}
-                </el-button>
               </div>
             </div>
 
@@ -303,40 +232,42 @@ onMounted(() => {
               <p v-else class="q-stem-placeholder">（题目 ID: {{ q.id }}）</p>
             </div>
 
-            <!-- 知识点 tags -->
+            <!-- 知识点 / 标签分区（参考 misikt 实现 — 各自带 label 单独成行）-->
             <div
-              v-if="q.questionKnowledges && q.questionKnowledges.length > 0"
-              class="q-knowledge-tags"
+              v-if="(q.questionKnowledges && q.questionKnowledges.length > 0) || (q.freeTags && q.freeTags.length > 0)"
+              class="q-meta-tags"
             >
-              <el-tag
-                v-for="(k, idx) in q.questionKnowledges"
-                :key="k.knowledgeId || idx"
-                :type="(['success', 'primary', 'warning', 'danger', 'info'] as const)[idx % 5]"
-                size="small"
+              <div
+                v-if="q.questionKnowledges && q.questionKnowledges.length > 0"
+                class="meta-tag-row"
               >
-                {{ k.knowledgeName || k.knowledgeId }}
-              </el-tag>
+                <span class="meta-tag-label">知识点：</span>
+                <el-tag
+                  v-for="(k, idx) in q.questionKnowledges"
+                  :key="k.knowledgeId || idx"
+                  :type="(['success', 'primary', 'warning', 'danger', 'info'] as const)[idx % 5]"
+                  size="small"
+                  class="meta-tag-item"
+                >
+                  {{ k.knowledgeName || k.knowledgeId }}
+                </el-tag>
+              </div>
+              <div
+                v-if="q.freeTags && q.freeTags.length > 0"
+                class="meta-tag-row"
+              >
+                <span class="meta-tag-label">标签：</span>
+                <FreeTagList
+                  :tags="q.freeTags"
+                  mode="detail"
+                  class="meta-tag-freetag-list"
+                />
+              </div>
             </div>
-
-            <!-- 自由标签 freeTags（X 卡 段③）— detail 模式 -->
-            <FreeTagList
-              v-if="q.freeTags && q.freeTags.length > 0"
-              :tags="q.freeTags"
-              mode="detail"
-              class="q-free-tags"
-            />
           </div>
         </section>
       </div>
     </div>
-
-    <!-- 题目详情抽屉（E 段③ 新加）-->
-    <QuestionDetailDrawer
-      :visible="detailDrawerVisible"
-      :question-id="detailDrawerQuestionId"
-      :question-data="detailDrawerQuestionData"
-      @update:visible="(val: boolean) => (detailDrawerVisible = val)"
-    />
   </div>
 </template>
 
@@ -489,19 +420,8 @@ onMounted(() => {
   border-color: #d0e2ff;
 }
 
-.source-question-card.in-error-book {
-  border-left: 3px solid #f7ba1e;
-  background: #fffdf0;
-}
-
 .source-question-card.in-basket {
   border-left: 3px solid #34c38f;
-  background: #f8fffe;
-}
-
-/* in-error-book 和 in-basket 同时存在时，basket 优先 */
-.source-question-card.in-basket.in-error-book {
-  border-left-color: #34c38f;
   background: #f8fffe;
 }
 
@@ -601,10 +521,6 @@ onMounted(() => {
   background: #fff5f5 !important;
 }
 
-.error-book-btn--added {
-  opacity: 0.85;
-}
-
 /* ── 题干区 ── */
 .q-stem-area {
   min-height: 80px;
@@ -630,16 +546,36 @@ onMounted(() => {
   margin: 0;
 }
 
-/* ── 知识点 tags ── */
-.q-knowledge-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+/* ── 知识点 / 标签分区（misikt 风格 — 各成一行带 label）── */
+.q-meta-tags {
   margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
-/* ── 自由标签 freeTags ── */
-.q-free-tags {
-  margin-top: 8px;
+.meta-tag-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.meta-tag-label {
+  font-size: 12px;
+  color: #86909c;
+  font-weight: 500;
+  flex-shrink: 0;
+  min-width: 48px;
+}
+
+.meta-tag-item {
+  flex-shrink: 0;
+}
+
+.meta-tag-freetag-list {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 </style>
