@@ -20,8 +20,8 @@ const props = withDefaults(
   { mode: 'list', tags: () => [] },
 )
 
-const CYCLE = ['', 'success', 'warning'] as const  // '' = el-tag 默认蓝；success 绿；warning 橙
-type TagType = '' | 'success' | 'warning' | 'info' | 'primary' | 'danger'
+const CYCLE = ['primary', 'success', 'warning'] as const  // primary 蓝；success 绿；warning 橙
+type TagType = 'primary' | 'success' | 'warning' | 'info' | 'danger'
 
 // 排序保险：BE 已按 position asc，这里再兜底排一次（防接口顺序错乱）
 const sortedTags = computed<FreeTagItem[]>(() => {
@@ -32,7 +32,7 @@ const sortedTags = computed<FreeTagItem[]>(() => {
 function resolveType(position: number): TagType {
   if (props.mode === 'list') {
     // list: position 0 蓝；后续 (position-1) % 3 → [蓝, 绿, 橙]
-    if (position === 0) return ''
+    if (position === 0) return 'primary'
     return CYCLE[(position - 1) % 3]
   }
   // detail: 全部 position % 3 → [蓝, 绿, 橙]
