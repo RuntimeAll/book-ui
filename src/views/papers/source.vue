@@ -2,7 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { ArrowLeft, Check, View, ShoppingCart } from '@element-plus/icons-vue'
+import { ArrowLeft, Check, View, ShoppingCart, Edit, Star, InfoFilled } from '@element-plus/icons-vue'
 import {
   getPaperDetail,
   type PaperDetailVo,
@@ -109,6 +109,14 @@ async function handleBasketToggle(q: PaperSourceQuestion) {
   }
 }
 
+// ── 草稿 / 收藏 placeholder（misikt 风格题块顶部右侧）──
+function handleDraft() {
+  ElMessage.info('草稿功能开发中')
+}
+function handleFavorite() {
+  ElMessage.info('收藏功能开发中')
+}
+
 function goBack() {
   router.back()
 }
@@ -168,43 +176,45 @@ onMounted(() => {
             <span class="section-sub">（共 {{ section.questions?.length ?? 0 }} 题，共 {{ sectionTotalScore(section) }} 分）</span>
           </h3>
 
-          <!-- 题目卡片 -->
+          <!-- 题目卡片 — misikt 风格：顶 meta + 题干 + 底 meta -->
           <div
             v-for="q in section.questions"
             :key="q.id"
             class="source-question-card"
             :class="{ 'in-basket': basket.basketIds.value.has(q.id) }"
           >
-            <!-- 题号行 + 操作按钮组 -->
-            <div class="q-header-row">
-              <div class="q-header-left">
-                <span class="q-num">{{ q.sortNum ?? q.sort ?? '' }}.</span>
-                <span class="q-type-tag" :class="`q-type--${getQuestionTypeTag(q.questionType)}`">
-                  {{ getQuestionTypeLabel(q.questionType) }}
-                </span>
-                <span v-if="getQuestionScore(q) != null" class="q-score">
-                  {{ getQuestionScore(q) }} 分
-                </span>
-              </div>
-
-              <div class="q-header-actions">
-                <!-- 详情按钮 — 跳独立详情页（跟题库一致）-->
-                <el-button
-                  size="small"
+            <!-- ══ 顶部 meta 行：难度 + 知识点 + (右) 草稿/收藏/+试题栏 ══ -->
+            <div class="q-meta-top">
+              <div class="q-meta-top-left">
+                <span class="meta-label">难度:</span>
+                <el-rate
+                  :model-value="q.difficult ?? 0"
+                  :max="4"
+                  disabled
+                  class="meta-rate"
+                />
+                <span class="meta-label">知识点:</span>
+                <el-tag
+                  v-if="q.questionKnowledges && q.questionKnowledges.length > 0"
                   type="primary"
-                  plain
-                  class="action-btn"
-                  @click="handleDetail(q)"
+                  size="small"
+                  class="primary-knowledge-tag"
                 >
-                  <el-icon><View /></el-icon>
-                  详情
+                  {{ q.questionKnowledges[0].knowledgeName || q.questionKnowledges[0].knowledgeId }}
+                </el-tag>
+                <span v-else class="knowledge-empty">暂无</span>
+              </div>
+              <div class="q-meta-top-right">
+                <el-button size="small" link class="action-icon-btn" @click="handleDraft">
+                  <el-icon><Edit /></el-icon>草稿
                 </el-button>
-
-                <!-- 试题栏 toggle 按钮 -->
+                <el-button size="small" link class="action-icon-btn" @click="handleFavorite">
+                  <el-icon><Star /></el-icon>
+                </el-button>
                 <el-button
                   size="small"
-                  class="action-btn"
-                  :class="{ 'action-btn--basket-added': basket.basketIds.value.has(q.id) }"
+                  class="action-basket-btn"
+                  :class="{ 'action-basket-btn--added': basket.basketIds.value.has(q.id) }"
                   :type="basket.basketIds.value.has(q.id) ? undefined : 'primary'"
                   :plain="!basket.basketIds.value.has(q.id)"
                   :loading="basket.isLoading(q.id)"
@@ -217,51 +227,56 @@ onMounted(() => {
               </div>
             </div>
 
-            <!-- 题干图 -->
+            <!-- ══ 题干区（题号 + 类型 + 分 + 题干图/文）══ -->
             <div class="q-stem-area">
-              <img
-                v-if="q.stemImg"
-                :src="q.stemImg"
-                class="q-stem-img"
-                alt="题干"
-                referrerpolicy="no-referrer"
-                loading="lazy"
-                @error="(e: Event) => ((e.target as HTMLImageElement).style.display='none')"
-              />
-              <p v-else-if="q.stemText" class="q-stem-text">{{ q.stemText }}</p>
-              <p v-else class="q-stem-placeholder">（题目 ID: {{ q.id }}）</p>
+              <div class="q-stem-header">
+                <span class="q-num">{{ q.sortNum ?? q.sort ?? '' }}.</span>
+                <span class="q-type-tag" :class="`q-type--${getQuestionTypeTag(q.questionType)}`">
+                  {{ getQuestionTypeLabel(q.questionType) }}
+                </span>
+                <span v-if="getQuestionScore(q) != null" class="q-score">
+                  {{ getQuestionScore(q) }} 分
+                </span>
+              </div>
+              <div class="q-stem-body">
+                <img
+                  v-if="q.stemImg"
+                  :src="q.stemImg"
+                  class="q-stem-img"
+                  alt="题干"
+                  referrerpolicy="no-referrer"
+                  loading="lazy"
+                  @error="(e: Event) => ((e.target as HTMLImageElement).style.display='none')"
+                />
+                <p v-else-if="q.stemText" class="q-stem-text">{{ q.stemText }}</p>
+                <p v-else class="q-stem-placeholder">（题目 ID: {{ q.id }}）</p>
+              </div>
             </div>
 
-            <!-- 知识点 / 标签分区（参考 misikt 实现 — 各自带 label 单独成行）-->
-            <div
-              v-if="(q.questionKnowledges && q.questionKnowledges.length > 0) || (q.freeTags && q.freeTags.length > 0)"
-              class="q-meta-tags"
-            >
-              <div
-                v-if="q.questionKnowledges && q.questionKnowledges.length > 0"
-                class="meta-tag-row"
-              >
-                <span class="meta-tag-label">知识点：</span>
-                <el-tag
-                  v-for="(k, idx) in q.questionKnowledges"
-                  :key="k.knowledgeId || idx"
-                  :type="(['success', 'primary', 'warning', 'danger', 'info'] as const)[idx % 5]"
-                  size="small"
-                  class="meta-tag-item"
-                >
-                  {{ k.knowledgeName || k.knowledgeId }}
-                </el-tag>
-              </div>
-              <div
-                v-if="q.freeTags && q.freeTags.length > 0"
-                class="meta-tag-row"
-              >
-                <span class="meta-tag-label">标签：</span>
+            <!-- ══ 底部 meta 行：来源 + freeTags + (右) 详情 link ══ -->
+            <div class="q-meta-bottom">
+              <div class="q-meta-bottom-left">
+                <span v-if="q.examPaperName" class="source-text">
+                  来源: {{ q.examPaperName }}{{ q.examYear ? ` · ${q.examYear}年` : '' }}
+                </span>
                 <FreeTagList
+                  v-if="q.freeTags && q.freeTags.length > 0"
                   :tags="q.freeTags"
                   mode="detail"
-                  class="meta-tag-freetag-list"
+                  class="bottom-freetag-list"
                 />
+              </div>
+              <div class="q-meta-bottom-right">
+                <el-button
+                  size="small"
+                  link
+                  type="primary"
+                  class="detail-link-btn"
+                  @click="handleDetail(q)"
+                >
+                  <el-icon><InfoFilled /></el-icon>
+                  详情
+                </el-button>
               </div>
             </div>
           </div>
@@ -425,20 +440,97 @@ onMounted(() => {
   background: #f8fffe;
 }
 
-/* ── 题号行 ── */
-.q-header-row {
+/* ── 顶部 meta 行（misikt 风格：左 难度+知识点 / 右 草稿+收藏+试题栏） ── */
+.q-meta-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: 12px;
   gap: 8px;
   flex-wrap: wrap;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #f7f8fa;
 }
 
-.q-header-left {
+.q-meta-top-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.q-meta-top-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.meta-label {
+  font-size: 12px;
+  color: #86909c;
+  font-weight: 500;
+}
+
+.meta-rate {
+  height: 18px;
+}
+
+:deep(.meta-rate .el-rate__item) {
+  font-size: 15px;
+}
+
+.primary-knowledge-tag {
+  font-size: 12px;
+}
+
+.knowledge-empty {
+  font-size: 12px;
+  color: #c9cdd4;
+}
+
+.action-icon-btn {
+  font-size: 13px;
+  color: #4e5969;
+  padding: 0 4px;
+  gap: 2px;
+}
+
+.action-icon-btn:hover {
+  color: #4080ff;
+}
+
+.action-basket-btn {
+  border-radius: 5px;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  transition: all 0.2s ease;
+}
+
+.action-basket-btn--added {
+  color: #86909c !important;
+  border-color: #c9cdd4 !important;
+  background: #f7f8fa !important;
+}
+
+.action-basket-btn--added:hover {
+  color: #f56c6c !important;
+  border-color: #f56c6c !important;
+  background: #fff5f5 !important;
+}
+
+/* ── 题干区（题号融入 stem-header）── */
+.q-stem-area {
+  min-height: 80px;
+}
+
+.q-stem-header {
   display: flex;
   align-items: center;
   gap: 8px;
+  margin-bottom: 8px;
 }
 
 .q-num {
@@ -490,42 +582,6 @@ onMounted(() => {
   font-weight: 600;
 }
 
-/* ── 操作按钮组 ── */
-.q-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-  flex-wrap: wrap;
-}
-
-.action-btn {
-  border-radius: 5px;
-  font-size: 12px;
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  transition: all 0.2s ease;
-}
-
-/* 已加入试题栏 → 灰色态 + hover danger（跟 question/index.vue 一致风格） */
-.action-btn--basket-added {
-  color: #86909c !important;
-  border-color: #c9cdd4 !important;
-  background: #f7f8fa !important;
-}
-
-.action-btn--basket-added:hover {
-  color: #f56c6c !important;
-  border-color: #f56c6c !important;
-  background: #fff5f5 !important;
-}
-
-/* ── 题干区 ── */
-.q-stem-area {
-  min-height: 80px;
-}
-
 .q-stem-img {
   max-width: 100%;
   height: auto;
@@ -546,36 +602,46 @@ onMounted(() => {
   margin: 0;
 }
 
-/* ── 知识点 / 标签分区（misikt 风格 — 各成一行带 label）── */
-.q-meta-tags {
-  margin-top: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.meta-tag-row {
+/* ── 底部 meta 行（misikt 风格：左 来源+freeTags / 右 详情 link） ── */
+.q-meta-bottom {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #f7f8fa;
   flex-wrap: wrap;
-  gap: 6px;
 }
 
-.meta-tag-label {
+.q-meta-bottom-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.q-meta-bottom-right {
+  flex-shrink: 0;
+}
+
+.source-text {
   font-size: 12px;
   color: #86909c;
-  font-weight: 500;
-  flex-shrink: 0;
-  min-width: 48px;
 }
 
-.meta-tag-item {
-  flex-shrink: 0;
-}
-
-.meta-tag-freetag-list {
+.bottom-freetag-list {
   display: inline-flex;
   flex-wrap: wrap;
   gap: 4px;
+}
+
+.detail-link-btn {
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
 }
 </style>

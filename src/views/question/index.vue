@@ -499,48 +499,31 @@ onMounted(async () => {
               <span v-else class="stem-placeholder">（题干加载中）</span>
             </div>
 
-            <!-- 来源行（灰色小字）-->
-            <div v-if="q.examPaperName || q.examYear" class="card-source-row">
-              <span v-if="q.examPaperName" class="source-text">来源: {{ q.examPaperName }}</span>
-              <span v-if="q.examYear" class="source-text">年份: {{ q.examYear }}</span>
-            </div>
-
-            <!-- 底部知识点彩色 tag 行（子任务 E）：展示全部 questionKnowledges，多色轮换 -->
-            <div
-              v-if="q.questionKnowledges && q.questionKnowledges.length > 0"
-              class="card-knowledge-tags-row"
-            >
-              <el-tag
-                v-for="(k, idx) in q.questionKnowledges"
-                :key="k.knowledgeId || idx"
-                :type="(['success', 'primary', 'warning', 'danger', 'info'] as const)[idx % 5]"
-                size="small"
-                class="knowledge-bottom-tag"
-              >
-                {{ k.knowledgeName || k.knowledgeId }}
-              </el-tag>
-            </div>
-
-            <!-- 自由标签 freeTags（X 卡 段③：字典化 + 彩色 tag）-->
-            <FreeTagList
-              v-if="q.freeTags && q.freeTags.length > 0"
-              :tags="q.freeTags"
-              mode="list"
-              class="free-tag-row"
-            />
-
-            <!-- 卡片底部操作行（详情按钮）-->
-            <div class="card-footer-row">
-              <el-button
-                size="small"
-                link
-                type="primary"
-                class="detail-link-btn"
-                @click="handleDetail(q)"
-              >
-                <Icon icon="ep:view" :size="13" />
-                <span style="margin-left: 3px;">详情</span>
-              </el-button>
+            <!-- ══ 底部 meta 行（misikt 风格：来源 + 底部知识点 + freeTags 同一行 / 右 详情 link）══ -->
+            <div class="card-meta-bottom">
+              <div class="card-meta-bottom-left">
+                <span v-if="q.examPaperName" class="source-text">
+                  来源: {{ q.examPaperName }}{{ q.examYear ? ` · ${q.examYear}年` : '' }}
+                </span>
+                <FreeTagList
+                  v-if="q.freeTags && q.freeTags.length > 0"
+                  :tags="q.freeTags"
+                  mode="list"
+                  class="bottom-freetag-list"
+                />
+              </div>
+              <div class="card-meta-bottom-right">
+                <el-button
+                  size="small"
+                  link
+                  type="primary"
+                  class="detail-link-btn"
+                  @click="handleDetail(q)"
+                >
+                  <Icon icon="ep:view" :size="13" />
+                  <span style="margin-left: 3px;">详情</span>
+                </el-button>
+              </div>
             </div>
           </div>
         </div>
@@ -835,17 +818,40 @@ onMounted(async () => {
   color: #c9cdd4;
 }
 
-/* ── 来源行 ── */
-.card-source-row {
+/* ── 底部 meta 行（misikt 风格：来源 + freeTags / 右 详情 link） ── */
+.card-meta-bottom {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 8px;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #f7f8fa;
+  flex-wrap: wrap;
+}
+
+.card-meta-bottom-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.card-meta-bottom-right {
+  flex-shrink: 0;
 }
 
 .source-text {
   font-size: 12px;
   color: #86909c;
+}
+
+.bottom-freetag-list {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 
 /* ── 操作按钮 ── */
@@ -875,41 +881,6 @@ onMounted(async () => {
   color: #f56c6c !important;
   border-color: #f56c6c !important;
   background: #fff5f5 !important;
-}
-
-/* ── 底部知识点彩色 tag 行（子任务 E）── */
-.card-knowledge-tags-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 8px;
-  margin-top: 2px;
-}
-
-.knowledge-bottom-tag {
-  cursor: default;
-  transition: background 0.18s ease, box-shadow 0.18s ease;
-  border-radius: 4px;
-}
-
-.knowledge-bottom-tag:hover {
-  filter: brightness(0.94);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
-}
-
-/* ── freeTags 行（X 卡 段③）── */
-.free-tag-row {
-  margin-top: 4px;
-  margin-bottom: 8px;
-}
-
-/* ── 卡片底部行（详情按钮）── */
-.card-footer-row {
-  display: flex;
-  justify-content: flex-end;
-  border-top: 1px solid #f7f8fa;
-  padding-top: 8px;
-  margin-top: 4px;
 }
 
 .detail-link-btn {

@@ -265,7 +265,7 @@ onMounted(async () => {
         <div class="meta-row">
           <div class="meta-left">
             <!-- 难度星 -->
-            <span class="meta-label">难度</span>
+            <span class="meta-label">难度:</span>
             <span class="stars-row">
               <span
                 v-for="(active, i) in getDifficultyStars(question.difficult)"
@@ -274,23 +274,17 @@ onMounted(async () => {
                 :class="{ 'star-active': active }"
               >★</span>
             </span>
-            <!-- 知识点 tags -->
+            <!-- 知识点 — misikt 风格：label + 主知识点单 tag -->
+            <span class="meta-label">知识点:</span>
             <el-tag
-              v-for="(k, idx) in (question.questionKnowledges || [])"
-              :key="k.knowledgeId || idx"
-              :type="getKnowledgeTagType(idx)"
+              v-if="question.questionKnowledges && question.questionKnowledges.length > 0"
+              type="primary"
               size="small"
               class="knowledge-tag"
             >
-              {{ k.knowledgeName || k.knowledgeId }}
+              {{ question.questionKnowledges[0].knowledgeName || question.questionKnowledges[0].knowledgeId }}
             </el-tag>
-            <!-- 自由标签 freeTags（X 卡 段③）— detail 模式：全 mini，position % 3 循环 -->
-            <FreeTagList
-              v-if="question.freeTags && question.freeTags.length > 0"
-              :tags="question.freeTags"
-              mode="detail"
-              class="free-tag-list-inline"
-            />
+            <span v-else class="knowledge-empty">暂无</span>
           </div>
           <div class="meta-right">
             <!-- 草稿 -->
@@ -338,14 +332,24 @@ onMounted(async () => {
           <p v-else class="stem-placeholder">（题干数据暂无）</p>
         </div>
 
-        <!-- 来源行 -->
-        <div v-if="question.examPaperName || question.examYear" class="source-row">
+        <!-- 来源行 + freeTags + 问AI（misikt 风格：来源 + 多个 freeTag 同一行）-->
+        <div
+          v-if="question.examPaperName || question.examYear || (question.freeTags && question.freeTags.length > 0)"
+          class="source-row"
+        >
           <span v-if="question.examPaperName" class="source-item">
-            来源: {{ question.examPaperName }}
+            来源: {{ question.examPaperName }}{{ question.examYear ? ` · ${question.examYear}年` : '' }}
           </span>
-          <span v-if="question.examYear" class="source-item">
+          <span v-else-if="question.examYear" class="source-item">
             年份: {{ question.examYear }}
           </span>
+          <!-- 自由标签 freeTags（X 卡 段③ + 用户验收轮 2 调整位置 → misikt 底部布局）-->
+          <FreeTagList
+            v-if="question.freeTags && question.freeTags.length > 0"
+            :tags="question.freeTags"
+            mode="detail"
+            class="source-row-freetag"
+          />
           <el-button
             size="small"
             link
@@ -642,9 +646,15 @@ onMounted(async () => {
   flex-shrink: 0;
 }
 
-.free-tag-list-inline {
+.knowledge-empty {
+  font-size: 12px;
+  color: #c9cdd4;
+}
+
+.source-row-freetag {
   display: inline-flex;
-  flex-shrink: 0;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 
 .meta-right {
