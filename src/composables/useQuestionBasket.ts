@@ -230,11 +230,15 @@ export interface UseQuestionBasket {
 }
 
 export function useQuestionBasket(): UseQuestionBasket {
-  // 首次调用：自动同步 server 角标
+  // J 卡 段① 选项 1：不再启动自动 sync BE — 信任本地 LS 为准。
+  // 原因（详 PRD/2026-05-22-J-page-response-optimize/PRD.md §0.1）：
+  //   - 用户反馈：第二波部署后 FAB 角标"刚开始 4，过几秒变 12"，
+  //     原因是历史脏数据使 BE basket 跟本地 LS 不一致
+  //   - 架构上 add/remove 已经是乐观更新（本地优先），sync 反过来"以 BE 为准"是架构矛盾
+  //   - 跨设备真同步不在 V0 范围 — 未来要做立专门卡（带冲突解决 + 版本号）
+  // syncFromServer 函数保留供 caller 手动 explicit 触发（如未来"刷新 basket"按钮）
   if (!_initialized) {
     _initialized = true
-    // fire-and-forget；失败不挡 UI（已 console.warn）
-    syncFromServer()
   }
   return {
     basketIds: _basketIds as Readonly<Ref<Set<number>>>,

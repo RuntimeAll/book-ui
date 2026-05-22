@@ -5,7 +5,6 @@ import { Search, Edit, Star, ShoppingCart, Document, Key } from '@element-plus/i
 import {
   lazyTree,
   questionPage,
-  getFavorite,
   removeFavorite,
   type SubjectNode,
   type QuestionItem,
@@ -161,7 +160,7 @@ async function fetchQuestions() {
       questions.value = []
       total.value = 0
     }
-    loadFavoriteStatus()
+    // J 卡段③：原 loadFavoriteStatus() N+1 删除，收藏态由 BE /page 响应里 q.isFavorite 直接带（段② BE 新加字段）
   } catch (e) {
     console.warn('[questions] page failed', e)
     questions.value = []
@@ -176,25 +175,12 @@ function handlePageChange(page: number) {
 }
 
 // ── 收藏状态 ─────────────────────────────────────────────────
-const favoriteMap = reactive<Record<number, boolean>>({})
-
-async function loadFavoriteStatus() {
-  const ids = questions.value.map((q) => q.id)
-  await Promise.allSettled(
-    ids.map(async (id) => {
-      try {
-        const res = await getFavorite(id)
-        if (typeof res === 'boolean') {
-          favoriteMap[id] = res
-        } else if (res && typeof res === 'object') {
-          const r = res as Record<string, unknown>
-          favoriteMap[id] = Boolean(r['favorite'] ?? r['isFavorite'] ?? false)
-        }
-      } catch {
-        favoriteMap[id] = false
-      }
-    }),
-  )
+// J 卡段③：原 favoriteMap + loadFavoriteStatus N+1 删除。
+// 收藏态由 BE /page 响应里 q.isFavorite 字段直接带（段② BE 加字段）。
+// 收藏 / 取消时直接 patch q.isFavorite（reactive array 元素 property 改动 Vue 3 响应）。
+function setQuestionFavorite(qid: number, fav: boolean) {
+  const q = questions.value.find((it) => it.id === qid)
+  if (q) q.isFavorite = fav
 }
 
 // ── 试题栏 toggle ────────────────────────────────────────────
@@ -223,8 +209,7 @@ const favDrawerQuestionId = ref<number>(0)
 
 function handleFavorite(q: QuestionItem) {
   if (favoriteLoading.has(q.id)) return
-  const isFav = favoriteMap[q.id]
-  if (isFav) {
+  if (q.isFavorite) {
     // 已收藏 → 直接取消，不弹抽屉
     handleRemoveFavorite(q)
   } else {
@@ -237,8 +222,8 @@ function handleFavorite(q: QuestionItem) {
 function handleRemoveFavorite(q: QuestionItem) {
   if (favoriteLoading.has(q.id)) return
 
-  // 乐观更新：先更新本地状态 + toast，再异步调 API
-  favoriteMap[q.id] = false
+  // 乐观更新：直接 patch q.isFavorite + toast，异步调 API
+  setQuestionFavorite(q.id, false)
   ElMessage.success('已取消收藏')
 
   removeFavorite(q.id)
@@ -248,9 +233,9 @@ function handleRemoveFavorite(q: QuestionItem) {
 }
 
 function handleFavDrawerSuccess(_folderId: number | string | undefined) {
-  // 收藏抽屉内成功收藏 → 更新本地 favoriteMap
+  // 收藏抽屉内成功收藏 → patch q.isFavorite
   if (favDrawerQuestionId.value) {
-    favoriteMap[favDrawerQuestionId.value] = true
+    setQuestionFavorite(favDrawerQuestionId.value, true)
   }
 }
 
@@ -455,12 +440,12 @@ onMounted(async () => {
                 <el-button
                   size="small"
                   class="action-btn"
-                  :type="favoriteMap[q.id] ? 'warning' : undefined"
+                  :type="q.isFavorite ? 'warning' : undefined"
                   :loading="favoriteLoading.has(q.id)"
                   @click="handleFavorite(q)"
                 >
                   <el-icon><Star /></el-icon>
-                  {{ favoriteMap[q.id] ? '已收藏' : '收藏' }}
+                  {{ q.isFavorite ? '已收藏' : '收藏' }}
                 </el-button>
                 <!-- 试题栏 toggle 按钮（子任务 C）：未加入=蓝色描边 / 已加入=灰色+hover danger -->
                 <el-button

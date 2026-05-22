@@ -45,22 +45,26 @@ function getQuestionTypeTag(type: number): 'success' | 'warning' | 'info' | 'pri
 
 <template>
   <!-- ── FAB 试题栏浮动按钮 ── -->
-  <div
-    class="basket-fab"
-    :class="{ 'has-items': basket.count.value > 0 }"
-    @click="basket.openDialog()"
+  <!-- J 卡 段① 修：el-badge 改包整个 .basket-fab + 加 :offset 把角标贴到按钮右上角内侧，
+       不再嵌在 fab-inner 内部导致角标位置偏离按钮主体 -->
+  <el-badge
+    class="basket-fab-badge"
+    :value="basket.count.value > 99 ? '99+' : basket.count.value"
+    :hidden="basket.count.value === 0"
+    :offset="[-10, 8]"
+    type="danger"
   >
-    <el-badge
-      :value="basket.count.value > 99 ? '99+' : basket.count.value"
-      :hidden="basket.count.value === 0"
-      type="danger"
+    <div
+      class="basket-fab"
+      :class="{ 'has-items': basket.count.value > 0 }"
+      @click="basket.openDialog()"
     >
       <div class="fab-inner">
         <el-icon :size="20" color="#fff"><ShoppingCart /></el-icon>
         <span class="fab-label">试题栏</span>
       </div>
-    </el-badge>
-  </div>
+    </div>
+  </el-badge>
 
   <!-- ── 试题栏 dialog ── -->
   <el-dialog
@@ -184,11 +188,16 @@ function getQuestionTypeTag(type: number): 'success' | 'warning' | 'info' | 'pri
 
 <style scoped>
 /* ── FAB 浮动按钮 ── */
-.basket-fab {
+/* J 卡 段① 修：el-badge wrap 提供 fixed 定位锚点（替换原来 .basket-fab 上的 position:fixed） */
+.basket-fab-badge {
   position: fixed;
   bottom: 40px;
   right: 40px;
   z-index: 200;
+  line-height: 0; /* 防 el-badge 默认 inline-block 撑高度 */
+}
+
+.basket-fab {
   cursor: pointer;
 }
 
