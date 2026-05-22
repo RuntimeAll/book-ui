@@ -23,10 +23,29 @@ const props = withDefaults(
 const CYCLE = ['primary', 'success', 'warning'] as const  // primary 蓝；success 绿；warning 橙
 type TagType = 'primary' | 'success' | 'warning' | 'info' | 'danger'
 
-// 排序保险：BE 已按 position asc，这里再兜底排一次（防接口顺序错乱）
+// 排序保险：BE 已按 position asc，这里再兜底排一次（防接口顺序错乱）。
+// E 卡轮 3 兜底：X 卡数据迁移遗留 — biz_free_tag.name 中约 1621/4512 (35.9%) 是
+// "a,b,c,d" 中英文逗号串而不是单 tag（X 卡迁移把整串塞进字典）。FE 兜底 split 治标 —
+// 治本沉淀给 X' 补丁卡（V{n}__split_free_tags.sql）做数据迁移。
 const sortedTags = computed<FreeTagItem[]>(() => {
   const arr = Array.isArray(props.tags) ? [...props.tags] : []
-  return arr.sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+  const expanded: FreeTagItem[] = []
+  for (const t of arr) {
+    if (!t || typeof t.name !== 'string') continue
+    const parts = t.name.split(/[，,]/).map((s) => s.trim()).filter(Boolean)
+    if (parts.length <= 1) {
+      expanded.push(t)
+    } else {
+      parts.forEach((name, idx) => {
+        expanded.push({
+          id: Number(`${t.id}${idx}`) || t.id,
+          name,
+          position: (t.position ?? 0) * 100 + idx,
+        })
+      })
+    }
+  }
+  return expanded.sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
 })
 
 function resolveType(position: number): TagType {
