@@ -3,7 +3,8 @@ import AppLayout from '@/layout/AppLayout.vue'
 import { useUserStore } from '@/store/user'
 
 // 无需登录即可访问的白名单
-const PUBLIC_ROUTES = new Set<string>(['/login'])
+// U 卡 段⑧ — /register 加入白名单（注册时不能强制登录）
+const PUBLIC_ROUTES = new Set<string>(['/login', '/register'])
 
 const router = createRouter({
   history: createWebHashHistory(),
@@ -87,6 +88,12 @@ const router = createRouter({
       path: '/login',
       name: 'Login',
       component: () => import('@/views/login/index.vue'),
+    },
+    // U 卡 段⑧ — 注册页（无 layout 包裹）
+    {
+      path: '/register',
+      name: 'Register',
+      component: () => import('@/views/register/index.vue'),
     },
   ],
 })

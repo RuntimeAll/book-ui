@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { onMounted, reactive, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import type { FormInstance, FormRules } from 'element-plus'
 import {
   DEFAULT_CLIENT_ID,
@@ -17,6 +17,7 @@ import { useUserStore } from '@/store/user'
 // 失败兜底：拦截器已 ElMessage.error；本页仅 catch 后释放 loading 即可。
 
 const router = useRouter()
+const route = useRoute()
 const userStore = useUserStore()
 
 const formRef = ref<FormInstance | null>(null)
@@ -25,6 +26,19 @@ const form = reactive({
   username: 'admin',
   password: '',
 })
+
+// U 卡 段⑧ — 从 /register 跳回时 query.u 含注册的用户名，自动预填登录表单
+onMounted(() => {
+  const u = route.query.u
+  if (typeof u === 'string' && u.length > 0) {
+    form.username = u
+    form.password = ''
+  }
+})
+
+function goRegister() {
+  router.push('/register')
+}
 
 const rules: FormRules = {
   username: [
@@ -117,6 +131,10 @@ async function onSubmit() {
         >
           登录
         </el-button>
+
+        <div class="register-link">
+          还没有账号？<el-link type="primary" :underline="false" @click="goRegister">立即注册</el-link>
+        </div>
       </el-form>
     </el-card>
   </div>
@@ -158,5 +176,12 @@ async function onSubmit() {
 .login-button {
   width: 100%;
   margin-top: 8px;
+}
+
+.register-link {
+  margin-top: 16px;
+  text-align: center;
+  font-size: 13px;
+  color: #606266;
 }
 </style>
