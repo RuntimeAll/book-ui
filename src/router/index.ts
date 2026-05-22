@@ -44,6 +44,12 @@ const router = createRouter({
           component: () => import('@/views/PlaceholderView.vue'),
           props: { title: '首页' },
         },
+        // U 卡 段④ — 教师我的工作台聚合页
+        {
+          path: '/workspace',
+          name: 'Workspace',
+          component: () => import('@/views/workspace/index.vue'),
+        },
         {
           path: '/assignment/index',
           name: 'AssignmentIndex',

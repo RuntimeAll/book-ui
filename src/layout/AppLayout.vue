@@ -1,29 +1,56 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import QuestionBasket from '@/components/business/QuestionBasket/index.vue'
+import { useUserStore } from '@/store/user'
 
 const router = useRouter()
 const route = useRoute()
+const userStore = useUserStore()
 
 interface MenuItem {
   label: string
   path: string
+  /** U 卡新增 — 是否仅 admin/superadmin 才可见（教师视角隐藏占位空壳） */
+  adminOnly?: boolean
 }
 
 const menuItems: MenuItem[] = [
   { label: '首页', path: '/home' },
-  { label: '作业管理', path: '/assignment/index' },
-  { label: '学生管理', path: '/student/index' },
-  { label: '班级管理', path: '/class/index' },
+  { label: '我的工作台', path: '/workspace' },                  // U-3 教师工作台聚合页
+  { label: '作业管理', path: '/assignment/index', adminOnly: true },
+  { label: '学生管理', path: '/student/index', adminOnly: true },
+  { label: '班级管理', path: '/class/index', adminOnly: true },
   { label: '卷库', path: '/papers/index' },
   { label: '题库', path: '/question/index' },
   { label: '资料库', path: '/materials/index' },
 ]
 
+// U 卡新增 — 按角色过滤菜单：
+//   - admin/superadmin → 全部菜单可见（向后兼容）
+//   - teacher          → 隐藏 adminOnly 项（作业 / 学生 / 班级 — 占位空壳，不属教师场景）
+//   - 未拉到角色（store 空）→ 退化为 admin 视角全显（避免首次加载闪烁缺菜单）
+const visibleMenuItems = computed(() => {
+  const roles = userStore.roles ?? []
+  // 老师身份 + 不是 admin/superadmin → 隐 adminOnly
+  if (roles.includes('teacher') && !roles.includes('admin') && !roles.includes('superadmin')) {
+    return menuItems.filter(m => !m.adminOnly)
+  }
+  return menuItems
+})
+
 function isActive(path: string): boolean {
   return route.path === path || route.path.startsWith(path.replace('/index', ''))
 }
+
+// U 卡顺手实装 P-2 — 试题栏 FAB 路由白名单（仅题库 / 卷库 / 工作台显示）。
+// /question/compose（Q 卡组卷工作台）不在白名单 — Q 卡上线时 FAB 自动隐藏。
+const showQuestionBasket = computed(() => {
+  return route.path.startsWith('/question/')
+    || route.path.startsWith('/papers/')
+    || route.path === '/workspace'
+})
 
 function handleUpgrade() {
   ElMessage.info('升级会员功能开发中')
@@ -49,7 +76,7 @@ function handleUpgrade() {
         <!-- Navigation Menu -->
         <nav class="nav-menu">
           <span
-            v-for="item in menuItems"
+            v-for="item in visibleMenuItems"
             :key="item.path"
             class="nav-item"
             :class="{ active: isActive(item.path) }"
@@ -86,8 +113,8 @@ function handleUpgrade() {
       <RouterView />
     </el-main>
 
-    <!-- 全局试题栏（FAB + dialog，AppLayout 内挂一次，所有子路由共享） -->
-    <QuestionBasket />
+    <!-- 全局试题栏（U 卡 P-2 — 路由白名单：仅题库 / 卷库 / 工作台显示，登录 / home 隐藏） -->
+    <QuestionBasket v-if="showQuestionBasket" />
   </el-container>
 </template>
 

@@ -8,6 +8,7 @@ import {
   GRANT_TYPE_PASSWORD,
   login,
 } from '@/api/auth'
+import { getCurrentUser } from '@/api/user'
 import { useUserStore } from '@/store/user'
 
 // Y2 卡 2a 波 — 登录页（PRD §3.2 登录契约）
@@ -50,8 +51,20 @@ async function onSubmit() {
       grantType: GRANT_TYPE_PASSWORD,
     })
     userStore.setAuth(result)
-    // 登录成功 → 跳首页（题库）
-    await router.push('/question/index')
+
+    // U 卡新增 — 登录后拉用户信息（含 roles）做角色分流。
+    // 拉失败兜底跳题库（不阻塞用户登录，view 层后续懒拉再补 store.userInfo）。
+    try {
+      const userInfo = await getCurrentUser()
+      userStore.setUserInfo(userInfo)
+      if (userInfo.roles?.includes('teacher')) {
+        await router.push('/workspace')
+      } else {
+        await router.push('/home')
+      }
+    } catch {
+      await router.push('/question/index')
+    }
   }
   catch {
     // 拦截器已 ElMessage.error；这里只需释放 loading

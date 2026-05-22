@@ -65,6 +65,12 @@ export interface PaperPageParams {
   subjectId?: string
   pageIndex: number           // 1-based
   pageSize: number
+  /**
+   * U 卡新增 — 创建人 user_id（biz_paper.create_by VARCHAR(64)）。
+   * "我的工作台"section "我创建的卷" 传当前老师 user_id 字符串。
+   * 注意 BE 端会做 \\d+ 正则白名单防注入；空串 / 未传 = 不过滤。
+   */
+  createBy?: string
 }
 
 // lazyTree 入参（BE 忽略，发哪个值都一样；保持 misikt 真站行为）

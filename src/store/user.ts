@@ -26,6 +26,8 @@ export interface UserInfo {
   userName: string
   realName?: string
   role?: number
+  /** U 卡新增 — 真实角色 role_key 集合，登录分流 + 菜单过滤用 */
+  roles?: string[]
   phone?: string
   imagePath?: string
   member?: boolean
@@ -63,6 +65,10 @@ export const useUserStore = defineStore('user', () => {
   const isLoggedIn = computed(() => !!auth.value?.access_token)
   const accessToken = computed(() => auth.value?.access_token ?? '')
 
+  // U 卡新增 — 真实角色列表（基于 userInfo.roles），FE 登录分流 + 菜单角色过滤 single source of truth
+  const roles = computed(() => userInfo.value?.roles ?? [])
+  const isTeacher = computed(() => roles.value.includes('teacher'))
+
   function setAuth(payload: AuthState): void {
     auth.value = payload
     saveToStorage(payload)
@@ -87,6 +93,8 @@ export const useUserStore = defineStore('user', () => {
     userInfo,
     isLoggedIn,
     accessToken,
+    roles,
+    isTeacher,
     setAuth,
     setUserInfo,
     clear,
