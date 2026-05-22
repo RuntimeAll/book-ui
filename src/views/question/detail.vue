@@ -26,6 +26,7 @@ import {
   type QuestionSource,
   type SimilarQuestion,
 } from '@/api/question/index'
+import FreeTagList from '@/components/business/FreeTagList/index.vue'
 
 // ── 路由 ────────────────────────────────────────────────────
 const route = useRoute()
@@ -334,6 +335,13 @@ onMounted(async () => {
             >
               {{ k.knowledgeName || k.knowledgeId }}
             </el-tag>
+            <!-- 自由标签 freeTags（X 卡 段③）— detail 模式：全 mini，position % 3 循环 -->
+            <FreeTagList
+              v-if="question.freeTags && question.freeTags.length > 0"
+              :tags="question.freeTags"
+              mode="detail"
+              class="free-tag-list-inline"
+            />
           </div>
           <div class="meta-right">
             <!-- 草稿 -->
@@ -682,6 +690,11 @@ onMounted(async () => {
 }
 
 .knowledge-tag {
+  flex-shrink: 0;
+}
+
+.free-tag-list-inline {
+  display: inline-flex;
   flex-shrink: 0;
 }
 

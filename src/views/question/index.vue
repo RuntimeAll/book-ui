@@ -23,6 +23,7 @@ import FavoriteFolderDrawer from '@/components/FavoriteFolderDrawer/index.vue'
 import ContentWrap from '@/components/ContentWrap/index.vue'
 import SearchWrap from '@/components/SearchWrap/index.vue'
 import Icon from '@/components/Icon/index.vue'
+import FreeTagList from '@/components/business/FreeTagList/index.vue'
 
 // ── 路由 ────────────────────────────────────────────────────
 const router = useRouter()
@@ -724,6 +725,14 @@ onMounted(async () => {
               </el-tag>
             </div>
 
+            <!-- 自由标签 freeTags（X 卡 段③：字典化 + 彩色 tag）-->
+            <FreeTagList
+              v-if="q.freeTags && q.freeTags.length > 0"
+              :tags="q.freeTags"
+              mode="list"
+              class="free-tag-row"
+            />
+
             <!-- 卡片底部操作行（详情按钮）-->
             <div class="card-footer-row">
               <el-button
@@ -1222,6 +1231,12 @@ onMounted(async () => {
 .knowledge-bottom-tag:hover {
   filter: brightness(0.94);
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+}
+
+/* ── freeTags 行（X 卡 段③）── */
+.free-tag-row {
+  margin-top: 4px;
+  margin-bottom: 8px;
 }
 
 /* ── 卡片底部行（详情按钮）── */

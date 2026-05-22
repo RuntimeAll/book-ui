@@ -41,6 +41,7 @@ declare module 'vue' {
     ElTag: typeof import('element-plus/es')['ElTag']
     ElTree: typeof import('element-plus/es')['ElTree']
     FavoriteFolderDrawer: typeof import('./src/components/FavoriteFolderDrawer/index.vue')['default']
+    FreeTagList: typeof import('./src/components/business/FreeTagList/index.vue')['default']
     Highlight: typeof import('./src/components/Highlight/index.vue')['default']
     Icon: typeof import('./src/components/Icon/index.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']

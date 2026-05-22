@@ -2,6 +2,7 @@
 import { ref, watch, computed } from 'vue'
 import request from '@/http/request'
 import type { QuestionItem, QuestionDetail } from '@/api/question/index'
+import FreeTagList from '@/components/business/FreeTagList/index.vue'
 
 // ── Props / Emits ────────────────────────────────────────────
 const props = defineProps<{
@@ -175,7 +176,7 @@ function getQuestionTypeTag(type: number): 'success' | 'warning' | 'info' {
       </div>
 
       <!-- 附加信息 -->
-      <div class="detail-section" v-if="detail.examYear || detail.examPaperName || detail.freeTag">
+      <div class="detail-section" v-if="detail.examYear || detail.examPaperName">
         <div class="section-label">附加信息</div>
         <div class="section-body">
           <el-descriptions :column="1" size="small" border>
@@ -185,10 +186,15 @@ function getQuestionTypeTag(type: number): 'success' | 'warning' | 'info' {
             <el-descriptions-item v-if="detail.examPaperName" label="来源试卷">
               {{ detail.examPaperName }}
             </el-descriptions-item>
-            <el-descriptions-item v-if="detail.freeTag" label="自由标签">
-              {{ detail.freeTag }}
-            </el-descriptions-item>
           </el-descriptions>
+        </div>
+      </div>
+
+      <!-- 自由标签 freeTags（X 卡 段③：字典化 + 彩色 tag）— 替换老 freeTag 字符串渲染 -->
+      <div class="detail-section" v-if="detail.freeTags && detail.freeTags.length > 0">
+        <div class="section-label">自由标签</div>
+        <div class="section-body">
+          <FreeTagList :tags="detail.freeTags" mode="detail" />
         </div>
       </div>
     </div>

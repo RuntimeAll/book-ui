@@ -7,6 +7,7 @@ import {
   getPaperSource,
   type PaperSourceQuestion,
 } from '@/api/question/index'
+import FreeTagList from '@/components/business/FreeTagList/index.vue'
 
 // ── 路由 ────────────────────────────────────────────────────
 const route = useRoute()
@@ -221,6 +222,14 @@ onMounted(() => {
               {{ k.knowledgeName || k.knowledgeId }}
             </el-tag>
           </div>
+
+          <!-- 自由标签 freeTags（X 卡 段③）— detail 模式 -->
+          <FreeTagList
+            v-if="q.freeTags && q.freeTags.length > 0"
+            :tags="q.freeTags"
+            mode="detail"
+            class="q-free-tags"
+          />
         </div>
       </div>
     </div>
@@ -428,5 +437,10 @@ onMounted(() => {
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 10px;
+}
+
+/* ── 自由标签 freeTags（X 卡 段③）── */
+.q-free-tags {
+  margin-top: 8px;
 }
 </style>

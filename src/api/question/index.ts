@@ -28,6 +28,14 @@ export interface QuestionKnowledge {
   createTime?: string | null
 }
 
+// 自由标签（X 卡 段② BE 契约 — biz_free_tag 字典化）
+// 一个题最多 N 个，按 position asc 排序（0 = 第一个，BE 已排好）
+export interface FreeTagVo {
+  id: number
+  name: string
+  position: number
+}
+
 // 题目分页列表项（基于实际 /question/page 响应反推）
 export interface QuestionItem {
   id: number
@@ -56,7 +64,8 @@ export interface QuestionItem {
   examPaperId?: number | null
   examPaperName?: string | null
   scoreStd?: string | null
-  freeTag?: string | null
+  freeTag?: string | null              // 老字段（字符串），段③字典化后保留兼容
+  freeTags?: FreeTagVo[]               // X 卡 段② BE 新字段，position asc 已排序
 }
 
 // page 接口响应（PageHelper 结构）
