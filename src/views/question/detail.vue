@@ -17,8 +17,6 @@ import {
   saveQuestionNote,
   getQuestionSources,
   getSimilarQuestions,
-  addBasket,
-  removeBasket,
   addFavorite,
   removeFavorite,
   type QuestionItem,
@@ -27,50 +25,15 @@ import {
   type SimilarQuestion,
 } from '@/api/question/index'
 import FreeTagList from '@/components/business/FreeTagList/index.vue'
+import { useQuestionBasket } from '@/composables/useQuestionBasket'
 
 // ── 路由 ────────────────────────────────────────────────────
 const route = useRoute()
 const router = useRouter()
 const questionId = computed(() => Number(route.params.id))
 
-// ── 错题栏 localStorage ──────────────────────────────────────
-const LS_ERROR_BOOK_IDS = 'book-ui:error-book-ids'
-function readErrorBookIds(): Set<number> {
-  try {
-    const raw = localStorage.getItem(LS_ERROR_BOOK_IDS)
-    if (!raw) return new Set()
-    const arr: number[] = JSON.parse(raw)
-    return new Set(Array.isArray(arr) ? arr : [])
-  } catch {
-    return new Set()
-  }
-}
-function writeErrorBookIds(ids: Set<number>) {
-  try {
-    localStorage.setItem(LS_ERROR_BOOK_IDS, JSON.stringify([...ids]))
-  } catch (e) {
-    console.warn('[errorBook] localStorage write failed', e)
-  }
-}
-// 试题栏 localStorage
-const LS_BASKET_IDS = 'book-ui:basket-ids'
-function readBasketIds(): Set<number> {
-  try {
-    const raw = localStorage.getItem(LS_BASKET_IDS)
-    if (!raw) return new Set()
-    const arr: number[] = JSON.parse(raw)
-    return new Set(Array.isArray(arr) ? arr : [])
-  } catch {
-    return new Set()
-  }
-}
-function writeBasketIds(ids: Set<number>) {
-  try {
-    localStorage.setItem(LS_BASKET_IDS, JSON.stringify([...ids]))
-  } catch (e) {
-    console.warn('[basket] localStorage write failed', e)
-  }
-}
+// ── 试题栏（全局 singleton composable） ──────────────────────
+const basket = useQuestionBasket()
 
 // ── 题目数据 ─────────────────────────────────────────────────
 const question = ref<QuestionItem | null>(null)
@@ -135,32 +98,18 @@ async function handleFavorite() {
   }
 }
 
-// ── 试题栏 toggle ─────────────────────────────────────────────
-const inBasketIds = ref<Set<number>>(readBasketIds())
-const basketLoading = ref(false)
-
-const isInBasket = computed(() => inBasketIds.value.has(questionId.value))
+// ── 试题栏 toggle（走全局 composable） ───────────────────────
+const isInBasket = computed(() => basket.basketIds.value.has(questionId.value))
+const basketLoading = computed(() => basket.isLoading(questionId.value))
 
 async function handleBasketToggle() {
-  if (basketLoading.value) return
-  basketLoading.value = true
   const id = questionId.value
-  const wasIn = inBasketIds.value.has(id)
-  const newSet = new Set(inBasketIds.value)
-  if (wasIn) {
-    newSet.delete(id)
-    inBasketIds.value = newSet
-    writeBasketIds(newSet)
-    ElMessage.success('已从试题栏移除')
-    removeBasket(id).catch((e) => console.warn('[basket] removeBasket failed', e))
-  } else {
-    newSet.add(id)
-    inBasketIds.value = newSet
-    writeBasketIds(newSet)
-    ElMessage.success('已加入试题栏')
-    addBasket(id).catch((e) => console.warn('[basket] addBasket failed', e))
+  if (basket.isLoading(id)) return
+  if (basket.basketIds.value.has(id)) {
+    await basket.remove(id)
+  } else if (question.value) {
+    await basket.add(question.value)
   }
-  basketLoading.value = false
 }
 
 // ── 答案/解析折叠 ─────────────────────────────────────────────

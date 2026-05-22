@@ -44,6 +44,8 @@ declare module 'vue' {
     FreeTagList: typeof import('./src/components/business/FreeTagList/index.vue')['default']
     Highlight: typeof import('./src/components/Highlight/index.vue')['default']
     Icon: typeof import('./src/components/Icon/index.vue')['default']
+    QuestionBasket: typeof import('./src/components/business/QuestionBasket/index.vue')['default']
+    QuestionDetailDrawer: typeof import('./src/components/business/QuestionDetailDrawer/index.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
     SearchBar: typeof import('./src/components/SearchWrap/SearchBar.vue')['default']

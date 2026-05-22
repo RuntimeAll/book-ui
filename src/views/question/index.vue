@@ -1,24 +1,18 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Search, Edit, Star, ShoppingCart, Refresh, Delete, DocumentAdd, Close, Menu, Key, Document, View } from '@element-plus/icons-vue'
+import { Search, Edit, Star, ShoppingCart, Document, Key } from '@element-plus/icons-vue'
 import {
   lazyTree,
   questionPage,
-  basketNum,
-  addBasket,
-  removeBasket,
   getFavorite,
-  addFavorite,
   removeFavorite,
-  genExamData,
   type SubjectNode,
   type QuestionItem,
   type QuestionPageParams,
 } from '@/api/question/index'
 import { useRouter } from 'vue-router'
-// QuestionDetailDrawer 已被第十二波路由替代（/question/detail/:id），文件保留供后续清理
-// import QuestionDetailDrawer from './QuestionDetailDrawer.vue'
+import { useQuestionBasket } from '@/composables/useQuestionBasket'
 import FavoriteFolderDrawer from '@/components/FavoriteFolderDrawer/index.vue'
 import ContentWrap from '@/components/ContentWrap/index.vue'
 import SearchWrap from '@/components/SearchWrap/index.vue'
@@ -28,47 +22,8 @@ import FreeTagList from '@/components/business/FreeTagList/index.vue'
 // ── 路由 ────────────────────────────────────────────────────
 const router = useRouter()
 
-// ── localStorage 持久化 keys ─────────────────────────────────
-const LS_BASKET_IDS = 'book-ui:basket-ids'
-const LS_BASKET_CACHE = 'book-ui:basket-cache'
-
-function readBasketIdsFromStorage(): Set<number> {
-  try {
-    const raw = localStorage.getItem(LS_BASKET_IDS)
-    if (!raw) return new Set()
-    const arr: number[] = JSON.parse(raw)
-    return new Set(Array.isArray(arr) ? arr : [])
-  } catch {
-    return new Set()
-  }
-}
-
-function writeBasketIdsToStorage(ids: Set<number>) {
-  try {
-    localStorage.setItem(LS_BASKET_IDS, JSON.stringify([...ids]))
-  } catch (e) {
-    console.warn('[basket] localStorage write ids failed', e)
-  }
-}
-
-function readBasketCacheFromStorage(): Map<number, QuestionItem> {
-  try {
-    const raw = localStorage.getItem(LS_BASKET_CACHE)
-    if (!raw) return new Map()
-    const arr: [number, QuestionItem][] = JSON.parse(raw)
-    return new Map(Array.isArray(arr) ? arr : [])
-  } catch {
-    return new Map()
-  }
-}
-
-function writeBasketCacheToStorage(cache: Map<number, QuestionItem>) {
-  try {
-    localStorage.setItem(LS_BASKET_CACHE, JSON.stringify([...cache.entries()]))
-  } catch (e) {
-    console.warn('[basket] localStorage write cache failed', e)
-  }
-}
+// ── 试题栏（全局 singleton composable，FAB+dialog 由 AppLayout 挂的 <QuestionBasket /> 渲染） ──
+const basket = useQuestionBasket()
 
 // ── 教材选择（子任务 A）──────────────────────────────────────
 // TODO: 待接 misikt 真接口端点 /teacher/textbook/list 或类似
@@ -191,9 +146,6 @@ const emptyDescription = computed(() => {
   return '暂无题目，请尝试调整筛选条件'
 })
 
-// 全局题目缓存 map（id → QuestionItem）
-const questionCache = reactive<Map<number, QuestionItem>>(readBasketCacheFromStorage())
-
 async function fetchQuestions() {
   listLoading.value = true
   try {
@@ -209,10 +161,6 @@ async function fetchQuestions() {
       questions.value = []
       total.value = 0
     }
-    questions.value.forEach((q) => {
-      questionCache.set(q.id, q)
-    })
-    syncCacheToStorage()
     loadFavoriteStatus()
   } catch (e) {
     console.warn('[questions] page failed', e)
@@ -249,161 +197,14 @@ async function loadFavoriteStatus() {
   )
 }
 
-// ── 试题栏角标 ───────────────────────────────────────────────
-const basketCount = ref(0)
-
-async function loadBasketNum() {
-  try {
-    const res = await basketNum()
-    if (typeof res === 'number') {
-      basketCount.value = res
-    } else if (res && typeof res === 'object') {
-      const r = res as Record<string, unknown>
-      basketCount.value = Number(r['count'] ?? r['basketNum'] ?? 0)
-    }
-  } catch (e) {
-    console.warn('[basket] basketNum failed', e)
-  }
-}
-
-const inBasketIds = ref<Set<number>>(readBasketIdsFromStorage())
-
-function syncIdsToStorage() {
-  writeBasketIdsToStorage(inBasketIds.value)
-}
-
-function syncCacheToStorage() {
-  const basketCache = new Map<number, QuestionItem>()
-  inBasketIds.value.forEach((id) => {
-    const q = questionCache.get(id)
-    if (q) basketCache.set(id, q)
-  })
-  writeBasketCacheToStorage(basketCache)
-}
-
-watch(
-  inBasketIds,
-  () => {
-    syncIdsToStorage()
-    syncCacheToStorage()
-    basketCount.value = inBasketIds.value.size
-  },
-  { deep: true },
-)
-
-basketCount.value = inBasketIds.value.size
-
-const basketItems = computed<QuestionItem[]>(() => {
-  const items: QuestionItem[] = []
-  inBasketIds.value.forEach((id) => {
-    const q = questionCache.get(id)
-    if (q) {
-      items.push(q)
-    } else {
-      items.push({
-        id,
-        questionType: 1,
-        difficult: null,
-        stemImg: null,
-        stemText: `题目 ID: ${id}（题干数据加载中）`,
-      } as QuestionItem)
-    }
-  })
-  return items
-})
-
-// ── 试题栏 toggle loading set（防连点）──────────────────────
-const basketToggleLoading = reactive<Set<number>>(new Set())
-
+// ── 试题栏 toggle ────────────────────────────────────────────
+// 通过 composable 完成 — 内部 togglingIds 防连点 + 乐观更新 + 持久化
 async function handleBasketToggle(question: QuestionItem) {
-  if (basketToggleLoading.has(question.id)) return
-  basketToggleLoading.add(question.id)
-
-  const isInBasket = inBasketIds.value.has(question.id)
-
-  if (isInBasket) {
-    // 已加入 → 移除
-    const newSet = new Set(inBasketIds.value)
-    newSet.delete(question.id)
-    inBasketIds.value = newSet
-    ElMessage.success('已从试题栏移除')
-
-    // 调 removeBasket 接口（乐观更新，本地状态已先更新）
-    // TODO: 端点 POST /teacher/question/removeBasket/{id} 待真实验证
-    removeBasket(question.id)
-      .then(() => loadBasketNum())
-      .catch((e) => console.warn('[basket] removeBasket notify failed (local state OK):', e))
+  if (basket.isLoading(question.id)) return
+  if (basket.basketIds.value.has(question.id)) {
+    await basket.remove(question.id)
   } else {
-    // 未加入 → 加入
-    inBasketIds.value = new Set([...inBasketIds.value, question.id])
-    if (!questionCache.has(question.id)) {
-      questionCache.set(question.id, question)
-    }
-    ElMessage.success('已加入试题栏')
-
-    addBasket(question.id)
-      .then(() => loadBasketNum())
-      .catch((e) => console.warn('[basket] addBasket notify failed (local state OK):', e))
-  }
-
-  basketToggleLoading.delete(question.id)
-}
-
-// 保留 handleRemoveBasket 供 dialog 内移除按钮使用
-function handleRemoveBasket(id: number) {
-  const newSet = new Set(inBasketIds.value)
-  newSet.delete(id)
-  inBasketIds.value = newSet
-  ElMessage.success('已从试题栏移除')
-
-  // 同步调 removeBasket 接口
-  removeBasket(id)
-    .then(() => loadBasketNum())
-    .catch((e) => console.warn('[basket] removeBasket (dialog) notify failed:', e))
-}
-
-function handleClearBasket() {
-  inBasketIds.value = new Set()
-  writeBasketIdsToStorage(new Set())
-  writeBasketCacheToStorage(new Map())
-  ElMessage.success('已清空试题栏')
-}
-
-// ── 试题栏 dialog ────────────────────────────────────────────
-const basketDialogVisible = ref(false)
-
-function openBasketDialog() {
-  basketDialogVisible.value = true
-}
-
-// 组卷
-const composing = ref(false)
-
-async function handleGoCompose() {
-  if (basketItems.value.length === 0) {
-    ElMessage.warning('试题栏为空，请先加题')
-    return
-  }
-  composing.value = true
-  try {
-    let examData: unknown = null
-    try {
-      examData = await genExamData()
-    } catch (e) {
-      console.warn('[compose] genExamData failed, using local basket data', e)
-    }
-
-    const paperDraft = {
-      questions: basketItems.value.map((q) => ({ ...q, score: 0 })),
-      examData,
-      createdAt: new Date().toISOString(),
-    }
-    localStorage.setItem('paperDraft', JSON.stringify(paperDraft))
-
-    basketDialogVisible.value = false
-    router.push('/papers/edit')
-  } finally {
-    composing.value = false
+    await basket.add(question)
   }
 }
 
@@ -467,14 +268,9 @@ function handleDetail(q: QuestionItem) {
   router.push(`/question/detail/${q.id}`)
 }
 
-// 保留变量供 QuestionDetailDrawer 组件 props 兼容（已从 template 移除但保留导入）
-const detailDrawerVisible = ref(false)
-const currentQuestionId = ref<number | null>(null)
-const currentQuestionData = ref<QuestionItem | null>(null)
-
 // ── 初始化 ───────────────────────────────────────────────────
 onMounted(async () => {
-  await Promise.allSettled([loadTree(), loadBasketNum(), fetchQuestions()])
+  await Promise.allSettled([loadTree(), fetchQuestions()])
 })
 </script>
 
@@ -619,7 +415,7 @@ onMounted(async () => {
             v-for="q in questions"
             :key="q.id"
             class="question-card"
-            :class="{ 'in-basket': inBasketIds.has(q.id) }"
+            :class="{ 'in-basket': basket.basketIds.value.has(q.id) }"
           >
             <!-- ══ 题卡片顶部 meta 行（子任务 F）══ -->
             <div class="card-meta-row">
@@ -670,14 +466,14 @@ onMounted(async () => {
                 <el-button
                   size="small"
                   class="action-btn action-btn--basket"
-                  :class="{ 'action-btn--basket-added': inBasketIds.has(q.id) }"
-                  :type="inBasketIds.has(q.id) ? undefined : 'primary'"
-                  :plain="!inBasketIds.has(q.id)"
-                  :loading="basketToggleLoading.has(q.id)"
+                  :class="{ 'action-btn--basket-added': basket.basketIds.value.has(q.id) }"
+                  :type="basket.basketIds.value.has(q.id) ? undefined : 'primary'"
+                  :plain="!basket.basketIds.value.has(q.id)"
+                  :loading="basket.isLoading(q.id)"
                   @click="handleBasketToggle(q)"
                 >
-                  <el-icon v-if="!inBasketIds.has(q.id)"><ShoppingCart /></el-icon>
-                  {{ inBasketIds.has(q.id) ? '取消' : '+ 试题栏' }}
+                  <el-icon v-if="!basket.basketIds.value.has(q.id)"><ShoppingCart /></el-icon>
+                  {{ basket.basketIds.value.has(q.id) ? '取消' : '+ 试题栏' }}
                 </el-button>
               </div>
             </div>
@@ -762,138 +558,6 @@ onMounted(async () => {
         </div>
       </el-main>
     </el-container>
-
-    <!-- ── FAB 试题栏浮动按钮 ── -->
-    <div class="basket-fab" :class="{ 'has-items': basketCount > 0 }" @click="openBasketDialog">
-      <el-badge :value="basketCount > 99 ? '99+' : basketCount" :hidden="basketCount === 0" type="danger">
-        <div class="fab-inner">
-          <el-icon :size="20" color="#fff"><ShoppingCart /></el-icon>
-          <span class="fab-label">试题栏</span>
-        </div>
-      </el-badge>
-    </div>
-
-    <!-- ======= 试题栏 dialog ======= -->
-    <el-dialog
-      v-model="basketDialogVisible"
-      width="75%"
-      :close-on-click-modal="false"
-      class="basket-dialog"
-    >
-      <template #header>
-        <div class="basket-dialog-header">
-          <div class="basket-dialog-title-area">
-            <el-icon color="#4080ff" :size="18"><ShoppingCart /></el-icon>
-            <span class="basket-dialog-title">试题栏</span>
-            <el-tag type="primary" size="small" round>{{ basketItems.length }} 题</el-tag>
-          </div>
-          <div class="basket-dialog-actions">
-            <el-button size="small" @click="handleClearBasket">
-              <el-icon><Delete /></el-icon>清空
-            </el-button>
-            <el-button
-              type="primary"
-              size="small"
-              :loading="composing"
-              :disabled="basketItems.length === 0"
-              class="compose-btn"
-              @click="handleGoCompose"
-            >
-              <el-icon><DocumentAdd /></el-icon>
-              组卷
-            </el-button>
-          </div>
-        </div>
-      </template>
-
-      <div class="basket-dialog-body">
-        <el-empty
-          v-if="basketItems.length === 0"
-          description="试题栏为空，请先在题库中加题"
-        >
-          <template #image>
-            <el-icon style="font-size: 48px; color: #c9cdd4;"><ShoppingCart /></el-icon>
-          </template>
-        </el-empty>
-        <el-scrollbar max-height="460px">
-          <div
-            v-for="item in basketItems"
-            :key="item.id"
-            class="basket-item"
-          >
-            <div class="basket-item-header">
-              <span class="type-tag" :class="`type-tag--${getQuestionTypeTag(item.questionType)}`">
-                {{ getQuestionTypeLabel(item.questionType) }}
-              </span>
-              <el-rate
-                :model-value="item.difficult ?? 0"
-                :max="4"
-                disabled
-                style="display:inline-flex; margin-left:8px;"
-              />
-              <div class="basket-knowledge-tags" v-if="(item.questionKnowledges?.length ?? 0) > 0">
-                <el-tag
-                  v-for="(k, i) in item.questionKnowledges"
-                  :key="i"
-                  type="info"
-                  size="small"
-                  style="margin-left: 4px;"
-                >
-                  {{ k.knowledgeName || k.knowledgeId }}
-                </el-tag>
-              </div>
-              <div class="basket-item-ops">
-                <el-button
-                  size="small"
-                  @click="ElMessage.info('展开解析功能开发中')"
-                >
-                  展开解析
-                </el-button>
-                <el-button
-                  size="small"
-                  type="danger"
-                  plain
-                  @click="handleRemoveBasket(item.id)"
-                >
-                  <el-icon><Close /></el-icon>取消
-                </el-button>
-              </div>
-            </div>
-            <div class="basket-item-stem">
-              <img
-                v-if="item.stemImg"
-                :src="item.stemImg"
-                class="stem-img-small"
-                loading="lazy"
-                alt="题干"
-                @error="(e: Event) => ((e.target as HTMLImageElement).style.display='none')"
-              />
-              <span v-else-if="item.stemText" class="basket-stem-text">{{ item.stemText }}</span>
-              <span v-else class="stem-placeholder">题 ID: {{ item.id }}</span>
-            </div>
-          </div>
-        </el-scrollbar>
-      </div>
-
-      <template #footer>
-        <div class="basket-footer">
-          <el-button @click="basketDialogVisible = false">关闭</el-button>
-          <el-button
-            type="primary"
-            :loading="composing"
-            :disabled="basketItems.length === 0"
-            class="compose-btn-footer"
-            @click="handleGoCompose"
-          >
-            <el-icon><DocumentAdd /></el-icon>
-            组卷（{{ basketItems.length }} 题）
-          </el-button>
-        </div>
-      </template>
-    </el-dialog>
-
-    <!-- 题详情 drawer（第十二波已改为路由 /question/detail/:id，此组件不再使用） -->
-    <!-- QuestionDetailDrawer 已保留文件但不再在此 mount -->
 
     <!-- 收藏抽屉（子任务 D）— 未收藏时点⭐打开，选择收藏目录后调 addFavorite -->
     <FavoriteFolderDrawer
@@ -1260,151 +924,5 @@ onMounted(async () => {
   display: flex;
   justify-content: center;
   padding-bottom: 16px;
-}
-
-/* ── FAB 浮动按钮 ── */
-.basket-fab {
-  position: fixed;
-  bottom: 40px;
-  right: 40px;
-  z-index: 200;
-  cursor: pointer;
-}
-
-.fab-inner {
-  width: 64px;
-  height: 64px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #4080ff, #3370e8);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 3px;
-  box-shadow: 0 8px 24px rgba(64, 128, 255, 0.4);
-  transition: all 0.25s ease;
-}
-
-.basket-fab:hover .fab-inner {
-  transform: translateY(-3px);
-  box-shadow: 0 12px 32px rgba(64, 128, 255, 0.5);
-}
-
-.fab-label {
-  font-size: 11px;
-  color: #fff;
-  font-weight: 600;
-  letter-spacing: 0.3px;
-}
-
-.basket-fab.has-items .fab-inner {
-  animation: fab-pulse 2s infinite;
-}
-
-@keyframes fab-pulse {
-  0%, 100% { box-shadow: 0 8px 24px rgba(64, 128, 255, 0.4); }
-  50% { box-shadow: 0 8px 30px rgba(64, 128, 255, 0.6); }
-}
-
-/* ── 试题栏 dialog ── */
-.basket-dialog-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding-right: 32px;
-}
-
-.basket-dialog-title-area {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.basket-dialog-title {
-  font-size: 16px;
-  font-weight: 700;
-  color: #1d2129;
-}
-
-.basket-dialog-actions {
-  display: flex;
-  gap: 8px;
-}
-
-.compose-btn {
-  background: linear-gradient(135deg, #4080ff, #3370e8);
-  border: none;
-  box-shadow: 0 2px 6px rgba(64, 128, 255, 0.3);
-}
-
-.basket-dialog-body {
-  min-height: 100px;
-  padding: 0 4px;
-}
-
-.basket-item {
-  padding: 14px 0;
-  border-bottom: 1px solid #f2f3f5;
-}
-
-.basket-item:last-child {
-  border-bottom: none;
-}
-
-.basket-item-header {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 8px;
-}
-
-.basket-knowledge-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.basket-item-ops {
-  margin-left: auto;
-  display: flex;
-  gap: 6px;
-}
-
-.basket-item-stem {
-  font-size: 13px;
-  color: #303133;
-  padding-left: 2px;
-}
-
-.stem-img-small {
-  max-width: 100%;
-  max-height: 120px;
-  display: block;
-  border-radius: 4px;
-}
-
-.basket-stem-text {
-  font-size: 13px;
-  color: #1d2129;
-  line-height: 1.5;
-}
-
-.basket-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.compose-btn-footer {
-  background: linear-gradient(135deg, #4080ff, #3370e8);
-  border: none;
-  box-shadow: 0 2px 6px rgba(64, 128, 255, 0.3);
-  transition: all 0.2s;
-}
-
-.compose-btn-footer:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(64, 128, 255, 0.45);
 }
 </style>

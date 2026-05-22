@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import QuestionBasket from '@/components/business/QuestionBasket/index.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -84,6 +85,9 @@ function handleUpgrade() {
     <el-main class="app-main">
       <RouterView />
     </el-main>
+
+    <!-- 全局试题栏（FAB + dialog，AppLayout 内挂一次，所有子路由共享） -->
+    <QuestionBasket />
   </el-container>
 </template>
 
