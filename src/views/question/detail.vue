@@ -30,7 +30,11 @@ import { useQuestionBasket } from '@/composables/useQuestionBasket'
 // ── 路由 ────────────────────────────────────────────────────
 const route = useRoute()
 const router = useRouter()
-const questionId = computed(() => Number(route.params.id))
+// H1 卡补丁：admin V-1 新建的题 id 是 19 位 Snowflake（如 2058063361421082625），
+// 超 JS Number.MAX_SAFE_INTEGER (2^53)。Number(route.params.id) 会让末尾 25 变 00
+// 精度丢失 → BE 查 DB 没这个 id → "题目详情加载失败"。改全程 string，BE @PathVariable
+// Long 收 numeric string 自动 parse 不丢精度。
+const questionId = computed(() => String(route.params.id))
 
 // ── 试题栏（全局 singleton composable） ──────────────────────
 const basket = useQuestionBasket()
@@ -42,8 +46,8 @@ const loading = ref(false)
 async function loadQuestion() {
   loading.value = true
   try {
-    // 优先调真接口
-    const res = await getQuestionDetail(questionId.value)
+    // 优先调真接口（questionId.value 是 string 防 19 位 Snowflake 精度丢，cast 绕 API 旧签名 number）
+    const res = await getQuestionDetail(questionId.value as unknown as number)
     if (res && (res as QuestionItem).id) {
       question.value = res as QuestionItem
     } else {
@@ -85,10 +89,10 @@ async function handleFavorite() {
   isFavorite.value = !prev
   try {
     if (prev) {
-      await removeFavorite(questionId.value)
+      await removeFavorite(questionId.value as unknown as number)
       ElMessage.success('已取消收藏')
     } else {
-      await addFavorite(questionId.value)
+      await addFavorite(questionId.value as unknown as number)
       ElMessage.success('已收藏')
     }
   } catch (e) {
@@ -99,11 +103,15 @@ async function handleFavorite() {
 }
 
 // ── 试题栏 toggle（走全局 composable） ───────────────────────
-const isInBasket = computed(() => basket.basketIds.value.has(questionId.value))
-const basketLoading = computed(() => basket.isLoading(questionId.value))
+// H1 卡补丁：questionId 改 string 防 Snowflake 精度丢，basket api 还是 number 签名 —
+// 这里 cast 绕 TS。注意 Set<number>.has(string) JS 永远 false（strict ===），
+// 试题栏状态在 admin 新建题（19 位 id）上可能误判 "未加入"，但不影响详情数据加载。
+// 完整修复需要 useQuestionBasket 一并支持 string id — 留待教师端 thread 处理。
+const isInBasket = computed(() => basket.basketIds.value.has(questionId.value as unknown as number))
+const basketLoading = computed(() => basket.isLoading(questionId.value as unknown as number))
 
 async function handleBasketToggle() {
-  const id = questionId.value
+  const id = questionId.value as unknown as number
   if (basket.isLoading(id)) return
   if (basket.basketIds.value.has(id)) {
     await basket.remove(id)
@@ -127,7 +135,7 @@ const noteSaving = ref(false)
 async function loadNotes() {
   notesLoading.value = true
   try {
-    const res = await getQuestionNote(questionId.value)
+    const res = await getQuestionNote(questionId.value as unknown as number)
     note.value = res && typeof res === 'object' && 'content' in res ? (res as QuestionNote) : null
   } catch (e) {
     console.warn('[detail] notes GET failed', e)
@@ -141,7 +149,7 @@ async function saveNote() {
   if (!noteInput.value.trim()) return
   noteSaving.value = true
   try {
-    await saveQuestionNote(questionId.value, noteInput.value.trim())
+    await saveQuestionNote(questionId.value as unknown as number, noteInput.value.trim())
     ElMessage.success('备注已保存')
     noteInput.value = ''
     loadNotes()
@@ -160,7 +168,7 @@ const sourcesLoading = ref(false)
 async function loadSources() {
   sourcesLoading.value = true
   try {
-    const res = await getQuestionSources(questionId.value)
+    const res = await getQuestionSources(questionId.value as unknown as number)
     sources.value = Array.isArray(res) ? res : []
   } catch (e) {
     console.warn('[detail] sources GET failed', e)
@@ -188,7 +196,7 @@ async function loadSimilar() {
   if (similarLoading.value || similarQuestions.value.length > 0) return
   similarLoading.value = true
   try {
-    const res = await getSimilarQuestions(questionId.value)
+    const res = await getSimilarQuestions(questionId.value as unknown as number)
     similarQuestions.value = Array.isArray(res) ? res : []
   } catch (e) {
     console.warn('[detail] similar GET failed', e)
