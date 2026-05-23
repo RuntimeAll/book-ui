@@ -5,12 +5,15 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, Download } from '@element-plus/icons-vue'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
 import { createExamPaper } from '@/api/paper'
+import PaperPreview from '@/components/business/PaperPreview/index.vue'
 
 const router = useRouter()
 const basket = useQuestionBasket()
 
 const paperName = ref('未命名草稿')
 const submitting = ref(false)
+// Q' 卡 段③ — 试卷预览模态显隐
+const previewVisible = ref(false)
 
 const itemCount = computed(() => basket.items.value.length)
 const isEmpty = computed(() => itemCount.value === 0)
@@ -61,10 +64,14 @@ async function handleCreate() {
   }
 }
 
-// Q 卡用户验收发现 PDF 简单 html2canvas 输出 ≠ misikt 真站效果（无图片 / 无 LaTeX / 无分组 / 无答案勾选）。
-// 拍板：本卡 disabled 占位，专立 Q' 子卡做完整试卷预览模态 + LaTeX + 分组 + PDF。
+// Q' 卡 段③ 交付 — 点"导出 PDF"打开预览模态（前置：试题栏非空校验）。
+// 段⑤ 由开发组长波 3 接手实装 jsPDF + html2canvas 工艺（PaperPreview 组件内 stub）。
 function handleExportPdf() {
-  ElMessage.info('PDF 导出功能由 Q\' 子卡交付（预览模态 + LaTeX + 分组）')
+  if (isEmpty.value) {
+    ElMessage.warning('请先在试题栏添加题目')
+    return
+  }
+  previewVisible.value = true
 }
 
 async function handleClear() {
@@ -168,16 +175,14 @@ function handleBack() {
 
     <!-- 底部操作栏 -->
     <div class="footer">
-      <el-tooltip content="预览模态 + LaTeX 渲染 + 分组打印由 Q' 子卡交付" placement="top">
-        <el-button
-          size="large"
-          disabled
-          @click="handleExportPdf"
-        >
-          <el-icon><Download /></el-icon>
-          导出 PDF（开发中）
-        </el-button>
-      </el-tooltip>
+      <el-button
+        size="large"
+        :disabled="isEmpty"
+        @click="handleExportPdf"
+      >
+        <el-icon><Download /></el-icon>
+        导出 PDF
+      </el-button>
       <el-button
         type="primary"
         size="large"
@@ -188,6 +193,13 @@ function handleBack() {
         创建试卷
       </el-button>
     </div>
+
+    <!-- Q' 卡 段③ — 试卷预览模态（el-dialog 全屏） -->
+    <PaperPreview
+      v-model:visible="previewVisible"
+      :paper-name="paperName.trim() || '未命名草稿'"
+      :ids="basket.items.value.map(q => q.id)"
+    />
   </div>
 </template>
 

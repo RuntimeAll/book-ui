@@ -93,7 +93,14 @@ export interface QuestionPageParams {
 }
 
 // 题目详情（GET /teacher/question/{id} 返）
-export interface QuestionDetail extends QuestionItem {}
+export interface QuestionDetail extends QuestionItem {
+  // ── Q' 卡 段③ 扩展 — BE QuestionDetailVo 详情字段（list / select 端点返回） ──
+  answer?: string | null              // 答案文本（HTML/纯文本）
+  explain?: string | null             // 解析文本（HTML/纯文本）
+  optionsJson?: string | null         // 选项 JSON 字符串（例：[{"key":"A","text":"..."}]，需 JSON.parse）
+  // 以下字段 QuestionItem 已声明（fileBin / videoUrl / scoreStd / questionStdKnowledges 全部可选），
+  // 列表 page 端点空返，list / select 详情端点才真有值 — 这里不重复声明。
+}
 
 // 收藏夹文件夹（GET /teacher/center/q-folder/tree 返回树结构）
 // misikt 真站端点：/api/teacher/center/q-folder/tree（playwright 已抓取确认）
@@ -260,6 +267,15 @@ export interface PaperDetailVo {
  */
 export const getQuestionDetail = (questionId: number) =>
   request.post<QuestionDetail, QuestionDetail>(`/teacher/question/select/${questionId}`)
+
+
+// Q' 卡 段① BE 新端点 — 按 ids 批查完整字段（含 answer / explain / optionsJson / freeTags / questionStdKnowledges）。
+// query string = ?ids=1,2,3 逗号分隔（axios params 对 string 不会重复 key）；上限 100（BE 端约束）；
+// 软删自动过滤（BE WHERE status<>'2'）；顺序按 FIND_IN_SET 保入参顺序（FE 仍需 reorder 兜底）。
+export const questionListByIds = (ids: number[]) =>
+  request.get<QuestionDetail[], QuestionDetail[]>('/teacher/question/list', {
+    params: { ids: ids.join(',') },
+  })
 
 /**
  * 获取我的备注（V1：BE 返单对象或 null）
