@@ -275,6 +275,9 @@ async function handleExportPdf() {
             </div>
 
             <!-- ── 纯图模式（PRD §0.4 misikt 真站铁证，当前默认）──────────────── -->
+            <!-- 🔴 crossorigin 属性已去除（PRD §10.2 坑 #10）：OSS 当前未配 CORS，加 crossorigin 触发 chrome CORS 检查 → 图全 block。 -->
+            <!-- 不加 crossorigin = 跟前面页面（题库/工作台/试题栏）一致，预览正常显示。 -->
+            <!-- PDF 导出（pdf-export.ts html2canvas useCORS:true）仍依赖 OSS CORS — 等配置生效后回归。 -->
             <template v-if="RENDER_MODE === 'image-only'">
               <!-- 题干图（已含选项 + LaTeX 渲染） -->
               <div class="pp-q-stem">
@@ -283,7 +286,6 @@ async function handleExportPdf() {
                   :src="q.stemImg"
                   alt="题干图"
                   class="stem-img"
-                  crossorigin="anonymous"
                 />
                 <span v-else class="pp-q-missing">该题缺题干图（请联系管理员补图）</span>
               </div>
@@ -296,7 +298,6 @@ async function handleExportPdf() {
                   :src="q.answerImg"
                   alt="答案图"
                   class="ans-img"
-                  crossorigin="anonymous"
                 />
                 <span v-else class="placeholder">（无答案图）</span>
               </div>
@@ -309,7 +310,6 @@ async function handleExportPdf() {
                   :src="q.explainImg"
                   alt="解析图"
                   class="exp-img"
-                  crossorigin="anonymous"
                 />
                 <span v-else class="placeholder">（无解析图）</span>
               </div>
@@ -322,7 +322,7 @@ async function handleExportPdf() {
               <!-- 题干：stemText v-html + stemImg 兜底 -->
               <div class="pp-q-stem">
                 <div v-if="q.stemText" class="stem-text" v-html="q.stemText"></div>
-                <img v-if="q.stemImg" :src="q.stemImg" alt="题干图" class="stem-img" crossorigin="anonymous" />
+                <img v-if="q.stemImg" :src="q.stemImg" alt="题干图" class="stem-img" />
               </div>
 
               <!-- 选项区（仅 optionsJson 解析成功时渲染） -->
@@ -344,7 +344,7 @@ async function handleExportPdf() {
               <div v-show="showAnswer" class="pp-q-answer">
                 <span class="label">【答案】</span>
                 <span v-if="q.answer" v-html="q.answer"></span>
-                <img v-if="q.answerImg" :src="q.answerImg" alt="答案图" class="ans-img" crossorigin="anonymous" />
+                <img v-if="q.answerImg" :src="q.answerImg" alt="答案图" class="ans-img" />
                 <span v-if="!q.answer && !q.answerImg" class="placeholder">（无答案数据）</span>
               </div>
 
@@ -352,7 +352,7 @@ async function handleExportPdf() {
               <div v-show="showExplain" class="pp-q-explain">
                 <span class="label">【解析】</span>
                 <span v-if="q.explain" v-html="q.explain"></span>
-                <img v-if="q.explainImg" :src="q.explainImg" alt="解析图" class="exp-img" crossorigin="anonymous" />
+                <img v-if="q.explainImg" :src="q.explainImg" alt="解析图" class="exp-img" />
                 <span v-if="!q.explain && !q.explainImg" class="placeholder">（无解析数据）</span>
               </div>
             </template>
