@@ -8,17 +8,26 @@
  * 抽离自第十二波前的 src/views/question/index.vue（模板行 766-892 / style 1265-1410）。
  */
 import { ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ShoppingCart, Delete, DocumentAdd, Close } from '@element-plus/icons-vue'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
 
 const basket = useQuestionBasket()
+const router = useRouter()
 const composing = ref(false)
 
+// Q 卡段③ — "去组卷"改为跳工作台路由（原 composeAndDownload 走 /papers/edit 老逻辑作废）。
+// 工作台读 basket.items.value，无需 paperDraft LS 中转。
 async function handleGoCompose() {
+  if (basket.count.value === 0) {
+    ElMessage.warning('试题栏为空，请先加题')
+    return
+  }
   composing.value = true
   try {
-    await basket.composeAndDownload()
+    basket.closeDialog()
+    await router.push('/question/compose')
   } finally {
     composing.value = false
   }

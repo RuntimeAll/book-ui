@@ -26,6 +26,12 @@ const router = createRouter({
           name: 'QuestionDetail',
           component: () => import('@/views/question/detail.vue'),
         },
+        // Q 卡 段② — 组卷工作台（新页面，试题栏 → 去组卷 → 这里）
+        {
+          path: '/question/compose',
+          name: 'QuestionCompose',
+          component: () => import('@/views/question/compose.vue'),
+        },
         // 组卷工作台（FE-4 真实现）
         {
           path: '/papers/edit',

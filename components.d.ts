@@ -39,6 +39,7 @@ declare module 'vue' {
     ElSelect: typeof import('element-plus/es')['ElSelect']
     ElSkeleton: typeof import('element-plus/es')['ElSkeleton']
     ElTag: typeof import('element-plus/es')['ElTag']
+    ElTooltip: typeof import('element-plus/es')['ElTooltip']
     ElTree: typeof import('element-plus/es')['ElTree']
     FavoriteFolderDrawer: typeof import('./src/components/FavoriteFolderDrawer/index.vue')['default']
     FreeTagList: typeof import('./src/components/business/FreeTagList/index.vue')['default']

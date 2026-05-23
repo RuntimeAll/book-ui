@@ -98,3 +98,27 @@ export const getPaperPage = (params: PaperPageParams) =>
     '/teacher/exam/paper/page',
     params,
   )
+
+// ── Q 卡段① 创建试卷 ────────────────────────────────────────────────────
+
+export interface CreateExamPaperParams {
+  name: string
+  questionIds: number[]
+  paperCategoryId?: string | null
+}
+
+export interface CreateExamPaperResult {
+  paperId: number
+  questionCount: number
+}
+
+/**
+ * 创建试卷 — 工作台 → 输入名称 + 选定题目列表 → 落库（status='1' 即发布）。
+ * BE 自动建默认 section（"题目"），所有题挂下面。
+ * POST /teacher/exam/paper/create
+ */
+export const createExamPaper = (params: CreateExamPaperParams) =>
+  request.post<CreateExamPaperResult, CreateExamPaperResult>(
+    '/teacher/exam/paper/create',
+    params,
+  )

@@ -45,8 +45,11 @@ function isActive(path: string): boolean {
 }
 
 // U 卡顺手实装 P-2 — 试题栏 FAB 路由白名单（仅题库 / 卷库 / 工作台显示）。
-// /question/compose（Q 卡组卷工作台）不在白名单 — Q 卡上线时 FAB 自动隐藏。
+// Q 卡正式排除 /question/compose（工作台自身已展示题目列表，FAB 嵌套冗余）。
 const showQuestionBasket = computed(() => {
+  if (route.path === '/question/compose') {
+    return false
+  }
   return route.path.startsWith('/question/')
     || route.path.startsWith('/papers/')
     || route.path === '/workspace'
