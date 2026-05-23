@@ -45,10 +45,11 @@ export async function exportPaperToPdf(options: PdfExportOptions): Promise<void>
   await waitAllImagesLoaded(root)
 
   onProgress?.('生成截图…')
-  // scale=1.5 平衡清晰度 vs 体积（PRD §10.2 坑 #11）：
-  //   scale=2 PDF 体积偏大（每页 PNG ~1MB+ × N 页）；1.5x 已足够清晰，体积减 ~40%
+  // 🔴 用户铁则（2026-05-23）：绝对禁压缩图片质量，除非用户明确同意
+  //   scale=2 高分辨率截图（不擅自降）；PNG 无损编码（不擅自 JPEG）
+  //   体积大可接受，质量损失绝对不可接受 — memory feedback_no_image_quality_compression
   const canvas = await html2canvas(root, {
-    scale: 1.5,
+    scale: 2,
     useCORS: true,
     allowTaint: false,
     backgroundColor: '#ffffff',
@@ -70,8 +71,9 @@ export async function exportPaperToPdf(options: PdfExportOptions): Promise<void>
   let yOffsetPx = 0
   let pageIndex = 0
 
-  // JPEG quality=0.85 平衡清晰度 vs 体积（PRD §10.2 坑 #11）：
-  //   PNG 无损 → 体积爆炸；JPEG 0.85 视觉无感知差距，体积减 ~70-90%
+  // 🔴 用户铁则（2026-05-23）：PNG 无损编码，禁压缩图片质量
+  //   toDataURL('image/png') 默认无损 — 体积大可接受，质量损失绝对不可接受
+  //   memory feedback_no_image_quality_compression
   while (yOffsetPx < canvas.height) {
     const sliceHeightPx = Math.min(pageContentHeightPx, canvas.height - yOffsetPx)
 
@@ -86,11 +88,11 @@ export async function exportPaperToPdf(options: PdfExportOptions): Promise<void>
     ctx.fillRect(0, 0, pageCanvas.width, pageCanvas.height)
     ctx.drawImage(canvas, 0, yOffsetPx, canvas.width, sliceHeightPx, 0, 0, canvas.width, sliceHeightPx)
 
-    const imgData = pageCanvas.toDataURL('image/jpeg', 0.85)
+    const imgData = pageCanvas.toDataURL('image/png')
     const imgHeightMm = sliceHeightPx / pxPerMm
 
     if (pageIndex > 0) pdf.addPage()
-    pdf.addImage(imgData, 'JPEG', marginMm, marginMm, imgWidthMm, imgHeightMm)
+    pdf.addImage(imgData, 'PNG', marginMm, marginMm, imgWidthMm, imgHeightMm)
 
     yOffsetPx += sliceHeightPx
     pageIndex++
