@@ -16,6 +16,7 @@ import {
 } from '@/api/question'
 import { typesetPaperPreview } from '@/utils/mathjax'
 import { exportPaperToPdf } from '@/utils/pdf-export'
+import { proxyImage } from '@/utils/image-proxy'
 
 const props = defineProps<{
   visible: boolean
@@ -275,18 +276,17 @@ async function handleExportPdf() {
             </div>
 
             <!-- ── 纯图模式（PRD §0.4 misikt 真站铁证，当前默认）──────────────── -->
-            <!-- 🟢 crossorigin="anonymous" 已加回（PRD §10.2 坑 #10 hotfix-3）：OSS CORS 配置生效后，必须让浏览器初次加载就走 CORS 模式 -->
-            <!-- → chrome cache 的是 CORS-validated 版本 → html2canvas 复用同一份缓存截图 → canvas 不 tainted → PDF 内图正常 -->
-            <!-- 如 OSS CORS 失效（如切 prod 域名 / AllowedOrigin 不匹配），图会重新 block — 那时 curl 验 OSS 返不返 Access-Control-Allow-Origin -->
+            <!-- 🟢 hotfix-4：图 URL 经 proxyImage() 改写走 BE /teacher/image-proxy 同源化（PRD §10.2 坑 #12）。 -->
+            <!-- 同源 image 默认 canvas 不 tainted，html2canvas 截图无 CORS 边界问题；crossorigin 属性可去亦可留（保留更安全）。 -->
+            <!-- BE 端 ImageProxyController.java 走 Redis 24h 缓存 + SSRF 白名单。 -->
             <template v-if="RENDER_MODE === 'image-only'">
               <!-- 题干图（已含选项 + LaTeX 渲染） -->
               <div class="pp-q-stem">
                 <img
                   v-if="q.stemImg"
-                  :src="q.stemImg"
+                  :src="proxyImage(q.stemImg)"
                   alt="题干图"
                   class="stem-img"
-                  crossorigin="anonymous"
                 />
                 <span v-else class="pp-q-missing">该题缺题干图（请联系管理员补图）</span>
               </div>
@@ -296,10 +296,9 @@ async function handleExportPdf() {
                 <span class="label">【答案】</span>
                 <img
                   v-if="q.answerImg"
-                  :src="q.answerImg"
+                  :src="proxyImage(q.answerImg)"
                   alt="答案图"
                   class="ans-img"
-                  crossorigin="anonymous"
                 />
                 <span v-else class="placeholder">（无答案图）</span>
               </div>
@@ -309,10 +308,9 @@ async function handleExportPdf() {
                 <span class="label">【解析】</span>
                 <img
                   v-if="q.explainImg"
-                  :src="q.explainImg"
+                  :src="proxyImage(q.explainImg)"
                   alt="解析图"
                   class="exp-img"
-                  crossorigin="anonymous"
                 />
                 <span v-else class="placeholder">（无解析图）</span>
               </div>
