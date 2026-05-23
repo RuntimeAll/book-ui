@@ -57,7 +57,10 @@ export async function exportPaperToPdf(options: PdfExportOptions): Promise<void>
   })
 
   onProgress?.('生成 PDF…')
-  const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' })
+  // 🔴 用户铁则：禁压缩图片质量。
+  // compress:true 是 jsPDF 对 PDF 流的 zlib 压缩（FlateDecode）— 完全无损，跟 PNG 的 zlib 一样
+  // 不影响图像 quality（不是 JPEG 那种有损），只是把 PDF 容器里的字节流再 zlib 一次
+  const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4', compress: true })
 
   const a4WidthMm = 210
   const a4HeightMm = 297
