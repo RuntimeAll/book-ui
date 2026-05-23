@@ -275,9 +275,9 @@ async function handleExportPdf() {
             </div>
 
             <!-- ── 纯图模式（PRD §0.4 misikt 真站铁证，当前默认）──────────────── -->
-            <!-- 🔴 crossorigin 属性已去除（PRD §10.2 坑 #10）：OSS 当前未配 CORS，加 crossorigin 触发 chrome CORS 检查 → 图全 block。 -->
-            <!-- 不加 crossorigin = 跟前面页面（题库/工作台/试题栏）一致，预览正常显示。 -->
-            <!-- PDF 导出（pdf-export.ts html2canvas useCORS:true）仍依赖 OSS CORS — 等配置生效后回归。 -->
+            <!-- 🟢 crossorigin="anonymous" 已加回（PRD §10.2 坑 #10 hotfix-3）：OSS CORS 配置生效后，必须让浏览器初次加载就走 CORS 模式 -->
+            <!-- → chrome cache 的是 CORS-validated 版本 → html2canvas 复用同一份缓存截图 → canvas 不 tainted → PDF 内图正常 -->
+            <!-- 如 OSS CORS 失效（如切 prod 域名 / AllowedOrigin 不匹配），图会重新 block — 那时 curl 验 OSS 返不返 Access-Control-Allow-Origin -->
             <template v-if="RENDER_MODE === 'image-only'">
               <!-- 题干图（已含选项 + LaTeX 渲染） -->
               <div class="pp-q-stem">
@@ -286,6 +286,7 @@ async function handleExportPdf() {
                   :src="q.stemImg"
                   alt="题干图"
                   class="stem-img"
+                  crossorigin="anonymous"
                 />
                 <span v-else class="pp-q-missing">该题缺题干图（请联系管理员补图）</span>
               </div>
@@ -298,6 +299,7 @@ async function handleExportPdf() {
                   :src="q.answerImg"
                   alt="答案图"
                   class="ans-img"
+                  crossorigin="anonymous"
                 />
                 <span v-else class="placeholder">（无答案图）</span>
               </div>
@@ -310,6 +312,7 @@ async function handleExportPdf() {
                   :src="q.explainImg"
                   alt="解析图"
                   class="exp-img"
+                  crossorigin="anonymous"
                 />
                 <span v-else class="placeholder">（无解析图）</span>
               </div>
