@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
+import request from '@/http/request'
 
 // localStorage key — 命名空间化，避免和其他 app 撞
 const STORAGE_KEY = 'book-ui:auth'
@@ -88,6 +89,22 @@ export const useUserStore = defineStore('user', () => {
     }
   }
 
+  /**
+   * U-hotfix（2026-05-23）— 退出登录。
+   * 1. 调 BE POST /auth/logout 让 Sa-Token 服务端 token 失效（best-effort，失败不阻塞 FE 登出）
+   * 2. clear() 清本地 LS + 重置 store
+   * 调用方：AppLayout avatar dropdown / token 过期等场景。
+   */
+  async function logout(): Promise<void> {
+    try {
+      await request.post('/auth/logout')
+    } catch (e) {
+      console.warn('[user] BE logout failed (本地仍清理):', e)
+    } finally {
+      clear()
+    }
+  }
+
   return {
     auth,
     userInfo,
@@ -98,5 +115,6 @@ export const useUserStore = defineStore('user', () => {
     setAuth,
     setUserInfo,
     clear,
+    logout,
   }
 })

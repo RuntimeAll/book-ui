@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useUserStore } from '@/store/user'
+import { getCurrentUser } from '@/api/user'
 import { getPaperPage, type PaperListItem } from '@/api/paper'
 import { getFavoriteFolderTree, type FavoriteFolder } from '@/api/question'
 
@@ -74,7 +75,8 @@ function goPaperDetail(paper: PaperListItem) {
 }
 
 function goPaperList() {
-  router.push('/papers/index')
+  // Q-hotfix 段⑧ — 跳卷库主页 + my=1 自动激活"我的卷库" tab
+  router.push('/papers/index?my=1')
 }
 
 function goQuestionLib() {
@@ -82,14 +84,23 @@ function goQuestionLib() {
 }
 
 function goCreatePaper() {
-  // Q 卡组卷工作台未上线，占位文案
-  ElMessage.info('组卷工作台开发中（Q 卡 上线后激活）')
+  // Q 卡已上线 — 跳题库选题（试题栏 → 去组卷 → 工作台）
+  router.push('/question/index')
 }
 
 onMounted(async () => {
-  // 兜底：直接访问 /workspace（非登录跳转）时 userInfo 可能未填充
-  // login/index.vue 登录成功跳路由前已 setUserInfo，正常路径下 store 有值
-  // 这里不重复拉 user info — 简单设计，没有 fall back retry
+  // Q-hotfix（2026-05-23）真兜底 — 刷新页面后 userInfo 内存态丢失（auth 在 LS 持久化，userInfo 不持久化）
+  // 必须先 getCurrentUser 拉 userInfo，否则 fetchMyPapers 在 uid=undefined 时 early return → 列表永远空
+  if (!userStore.userInfo) {
+    try {
+      const info = await getCurrentUser()
+      if (info) {
+        userStore.setUserInfo(info)
+      }
+    } catch (e) {
+      console.warn('[workspace] getCurrentUser 兜底失败', e)
+    }
+  }
   await Promise.all([fetchMyPapers(), fetchFavoriteFolders()])
 })
 </script>

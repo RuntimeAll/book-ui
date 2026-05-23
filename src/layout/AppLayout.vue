@@ -1,13 +1,47 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import QuestionBasket from '@/components/business/QuestionBasket/index.vue'
 import { useUserStore } from '@/store/user'
 
 const router = useRouter()
 const route = useRoute()
 const userStore = useUserStore()
+
+// U-hotfix（2026-05-23）— 头像点击展示用户名 + 退出登录选项。
+// userName 兜底优先级：realName > userName > "用户"
+const displayName = computed(() => {
+  const info = userStore.userInfo
+  return info?.realName || info?.userName || '用户'
+})
+
+const avatarChar = computed(() => {
+  const name = displayName.value
+  return name ? name.charAt(0).toUpperCase() : '师'
+})
+
+async function handleLogout() {
+  try {
+    await ElMessageBox.confirm('确定退出登录？', '退出确认', {
+      confirmButtonText: '退出',
+      cancelButtonText: '取消',
+      type: 'warning',
+    })
+  } catch {
+    // 取消
+    return
+  }
+  await userStore.logout()
+  ElMessage.success('已退出登录')
+  router.push('/login')
+}
+
+function handleDropdownCommand(command: string) {
+  if (command === 'logout') {
+    handleLogout()
+  }
+}
 
 interface MenuItem {
   label: string
@@ -99,14 +133,28 @@ function handleUpgrade() {
             <el-icon size="13" style="margin-right: 4px;"><Star /></el-icon>
             升级会员
           </el-button>
-          <div class="avatar-wrap">
-            <el-avatar
-              :size="34"
-              class="user-avatar"
-            >
-              师
-            </el-avatar>
-          </div>
+          <!-- U-hotfix — avatar 改 dropdown，含"退出登录" -->
+          <el-dropdown trigger="click" placement="bottom-end" @command="handleDropdownCommand">
+            <div class="avatar-wrap">
+              <el-avatar
+                :size="34"
+                class="user-avatar"
+              >
+                {{ avatarChar }}
+              </el-avatar>
+            </div>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item disabled>
+                  <span class="dropdown-name">{{ displayName }}</span>
+                </el-dropdown-item>
+                <el-dropdown-item divided command="logout">
+                  <el-icon style="margin-right: 6px;"><SwitchButton /></el-icon>
+                  退出登录
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
         </div>
       </div>
     </el-header>

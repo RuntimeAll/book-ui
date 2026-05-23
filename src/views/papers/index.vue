@@ -2,16 +2,44 @@
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search, Star } from '@element-plus/icons-vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import {
   getPaperLazyTree,
   getPaperPage,
   type PaperTreeNode,
   type PaperListItem,
 } from '@/api/paper/index'
+import { useUserStore } from '@/store/user'
+import { getCurrentUser } from '@/api/user'
 
 // ── 路由 ────────────────────────────────────────────────────
 const router = useRouter()
+const route = useRoute()
+const userStore = useUserStore()
+
+// ── Q-hotfix 段⑧（2026-05-23）— 卷库 tab：公共 / 我的卷库
+type PaperTab = 'public' | 'my'
+const activeTab = ref<PaperTab>('public')
+
+async function handleTabChange(tab: string | number) {
+  activeTab.value = tab as PaperTab
+  // 切换 tab 时重置目录树筛选 + 搜索 + 分页（避免不同 tab 串状态）
+  currentSubjectId.value = ''
+  pageParams.subjectId = ''
+  pageParams.name = ''
+  searchName.value = ''
+  pageParams.pageIndex = 1
+  // "我的"前先兜底拉 userInfo
+  if (tab === 'my' && !userStore.userInfo) {
+    try {
+      const info = await getCurrentUser()
+      if (info) userStore.setUserInfo(info)
+    } catch (e) {
+      console.warn('[papers] getCurrentUser 兜底失败', e)
+    }
+  }
+  fetchPapers()
+}
 
 // ── 教材选择（占位，不可改 — PRD §2 "其他留空按钮"）────────
 const TEXTBOOK_OPTIONS = [
@@ -73,11 +101,16 @@ async function fetchPapers() {
   listLoading.value = true
   searchLoading.value = true
   try {
+    // Q-hotfix 段⑧ — "我的卷库" tab 带 createBy 过滤
+    const createBy = activeTab.value === 'my'
+      ? (userStore.userInfo?.id != null ? String(userStore.userInfo.id) : undefined)
+      : undefined
     const result = await getPaperPage({
       name: pageParams.name || '',
       subjectId: pageParams.subjectId || '',
       pageIndex: pageParams.pageIndex,
       pageSize: pageParams.pageSize,
+      ...(createBy ? { createBy } : {}),
     })
     if (result && Array.isArray(result.list)) {
       papers.value = result.list
@@ -117,7 +150,19 @@ function handleNotOpen() {
 }
 
 // ── 生命周期 ──────────────────────────────────────────────
-onMounted(() => {
+onMounted(async () => {
+  // Q-hotfix 段⑧ — 解析 URL query.my=1 自动激活"我的卷库" tab（workspace 跳转入口用）
+  if (route.query.my === '1' || route.query.my === 1) {
+    activeTab.value = 'my'
+    if (!userStore.userInfo) {
+      try {
+        const info = await getCurrentUser()
+        if (info) userStore.setUserInfo(info)
+      } catch (e) {
+        console.warn('[papers] getCurrentUser 兜底失败', e)
+      }
+    }
+  }
   loadTree()
   fetchPapers()
 })
@@ -166,6 +211,12 @@ onMounted(() => {
 
     <!-- 中间主区 -->
     <section class="paper-main">
+      <!-- Q-hotfix 段⑧ — 卷库 tab 切换 -->
+      <el-tabs v-model="activeTab" class="paper-tabs" @tab-change="handleTabChange">
+        <el-tab-pane label="公共试卷" name="public" />
+        <el-tab-pane label="我的卷库" name="my" />
+      </el-tabs>
+
       <!-- 顶部搜索条 -->
       <div class="search-bar">
         <el-input
@@ -294,6 +345,19 @@ onMounted(() => {
   display: flex;
   gap: 10px;
   align-items: center;
+}
+
+/* Q-hotfix 段⑧ — paper-tabs 收紧顶部边距，跟搜索条形成层级 */
+.paper-tabs {
+  margin-bottom: -8px;
+}
+
+.paper-tabs :deep(.el-tabs__header) {
+  margin: 0;
+}
+
+.paper-tabs :deep(.el-tabs__nav-wrap::after) {
+  height: 1px;
 }
 
 .search-input {
