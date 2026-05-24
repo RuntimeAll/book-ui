@@ -11,11 +11,13 @@ import {
 } from '@/api/paper/index'
 import { useUserStore } from '@/store/user'
 import { getCurrentUser } from '@/api/user'
+import { usePaperBasket } from '@/composables/usePaperBasket'
 
 // ── 路由 ────────────────────────────────────────────────────
 const router = useRouter()
 const route = useRoute()
 const userStore = useUserStore()
+const basket = usePaperBasket()
 
 // ── Q-hotfix 段⑧（2026-05-23）— 卷库 tab：公共 / 我的卷库
 type PaperTab = 'public' | 'my'
@@ -149,10 +151,15 @@ function handleNotOpen() {
   ElMessage.info('暂未开放')
 }
 
+// R 卡段④ — 加入试卷篮（composable 已封 toast / 防重 / 上限 20 自查）
+async function handleAddBasket(item: PaperListItem) {
+  await basket.add(item)
+}
+
 // ── 生命周期 ──────────────────────────────────────────────
 onMounted(async () => {
   // Q-hotfix 段⑧ — 解析 URL query.my=1 自动激活"我的卷库" tab（workspace 跳转入口用）
-  if (route.query.my === '1' || route.query.my === 1) {
+  if (route.query.my === '1') {
     activeTab.value = 'my'
     if (!userStore.userInfo) {
       try {
@@ -246,7 +253,7 @@ onMounted(async () => {
             </div>
             <div class="paper-card-actions">
               <el-link type="primary" :underline="false" @click="handleView(item)">查看</el-link>
-              <el-link type="primary" :underline="false" @click="handleNotOpen">加入试卷篮</el-link>
+              <el-link type="primary" :underline="false" @click="handleAddBasket(item)">加入试卷篮</el-link>
             </div>
           </div>
           <div class="paper-card-row2">
