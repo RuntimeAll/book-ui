@@ -81,6 +81,12 @@ const router = createRouter({
           name: 'PapersIndex',
           component: () => import('@/views/papers/index.vue'),
         },
+        // PRD-001 — 三栏组卷工作台（试卷篮打散成题 → 左考点/中题域/右组卷面板）
+        {
+          path: '/papers/basket',
+          name: 'PapersBasket',
+          component: () => import('@/views/papers/basket.vue'),
+        },
         {
           path: '/materials/index',
           name: 'MaterialsIndex',

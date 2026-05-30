@@ -3,7 +3,6 @@ import { computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import QuestionBasket from '@/components/business/QuestionBasket/index.vue'
-import PaperBasket from '@/components/business/PaperBasket/index.vue'
 import { useUserStore } from '@/store/user'
 
 const router = useRouter()
@@ -90,16 +89,8 @@ const showQuestionBasket = computed(() => {
     || route.path === '/workspace'
 })
 
-// R 卡段④ — 试卷篮 FAB 路由白名单（复用 showQuestionBasket 同款，
-// 双 FAB 水平错开样式：试卷篮 right:130px 绿 / 试题栏 right:40px 蓝，PaperBasket 组件内自管）。
-const showPaperBasket = computed(() => {
-  if (route.path === '/question/compose') {
-    return false
-  }
-  return route.path.startsWith('/question/')
-    || route.path.startsWith('/papers/')
-    || route.path === '/workspace'
-})
+// PRD-001 — 旧绿色试卷篮 FAB/dialog 已下线（功能迁入 /papers/basket 三栏工作台）。
+//   usePaperBasket 状态 composable 保留(外层"加入试卷篮"入口 + 工作台共享态)。
 
 function handleUpgrade() {
   ElMessage.info('升级会员功能开发中')
@@ -178,8 +169,6 @@ function handleUpgrade() {
 
     <!-- 全局试题栏（U 卡 P-2 — 路由白名单：仅题库 / 卷库 / 工作台显示，登录 / home 隐藏） -->
     <QuestionBasket v-if="showQuestionBasket" />
-    <!-- R 卡段④ — 全局试卷篮 FAB（同款白名单，双 FAB 水平错开） -->
-    <PaperBasket v-if="showPaperBasket" />
   </el-container>
 </template>
 
