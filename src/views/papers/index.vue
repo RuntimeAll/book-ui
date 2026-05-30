@@ -152,8 +152,14 @@ function handleNotOpen() {
 }
 
 // R 卡段④ — 加入试卷篮（composable 已封 toast / 防重 / 上限 20 自查）
-async function handleAddBasket(item: PaperListItem) {
-  await basket.add(item)
+// PRD-001 回归补丁 — 改为 toggle：已在篮内则移出(取消)，否则加入。
+async function handleToggleBasket(item: PaperListItem) {
+  if (basket.isLoading(item.id)) return
+  if (basket.basketIds.value.has(item.id)) {
+    await basket.remove(item.id)
+  } else {
+    await basket.add(item)
+  }
 }
 
 // ── 生命周期 ──────────────────────────────────────────────
@@ -253,7 +259,14 @@ onMounted(async () => {
             </div>
             <div class="paper-card-actions">
               <el-link type="primary" :underline="false" @click="handleView(item)">查看</el-link>
-              <el-link type="primary" :underline="false" @click="handleAddBasket(item)">加入试卷篮</el-link>
+              <el-link
+                :type="basket.basketIds.value.has(item.id) ? 'danger' : 'primary'"
+                :underline="false"
+                :disabled="basket.isLoading(item.id)"
+                @click="handleToggleBasket(item)"
+              >
+                {{ basket.basketIds.value.has(item.id) ? '移出试卷篮' : '加入试卷篮' }}
+              </el-link>
             </div>
           </div>
           <div class="paper-card-row2">

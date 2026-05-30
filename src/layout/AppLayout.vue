@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import QuestionBasket from '@/components/business/QuestionBasket/index.vue'
+import PaperBasketFab from '@/components/business/PaperBasketFab/index.vue'
 import { useUserStore } from '@/store/user'
 
 const router = useRouter()
@@ -89,8 +90,18 @@ const showQuestionBasket = computed(() => {
     || route.path === '/workspace'
 })
 
-// PRD-001 — 旧绿色试卷篮 FAB/dialog 已下线（功能迁入 /papers/basket 三栏工作台）。
+// PRD-001 — 旧绿色试卷篮 FAB/dialog(818 行)已下线，功能迁入 /papers/basket 三栏工作台。
 //   usePaperBasket 状态 composable 保留(外层"加入试卷篮"入口 + 工作台共享态)。
+// PRD-001 回归补丁 — 新增轻量绿色试卷篮 FAB(仅入口+角标，点击跳工作台，不复活旧 dialog)。
+//   白名单同试题栏(题库/卷库/工作台)，但在工作台本页隐藏(避免"点了进当前页")。
+const showPaperBasketFab = computed(() => {
+  if (route.path === '/papers/basket') {
+    return false
+  }
+  return route.path.startsWith('/question/')
+    || route.path.startsWith('/papers/')
+    || route.path === '/workspace'
+})
 
 function handleUpgrade() {
   ElMessage.info('升级会员功能开发中')
@@ -169,6 +180,9 @@ function handleUpgrade() {
 
     <!-- 全局试题栏（U 卡 P-2 — 路由白名单：仅题库 / 卷库 / 工作台显示，登录 / home 隐藏） -->
     <QuestionBasket v-if="showQuestionBasket" />
+
+    <!-- 全局试卷篮入口 FAB（PRD-001 回归补丁 — 绿色，点击跳 /papers/basket 三栏工作台） -->
+    <PaperBasketFab v-if="showPaperBasketFab" />
   </el-container>
 </template>
 
