@@ -148,6 +148,32 @@ async function add(q: QuestionItem): Promise<void> {
   }
 }
 
+/**
+ * 批量加入（PRD-001 回归补丁 — 快速组卷 / 中栏"全部加入"复用）。
+ * 过滤掉已在篮内的，单条汇总 toast（避免 N 条刷屏），返回实际新增数。
+ */
+async function addMany(questions: QuestionItem[]): Promise<number> {
+  const toAdd = questions.filter((q) => !_basketIds.value.has(q.id))
+  if (toAdd.length === 0) {
+    ElMessage.info('所选题目均已在试题栏中')
+    return 0
+  }
+  const newSet = new Set(_basketIds.value)
+  toAdd.forEach((q) => {
+    newSet.add(q.id)
+    _cache.set(q.id, q)
+  })
+  _basketIds.value = newSet
+  syncToStorage()
+  ElMessage.success(`已加入 ${toAdd.length} 题到试题栏`)
+  toAdd.forEach((q) =>
+    apiAddBasket(q.id).catch((e) =>
+      console.warn('[basket] addBasket notify failed (local state OK):', e),
+    ),
+  )
+  return toAdd.length
+}
+
 async function remove(id: number): Promise<void> {
   if (_togglingIds.has(id)) return
   if (!_basketIds.value.has(id)) return
@@ -218,6 +244,8 @@ export interface UseQuestionBasket {
   count: ComputedRef<number>
   items: ComputedRef<QuestionItem[]>
   add: (q: QuestionItem) => Promise<void>
+  /** 批量加入（过滤已在篮 + 单条汇总 toast），返回实际新增数 */
+  addMany: (questions: QuestionItem[]) => Promise<number>
   remove: (id: number) => Promise<void>
   clear: () => Promise<void>
   togglingIds: Set<number>
@@ -245,6 +273,7 @@ export function useQuestionBasket(): UseQuestionBasket {
     count: _count,
     items: _items,
     add,
+    addMany,
     remove,
     clear,
     togglingIds: _togglingIds,

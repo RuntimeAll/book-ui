@@ -1,149 +1,163 @@
 <script setup lang="ts">
+/**
+ * QuickComposePanel — 三栏组卷工作台「快速组卷」面板 (PRD-001 T5 + 验收期返工)
+ *
+ * 验收反馈返工（2026-05-30）：
+ *   - 底部动作不是"生成试卷"，而是把所选题「加入试题篮」(蓝色 useQuestionBasket)。
+ *     真正的组卷由试题篮自身的"组卷"流程承接，本面板只负责快速多选 → 入篮。
+ *   - 题号按「题型」分类展示（选择题 / 填空题 / 简答题…），组内连续全局编号。
+ *
+ * 设计：题号格按题型分组，全局连续编号(seq)。点格 toggle 选中(按 question id)。
+ *   已在试题篮内的题置灰禁选 + 打 ✓，避免重复加。底部"加入试题篮 (N题)" = 待加入数。
+ */
 import { computed, ref } from 'vue'
-import { useRouter } from 'vue-router'
-import { ElLoading, ElMessage, ElMessageBox } from 'element-plus'
 import type { PaperSourceQuestion } from '@/api/question/index'
-import { createExamPaper } from '@/api/paper/index'
+import { useQuestionBasket } from '@/composables/useQuestionBasket'
 
 const props = defineProps<{
   questions: PaperSourceQuestion[]
 }>()
 
-const router = useRouter()
+const basket = useQuestionBasket()
 
-// 选中题目的 id 集合
-const selectedIds = ref<number[]>([])
+// ── 题型 label / 圆点颜色（沿用项目既有映射 {1选择 4填空 5简答}）──
+const TYPE_LABEL: Record<number, string> = { 1: '选择题', 4: '填空题', 5: '简答题' }
+const TYPE_DOT: Record<number, string> = { 1: '#4080ff', 4: '#2bb673', 5: '#f5a623' }
+function typeLabel(t: number): string {
+  return TYPE_LABEL[t] ?? `题型${t}`
+}
+function typeDot(t: number): string {
+  return TYPE_DOT[t] ?? '#909399'
+}
+
+interface SeqQuestion {
+  q: PaperSourceQuestion
+  seq: number // 全局连续编号
+}
+interface TypeGroup {
+  type: number
+  label: string
+  dot: string
+  items: SeqQuestion[]
+}
+
+// ── 按题型分组 + 全局连续编号 ────────────────────────────────
+const groups = computed<TypeGroup[]>(() => {
+  // 先按题型聚合（题型升序：选择题1 → 填空题4 → 简答题5 → 其他）
+  const byType = new Map<number, PaperSourceQuestion[]>()
+  for (const q of props.questions) {
+    const t = q.questionType ?? -1
+    if (!byType.has(t)) byType.set(t, [])
+    byType.get(t)!.push(q)
+  }
+  const types = [...byType.keys()].sort((a, b) => a - b)
+  // 全局连续编号：按分组展示顺序依次累加
+  let seq = 0
+  return types.map((type) => ({
+    type,
+    label: typeLabel(type),
+    dot: typeDot(type),
+    items: byType.get(type)!.map((q) => ({ q, seq: ++seq })),
+  }))
+})
 
 const isEmpty = computed<boolean>(() => props.questions.length === 0)
 
+// ── 选中态（按 question id；已在篮内的不可选）──────────────────
+const selectedIds = ref<Set<number>>(new Set())
+
+function inBasket(id: number): boolean {
+  return basket.basketIds.value.has(id)
+}
 function isSelected(id: number): boolean {
-  return selectedIds.value.includes(id)
+  return selectedIds.value.has(id)
 }
-
 function toggle(id: number): void {
-  const idx = selectedIds.value.indexOf(id)
-  if (idx === -1) {
-    selectedIds.value.push(id)
-  } else {
-    selectedIds.value.splice(idx, 1)
-  }
+  if (inBasket(id)) return // 已在篮内不可选
+  const next = new Set(selectedIds.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  selectedIds.value = next
 }
 
-function selectAll(): void {
-  selectedIds.value = props.questions.map(q => q.id)
+// 待加入的题（选中 ∩ 当前题列表 ∩ 未在篮）
+const selectedQuestions = computed<PaperSourceQuestion[]>(() =>
+  props.questions.filter((q) => selectedIds.value.has(q.id) && !inBasket(q.id)),
+)
+
+// "已选：2、3 题" —— 展示选中题的全局编号（升序）
+const selectedSeqLabel = computed<string>(() => {
+  const seqMap = new Map<number, number>()
+  for (const g of groups.value) for (const it of g.items) seqMap.set(it.q.id, it.seq)
+  const seqs = [...selectedIds.value]
+    .map((id) => seqMap.get(id))
+    .filter((s): s is number => s != null)
+    .sort((a, b) => a - b)
+  return seqs.length > 0 ? seqs.join('、') : ''
+})
+
+function clearSelection(): void {
+  selectedIds.value = new Set()
 }
 
-function clearAll(): void {
-  selectedIds.value = []
-}
-
-// yyyy-mm-dd（运行时取当天日期）
-function todayStr(): string {
-  const d = new Date()
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
-}
-
-async function handleCompose(): Promise<void> {
-  if (selectedIds.value.length === 0) {
-    ElMessage.warning('请先选择至少 1 道题')
-    return
-  }
-
-  let name: string
-  try {
-    const res = await ElMessageBox.prompt('请输入试卷名称', '生成试卷', {
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
-      inputValue: `快速组卷-${todayStr()}`,
-      inputValidator: (val: string): boolean | string => {
-        const v = (val ?? '').trim()
-        if (!v) return '试卷名称不能为空'
-        if (v.length > 80) return '试卷名称不能超过 80 字'
-        return true
-      },
-    })
-    name = (res.value ?? '').trim()
-  } catch {
-    // 用户取消
-    return
-  }
-
-  const ids = [...selectedIds.value]
-  const loading = ElLoading.service({
-    lock: true,
-    text: '正在生成试卷…',
-  })
-  try {
-    const res = await createExamPaper({ name, questionIds: ids })
-    loading.close()
-    ElMessage.success(`组卷成功，共 ${res.questionCount} 题`)
-    router.push(`/papers/source/${res.paperId}`)
-  } catch {
-    loading.close()
-    ElMessageBox.alert('生成试卷失败，请稍后重试。', '提示', {
-      confirmButtonText: '我知道了',
-      type: 'error',
-    })
-    // 失败不清空选择
-  }
+async function handleAddToBasket(): Promise<void> {
+  const toAdd = selectedQuestions.value
+  if (toAdd.length === 0) return
+  await basket.addMany(toAdd)
+  clearSelection() // 入篮后清空选择（已入篮的格子会自动变 ✓ 禁选）
 }
 </script>
 
 <template>
   <div class="quick-compose-panel">
-    <template v-if="isEmpty">
-      <el-empty description="先在左/中栏准备题目" :image-size="100" />
-      <div class="qc-footer">
-        <el-button
-          class="compose-submit-btn"
-          type="primary"
-          disabled
-        >
-          生成试卷
-        </el-button>
-      </div>
-    </template>
+    <el-empty v-if="isEmpty" description="先在左/中栏准备题目" :image-size="100" />
 
     <template v-else>
-      <!-- 顶部统计 + 操作 -->
-      <div class="qc-header">
-        <span class="qc-count">
-          已选 {{ selectedIds.length }} / {{ questions.length }} 题
-        </span>
-        <div class="qc-actions">
-          <el-button size="small" text @click="selectAll">全选</el-button>
-          <el-button size="small" text @click="clearAll">清空</el-button>
+      <!-- ── 按题型分组的题号网格 ── -->
+      <div class="qc-scroll">
+        <div v-for="g in groups" :key="g.type" class="qc-group">
+          <div class="qc-group-title">
+            <span class="qc-dot" :style="{ background: g.dot }" />
+            <span class="qc-group-label">{{ g.label }}</span>
+            <span class="qc-group-count">{{ g.items.length }}</span>
+          </div>
+          <div class="qc-grid">
+            <button
+              v-for="it in g.items"
+              :key="it.q.id"
+              type="button"
+              class="qc-cell"
+              :class="{
+                'qc-cell--active': isSelected(it.q.id),
+                'qc-cell--in-basket': inBasket(it.q.id),
+              }"
+              :disabled="inBasket(it.q.id)"
+              :title="inBasket(it.q.id) ? '已在试题篮中' : ''"
+              @click="toggle(it.q.id)"
+            >
+              {{ it.seq }}
+              <span v-if="inBasket(it.q.id)" class="qc-cell-check">✓</span>
+            </button>
+          </div>
         </div>
       </div>
 
-      <!-- 题号网格 -->
-      <div class="qc-grid">
-        <button
-          v-for="(q, i) in questions"
-          :key="q.id"
-          type="button"
-          class="qc-cell"
-          :class="{ 'qc-cell--active': isSelected(q.id) }"
-          @click="toggle(q.id)"
-        >
-          {{ i + 1 }}
-        </button>
-      </div>
-
-      <!-- 底部统计 + 主按钮 -->
+      <!-- ── 底部：已选 + 加入试题篮 + 清除 ── -->
       <div class="qc-footer">
-        <span class="qc-count qc-count--bottom">
-          已选 {{ selectedIds.length }} / {{ questions.length }} 题
-        </span>
+        <div class="qc-selected-line">
+          已选：<template v-if="selectedSeqLabel">{{ selectedSeqLabel }} 题</template>
+          <span v-else class="qc-selected-none">未选择题目</span>
+        </div>
         <el-button
-          class="compose-submit-btn"
-          type="primary"
-          @click="handleCompose"
+          class="add-to-basket-btn"
+          type="success"
+          :disabled="selectedQuestions.length === 0"
+          @click="handleAddToBasket"
         >
-          生成试卷
+          + 加入试题篮（{{ selectedQuestions.length }}题）
+        </el-button>
+        <el-button class="clear-btn" plain @click="clearSelection">
+          清除选择
         </el-button>
       </div>
     </template>
@@ -161,56 +175,66 @@ async function handleCompose(): Promise<void> {
   box-sizing: border-box;
 }
 
-.qc-header {
+.qc-scroll {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+/* ── 题型分组 ── */
+.qc-group {
+  margin-bottom: 18px;
+}
+
+.qc-group-title {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  margin-bottom: 12px;
-}
-
-.qc-count {
-  font-size: 14px;
-  color: #1d2129;
-  font-weight: 500;
-}
-
-.qc-count--bottom {
-  color: #86909c;
-  font-weight: 400;
-}
-
-.qc-actions {
-  display: flex;
-  gap: 4px;
-}
-
-.qc-grid {
-  display: flex;
-  flex-wrap: wrap;
   gap: 8px;
-  flex: 1 1 auto;
-  align-content: flex-start;
-  overflow-y: auto;
-  padding: 4px 0;
+  margin-bottom: 10px;
+}
+
+.qc-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.qc-group-label {
+  font-size: 15px;
+  font-weight: 700;
+  color: #1d2129;
+}
+
+.qc-group-count {
+  font-size: 12px;
+  color: #86909c;
+}
+
+/* ── 题号格 ── */
+.qc-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 10px;
 }
 
 .qc-cell {
-  width: 36px;
-  height: 36px;
+  position: relative;
+  height: 40px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   font-size: 14px;
   color: #4e5969;
-  background: #f7f8fa;
-  border: 1px solid #f2f3f5;
+  background: #fff;
+  border: 1px solid #e5e6eb;
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.15s ease;
   user-select: none;
 }
 
-.qc-cell:hover {
+.qc-cell:hover:not(:disabled) {
   border-color: #4080ff;
   color: #4080ff;
 }
@@ -225,17 +249,60 @@ async function handleCompose(): Promise<void> {
   color: #fff;
 }
 
+/* 已在试题篮 — 置灰禁选 + ✓ */
+.qc-cell--in-basket {
+  background: #f2f3f5;
+  border-color: #e5e6eb;
+  color: #c0c4cc;
+  cursor: not-allowed;
+}
+
+.qc-cell-check {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 16px;
+  height: 16px;
+  font-size: 11px;
+  line-height: 16px;
+  text-align: center;
+  color: #fff;
+  background: #2bb673;
+  border-radius: 50%;
+}
+
+/* ── 底部 ── */
 .qc-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  flex-shrink: 0;
   margin-top: 12px;
   padding-top: 12px;
   border-top: 1px solid #f2f3f5;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
-.qc-footer .compose-submit-btn {
-  margin-left: auto;
+.qc-selected-line {
+  background: #f7f8fa;
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 14px;
+  color: #1d2129;
+}
+
+.qc-selected-none {
+  color: #86909c;
+}
+
+.add-to-basket-btn {
+  width: 100%;
+  height: 44px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.clear-btn {
+  width: 100%;
+  height: 40px;
 }
 </style>

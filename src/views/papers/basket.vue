@@ -13,7 +13,6 @@
  * 详情 = 复用题库题目详情页 /question/detail/:id(共享组件，禁重造)。
  */
 import { ref, computed, onMounted, watch } from 'vue'
-import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { usePaperBasket } from '@/composables/usePaperBasket'
 import { useBasketWorkbench } from '@/composables/useBasketWorkbench'
@@ -62,15 +61,8 @@ async function handleBasketToggle(q: PaperSourceQuestion): Promise<void> {
 }
 
 async function handleAddAll(): Promise<void> {
-  const toAdd = filteredQuestions.value.filter((q) => !questionBasket.basketIds.value.has(q.id))
-  if (toAdd.length === 0) {
-    ElMessage.info('当前题目均已在试题篮中')
-    return
-  }
-  for (const q of toAdd) {
-    // eslint-disable-next-line no-await-in-loop
-    await questionBasket.add(q)
-  }
+  // addMany 内部已过滤已在篮 + 单条汇总 toast（含"均已在篮"提示）
+  await questionBasket.addMany(filteredQuestions.value)
 }
 
 function handleDetail(q: PaperSourceQuestion): void {
