@@ -32,6 +32,10 @@ export interface UserInfo {
   phone?: string
   imagePath?: string
   member?: boolean
+  /** PRD-002 新增 — 个人资料字段（current 端点回填） */
+  sex?: number | null
+  grade?: string | null
+  school?: string | null
 }
 
 function loadFromStorage(): AuthState | null {

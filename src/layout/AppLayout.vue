@@ -39,7 +39,9 @@ async function handleLogout() {
 }
 
 function handleDropdownCommand(command: string) {
-  if (command === 'logout') {
+  if (command === 'profile') {
+    router.push('/user/profile')
+  } else if (command === 'logout') {
     handleLogout()
   }
 }
@@ -162,7 +164,11 @@ function handleUpgrade() {
                 <el-dropdown-item disabled>
                   <span class="dropdown-name">{{ displayName }}</span>
                 </el-dropdown-item>
-                <el-dropdown-item divided command="logout">
+                <el-dropdown-item divided command="profile">
+                  <el-icon style="margin-right: 6px;"><User /></el-icon>
+                  个人资料
+                </el-dropdown-item>
+                <el-dropdown-item command="logout">
                   <el-icon style="margin-right: 6px;"><SwitchButton /></el-icon>
                   退出登录
                 </el-dropdown-item>

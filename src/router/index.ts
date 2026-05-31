@@ -57,6 +57,12 @@ const router = createRouter({
           name: 'Workspace',
           component: () => import('@/views/workspace/index.vue'),
         },
+        // PRD-002 — 个人资料页（登录态内页）
+        {
+          path: '/user/profile',
+          name: 'UserProfile',
+          component: () => import('@/views/user/profile.vue'),
+        },
         {
           path: '/assignment/index',
           name: 'AssignmentIndex',

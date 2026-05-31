@@ -15,10 +15,40 @@ export interface CurrentUserVO {
   phone: string
   imagePath: string
   member: boolean
+  /**
+   * PRD-002 新增 — 个人资料字段（BE current 端点扩字段回填）。
+   * sex：0 男 / 1 女 / null 未设置；grade：任教年级；school：学校。
+   */
+  sex: number | null
+  grade: string | null
+  school: string | null
 }
 
 export const getCurrentUser = () =>
   request.post<CurrentUserVO, CurrentUserVO>('/teacher/user/current')
+
+/** PRD-002 段③ — 更新个人资料入参（userId 由 BE 从登录态取，不从 body 收，防越权） */
+export interface UpdateProfilePayload {
+  /** 真实姓名（必填）→ 落 sys_user.nick_name */
+  realName: string
+  /** 性别 0 男 / 1 女 / null */
+  sex: number | null
+  /** 任教年级（必填）→ 落 sys_user.grade */
+  grade: string
+  /** 学校 → 落 sys_user.school */
+  school: string | null
+}
+
+/**
+ * PRD-002 段③ — 更新当前登录老师的个人资料
+ * POST /teacher/user/update（登录态内页）
+ *
+ * - userId 从登录态取（BE LoginHelper/StpUtil），不传 body
+ * - 校验失败（realName / grade 空）→ BE 400 + 校验信息（request.ts 拦截器走错误分支）
+ * - 成功 → R<Void>（message="操作成功"）
+ */
+export const updateProfile = (payload: UpdateProfilePayload) =>
+  request.post<void, void>('/teacher/user/update', payload)
 
 /** U 卡 段⑧ — 注册入参 */
 export interface RegisterTeacherPayload {
