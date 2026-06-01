@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search, Star } from '@element-plus/icons-vue'
 import { useRouter, useRoute } from 'vue-router'
@@ -56,12 +56,21 @@ const treeFilterKeyword = ref('')
 const treeData = ref<PaperTreeNode[]>([])
 const treeLoading = ref(false)
 const currentSubjectId = ref<string>('')
+const paperTreeRef = ref()
 
 async function loadTree() {
   treeLoading.value = true
   try {
     const result = await getPaperLazyTree()
     treeData.value = Array.isArray(result) ? result : []
+    // 树数据就绪后，默认选中第一个节点并触发筛选查询
+    if (treeData.value.length > 0) {
+      const firstNode = treeData.value[0]
+      handleNodeClick(firstNode)
+      // 等 DOM 渲染完成后设置树高亮（highlight-current 需要 setCurrentKey）
+      await nextTick()
+      paperTreeRef.value?.setCurrentKey(firstNode.id)
+    }
   } catch (e) {
     console.warn('[paper-tree] lazyTree failed', e)
     treeData.value = []
@@ -176,8 +185,10 @@ onMounted(async () => {
       }
     }
   }
-  loadTree()
-  fetchPapers()
+  // loadTree() 内部在树数据就绪后自动选中第一个节点并触发 fetchPapers（带 subjectId 筛选）。
+  // 空树兜底：loadTree 内部判断 treeData.length > 0 才选中，空树不触发查询。
+  // 注意：query.my=1 场景下，handleNodeClick 内 fetchPapers 会带 activeTab 的 my 过滤，行为正确。
+  await loadTree()
 })
 </script>
 
@@ -212,6 +223,7 @@ onMounted(async () => {
       <!-- 树 -->
       <div v-loading="treeLoading" class="tree-wrap">
         <el-tree
+          ref="paperTreeRef"
           :data="treeData"
           node-key="id"
           :props="{ children: 'children', label: 'title' }"

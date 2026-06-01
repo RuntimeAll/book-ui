@@ -53,16 +53,6 @@ const today = (() => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 })()
 
-// QuestionItem.questionType 口径（src/api/question/index.ts:42）：1=选择 / 4=填空 / 5=简答
-// 2=判断 / 3=应用 兜底覆盖（与 compose.vue questionTypeLabel 同源，复制版以解耦）
-function questionTypeLabel(type: number): string {
-  if (type === 1) return '选择题'
-  if (type === 2) return '判断题'
-  if (type === 3) return '应用题'
-  if (type === 4) return '填空题'
-  if (type === 5) return '简答题'
-  return `类型${type}`
-}
 
 // 解析 optionsJson — BE 返回字符串（["A. xxx", "B. yyy"] 或 [{key:'A', text:'...'}] 两种历史口径并存）。
 // 容错：parse 失败返 null（不渲染选项区）；空字符串 / null 直接返 null。
@@ -267,12 +257,9 @@ async function handleExportPdf() {
             :key="q.id"
             class="pp-question"
           >
-            <!-- 题头：全卷连续序号 + 题型 tag -->
+            <!-- 题头：全卷连续序号（不显示题型标签，misikt 导出不带题型 tag） -->
             <div class="pp-q-head">
               <span class="pp-q-no">{{ globalIndex(gIdx, qIdx) }}.</span>
-              <el-tag size="small" type="info" effect="plain">
-                {{ questionTypeLabel(q.questionType) }}
-              </el-tag>
             </div>
 
             <!-- ── 纯图模式（PRD §0.4 misikt 真站铁证，当前默认）──────────────── -->

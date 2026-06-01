@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, computed, watch } from 'vue'
+import { ref, reactive, onMounted, computed, watch, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search, Document } from '@element-plus/icons-vue'
 import {
@@ -56,6 +56,14 @@ async function loadTree() {
       treeData.value = result
     } else if (result && typeof result === 'object') {
       treeData.value = [result as unknown as SubjectNode]
+    }
+    // 树数据就绪后，默认选中第一个节点并触发筛选查询
+    if (treeData.value.length > 0) {
+      const firstNode = treeData.value[0]
+      handleNodeClick(firstNode)
+      // 等 DOM 渲染完成后设置树高亮（highlight-current 需要 setCurrentKey）
+      await nextTick()
+      treeRef.value?.setCurrentKey(firstNode.id)
     }
   } catch (e) {
     console.warn('[tree] lazyTree failed', e)
@@ -243,8 +251,11 @@ function handleDetail(q: QuestionItem) {
 }
 
 // ── 初始化 ───────────────────────────────────────────────────
+// loadTree() 内部在数据就绪后会自动选中第一个节点并触发 fetchQuestions，
+// 此处不再单独并行调 fetchQuestions（避免首屏发出一次全量无筛选查询）。
+// 空树兜底：loadTree 内部判断 treeData.length > 0 才选中，空树时不触发查询。
 onMounted(async () => {
-  await Promise.allSettled([loadTree(), fetchQuestions()])
+  await loadTree()
 })
 </script>
 
