@@ -2,7 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { ArrowLeft, Check, View, ShoppingCart, Edit, Star, InfoFilled } from '@element-plus/icons-vue'
+import { ArrowLeft, Check, View, ShoppingCart, Edit, Star, InfoFilled, Download } from '@element-plus/icons-vue'
 import {
   getPaperDetail,
   type PaperDetailVo,
@@ -10,6 +10,7 @@ import {
   type PaperSourceQuestion,
 } from '@/api/question/index'
 import FreeTagList from '@/components/business/FreeTagList/index.vue'
+import PaperPreview from '@/components/business/PaperPreview/index.vue'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
 
 // ── 路由 ────────────────────────────────────────────────────
@@ -29,6 +30,20 @@ const allQuestions = computed<PaperSourceQuestion[]>(() => {
   if (!detail.value || !Array.isArray(detail.value.sections)) return []
   return detail.value.sections.flatMap((s) => s.questions || [])
 })
+
+// ── 导出 PDF（复用 PaperPreview 预览弹窗内置的 jsPDF 无损导出链路）──
+const previewVisible = ref(false)
+const exportPaperName = computed(() => detail.value?.paperName || '试卷')
+// 按卷内大题顺序 flatten 的题目 id（= 导出/预览显示顺序）
+const exportQuestionIds = computed<number[]>(() => allQuestions.value.map((q) => q.id))
+
+function handleExportPaper() {
+  if (exportQuestionIds.value.length === 0) {
+    ElMessage.warning('试卷暂无题目，无法导出')
+    return
+  }
+  previewVisible.value = true
+}
 
 async function loadPaperDetail() {
   loading.value = true
@@ -138,6 +153,15 @@ onMounted(() => {
         <span class="topbar-title">{{ detail?.paperName || '原卷预览' }}</span>
         <el-tag v-if="detail?.examYear" type="info" size="small">{{ detail.examYear }}</el-tag>
       </div>
+      <el-button
+        type="primary"
+        class="topbar-export-btn"
+        :disabled="!detail || allQuestions.length === 0"
+        @click="handleExportPaper"
+      >
+        <el-icon><Download /></el-icon>
+        <span>导出 PDF</span>
+      </el-button>
     </div>
 
     <!-- 内容区 -->
@@ -283,6 +307,14 @@ onMounted(() => {
         </section>
       </div>
     </div>
+
+    <!-- 导出 PDF：复用 PaperPreview 干净打印版预览（自带答案/解析勾选 + jsPDF 无损导出按钮） -->
+    <PaperPreview
+      :visible="previewVisible"
+      :paper-name="exportPaperName"
+      :ids="exportQuestionIds"
+      @update:visible="previewVisible = $event"
+    />
   </div>
 </template>
 
@@ -328,6 +360,13 @@ onMounted(() => {
   font-size: 16px;
   font-weight: 600;
   color: #1d2129;
+}
+
+.topbar-export-btn {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 /* ── 内容区 ── */
