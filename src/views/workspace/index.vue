@@ -9,11 +9,9 @@ import { getFavoriteFolderTree, type FavoriteFolder } from '@/api/question'
 
 // U 卡 段④ — 教师"我的工作台"聚合页（PRD §0.1 U-3）。
 //
-// 4 个 section：
+// 2 个 section：
 //   ① 我创建的卷：调 paper/page + createBy=teacherUserId 拿前 5 条
 //   ② 我的收藏：调 q-folder/tree 拿收藏夹 + 总 count
-//   ③ 我的笔记：第一版占位空态（list 端点 V2 再建）
-//   ④ 我的草稿：第一版占位空态（biz_paper.status='0' 当前 mapper 强制 status='1'，V2 再建）
 //
 // 设计原则：
 //   - 任一 section 拉取失败 → 该 section 显示空态文案 + 错误兜底（不阻塞其他 section）
@@ -113,7 +111,7 @@ onMounted(async () => {
         <h1 class="title">
           {{ userStore.userInfo?.realName || userStore.userInfo?.userName || '老师' }}，欢迎回来
         </h1>
-        <p class="subtitle">这里是你的个人工作台 — 一站式管理你的卷 / 收藏 / 笔记 / 草稿</p>
+        <p class="subtitle">这里是你的个人工作台 — 一站式管理你的卷 / 收藏</p>
       </div>
       <el-button type="primary" @click="goCreatePaper">
         <el-icon><Plus /></el-icon>
@@ -199,49 +197,6 @@ onMounted(async () => {
         </div>
       </section>
 
-      <!-- section 3 — 我的笔记 -->
-      <section class="section-card">
-        <div class="section-header">
-          <div class="section-title">
-            <el-icon class="section-icon" color="#10b981"><EditPen /></el-icon>
-            <span>我的笔记</span>
-            <el-tag size="small" type="success">0 条</el-tag>
-          </div>
-          <el-button link type="primary" @click="goQuestionLib">
-            去题库添加
-            <el-icon><ArrowRight /></el-icon>
-          </el-button>
-        </div>
-        <div class="section-body">
-          <el-empty
-            description="还没有添加任何笔记"
-            :image-size="60"
-          />
-          <p class="hint-text">在题目详情页点击"记笔记"添加</p>
-        </div>
-      </section>
-
-      <!-- section 4 — 我的草稿 -->
-      <section class="section-card">
-        <div class="section-header">
-          <div class="section-title">
-            <el-icon class="section-icon" color="#94a3b8"><Files /></el-icon>
-            <span>我的草稿</span>
-            <el-tag size="small" type="info">0 份</el-tag>
-          </div>
-          <el-button link type="primary" @click="goCreatePaper">
-            去新建
-            <el-icon><ArrowRight /></el-icon>
-          </el-button>
-        </div>
-        <div class="section-body">
-          <el-empty
-            description="还没有草稿"
-            :image-size="60"
-          />
-          <p class="hint-text">组卷工作台保存的卷会出现在这里（Q 卡上线后激活）</p>
-        </div>
-      </section>
     </main>
   </div>
 </template>
@@ -374,10 +329,4 @@ onMounted(async () => {
   color: #1d2129;
 }
 
-.hint-text {
-  text-align: center;
-  font-size: 12px;
-  color: #86909c;
-  margin: 8px 0 0;
-}
 </style>
