@@ -55,20 +55,15 @@ const menuItems: MenuItem[] = [
   { label: '首页', path: '/home' },
   { label: '我的工作台', path: '/workspace' },                  // U-3 教师工作台聚合页
   { label: '卷库', path: '/papers/index' },
-  { label: '我的卷库', path: '/papers/mine' },                  // 独立导航页，scope=mine
   { label: '题库', path: '/question/index' },
   { label: '资料库', path: '/materials/index' },
 ]
 
 function isActive(path: string): boolean {
   if (route.path === path) return true
-  // /papers/index → 匹配 /papers/source/:id 等子页，但不误匹配 /papers/mine
+  // /papers/index → 匹配 /papers/source/:id 等子页
   if (path === '/papers/index') {
-    return route.path.startsWith('/papers/') && route.path !== '/papers/mine'
-  }
-  // /papers/mine → 精确匹配，不扩散
-  if (path === '/papers/mine') {
-    return route.path === '/papers/mine'
+    return route.path.startsWith('/papers/')
   }
   // 通用：去掉 /index 后缀做前缀匹配（题库 /question/index → /question/）
   const base = path.replace('/index', '')

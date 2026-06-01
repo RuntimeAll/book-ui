@@ -73,8 +73,8 @@ function goPaperDetail(paper: PaperListItem) {
 }
 
 function goPaperList() {
-  // "我的卷库"已独立为 /papers/mine 独立页，直接跳（不再需要 ?my=1 query trick）
-  router.push('/papers/mine')
+  // 「我的卷库」是卷库左侧目录树底部的合成节点，带 ?mine=1 进入卷库页自动选中该节点
+  router.push('/papers/index?mine=1')
 }
 
 function goQuestionLib() {

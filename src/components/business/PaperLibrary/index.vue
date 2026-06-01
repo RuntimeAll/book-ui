@@ -2,19 +2,17 @@
 /**
  * PaperLibrary — 卷库通用列表组件
  *
- * props:
- *   scope: 'public' | 'mine'
- *     'public' — 公共试卷（后端取 is_share=1）
- *     'mine'   — 我的卷库（后端按当前登录用户过滤）
+ * scope 由左侧目录树选中节点驱动（内部状态），不再通过 prop 传入。
  *
- * 使用方：
- *   公共卷库页 papers/index.vue  → <PaperLibrary scope="public" />
- *   我的卷库页 papers/mine.vue   → <PaperLibrary scope="mine" />
+ * 树末尾追加合成节点「我的卷库」（id='__mine__'），点击时 scope='mine'；
+ * 其他真实分类节点 scope='public'。
+ *
+ * 支持 ?mine=1 query：onMounted 树数据就绪后自动选中「我的卷库」节点。
  */
 import { ref, reactive, onMounted, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search, Star } from '@element-plus/icons-vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import {
   getPaperLazyTree,
   getPaperPage,
@@ -25,11 +23,8 @@ import { useUserStore } from '@/store/user'
 import { getCurrentUser } from '@/api/user'
 import { usePaperBasket } from '@/composables/usePaperBasket'
 
-const props = defineProps<{
-  scope: 'public' | 'mine'
-}>()
-
 const router = useRouter()
+const route = useRoute()
 const userStore = useUserStore()
 const basket = usePaperBasket()
 
@@ -42,36 +37,62 @@ const selectedTextbook = ref('zhejiao-new')
 // ── 左侧目录树关键字筛选框（占位，输入不响应 — PRD §2 不在范围）
 const treeFilterKeyword = ref('')
 
+// ── 合成节点常量（id 不与真实分类 id 冲突；title 对齐树 label 字段名）
+// 类型断言为 PaperTreeNode：真实树字段在合成节点无意义，此处只需 id/title/children。
+const MINE_NODE = { id: '__mine__', title: '我的卷库', children: [] } as unknown as PaperTreeNode
+
 // ── 章节树 ──────────────────────────────────────────────────
 const treeData = ref<PaperTreeNode[]>([])
 const treeLoading = ref(false)
-const currentSubjectId = ref<string>('')
 const paperTreeRef = ref()
+
+// ── scope 内部状态（由树选中节点驱动）──────────────────────
+// 'public' → 公共卷（真实分类节点），'mine' → 我的卷库（合成节点）
+const currentScope = ref<'public' | 'mine'>('public')
+const currentSubjectId = ref<string>('')
 
 async function loadTree() {
   treeLoading.value = true
   try {
     const result = await getPaperLazyTree()
-    treeData.value = Array.isArray(result) ? result : []
-    // 树数据就绪后，默认选中第一个节点并触发筛选查询
-    if (treeData.value.length > 0) {
-      const firstNode = treeData.value[0]
+    const realNodes: PaperTreeNode[] = Array.isArray(result) ? result : []
+    // 末尾追加合成节点「我的卷库」
+    treeData.value = [...realNodes, MINE_NODE]
+
+    // 判断是否需要自动选中「我的卷库」（?mine=1 query）
+    const autoMine = route.query.mine === '1'
+
+    if (autoMine) {
+      // 自动选中合成节点
+      handleNodeClick(MINE_NODE)
+      await nextTick()
+      paperTreeRef.value?.setCurrentKey('__mine__')
+    } else if (realNodes.length > 0) {
+      // 默认选中第一个真实节点
+      const firstNode = realNodes[0]
       handleNodeClick(firstNode)
-      // 等 DOM 渲染完成后设置树高亮（highlight-current 需要 setCurrentKey）
       await nextTick()
       paperTreeRef.value?.setCurrentKey(firstNode.id)
     }
   } catch (e) {
     console.warn('[paper-tree] lazyTree failed', e)
-    treeData.value = []
+    treeData.value = [MINE_NODE]
   } finally {
     treeLoading.value = false
   }
 }
 
 function handleNodeClick(data: PaperTreeNode) {
-  currentSubjectId.value = data.id
-  pageParams.subjectId = data.id
+  if (data.id === '__mine__') {
+    // 合成节点：scope=mine，清空 subjectId（看全部自己的，不按分类）
+    currentScope.value = 'mine'
+    currentSubjectId.value = ''
+  } else {
+    // 真实分类节点：scope=public，subjectId=node.id
+    currentScope.value = 'public'
+    currentSubjectId.value = data.id
+  }
+  pageParams.subjectId = currentSubjectId.value
   pageParams.pageIndex = 1
   fetchPapers()
 }
@@ -100,7 +121,7 @@ const pageParams = reactive({
 
 async function fetchPapers() {
   // scope=mine 时先兜底拉 userInfo（刷新页面后 userInfo 内存态丢失）
-  if (props.scope === 'mine' && !userStore.userInfo) {
+  if (currentScope.value === 'mine' && !userStore.userInfo) {
     try {
       const info = await getCurrentUser()
       if (info) userStore.setUserInfo(info)
@@ -117,7 +138,7 @@ async function fetchPapers() {
       subjectId: pageParams.subjectId || '',
       pageIndex: pageParams.pageIndex,
       pageSize: pageParams.pageSize,
-      scope: props.scope,
+      scope: currentScope.value,
     })
     if (result && Array.isArray(result.list)) {
       papers.value = result.list
@@ -168,7 +189,8 @@ async function handleToggleBasket(item: PaperListItem) {
 
 // ── 生命周期 ──────────────────────────────────────────────
 onMounted(async () => {
-  // loadTree() 内部在树数据就绪后自动选中第一个节点并触发 fetchPapers。
+  // loadTree() 内部在树数据就绪后自动选中节点并触发 fetchPapers。
+  // ?mine=1 时自动选中合成节点「我的卷库」；否则默认第一个真实节点。
   await loadTree()
 })
 </script>
@@ -201,7 +223,7 @@ onMounted(async () => {
         clearable
         @change="handleNotOpen"
       />
-      <!-- 树 -->
+      <!-- 树（含末尾合成节点「我的卷库」）-->
       <div v-loading="treeLoading" class="tree-wrap">
         <el-tree
           ref="paperTreeRef"

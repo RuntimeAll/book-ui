@@ -70,12 +70,6 @@ const router = createRouter({
           name: 'PapersIndex',
           component: () => import('@/views/papers/index.vue'),
         },
-        // 我的卷库 — 独立页，scope='mine'（后端按当前用户过滤）
-        {
-          path: '/papers/mine',
-          name: 'PapersMine',
-          component: () => import('@/views/papers/mine.vue'),
-        },
         // PRD-001 — 三栏组卷工作台（试卷篮打散成题 → 左考点/中题域/右组卷面板）
         {
           path: '/papers/basket',
