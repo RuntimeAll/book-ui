@@ -49,33 +49,15 @@ function handleDropdownCommand(command: string) {
 interface MenuItem {
   label: string
   path: string
-  /** U 卡新增 — 是否仅 admin/superadmin 才可见（教师视角隐藏占位空壳） */
-  adminOnly?: boolean
 }
 
 const menuItems: MenuItem[] = [
   { label: '首页', path: '/home' },
   { label: '我的工作台', path: '/workspace' },                  // U-3 教师工作台聚合页
-  { label: '作业管理', path: '/assignment/index', adminOnly: true },
-  { label: '学生管理', path: '/student/index', adminOnly: true },
-  { label: '班级管理', path: '/class/index', adminOnly: true },
   { label: '卷库', path: '/papers/index' },
   { label: '题库', path: '/question/index' },
   { label: '资料库', path: '/materials/index' },
 ]
-
-// U 卡新增 — 按角色过滤菜单：
-//   - admin/superadmin → 全部菜单可见（向后兼容）
-//   - teacher          → 隐藏 adminOnly 项（作业 / 学生 / 班级 — 占位空壳，不属教师场景）
-//   - 未拉到角色（store 空）→ 退化为 admin 视角全显（避免首次加载闪烁缺菜单）
-const visibleMenuItems = computed(() => {
-  const roles = userStore.roles ?? []
-  // 老师身份 + 不是 admin/superadmin → 隐 adminOnly
-  if (roles.includes('teacher') && !roles.includes('admin') && !roles.includes('superadmin')) {
-    return menuItems.filter(m => !m.adminOnly)
-  }
-  return menuItems
-})
 
 function isActive(path: string): boolean {
   return route.path === path || route.path.startsWith(path.replace('/index', ''))
@@ -129,7 +111,7 @@ function handleUpgrade() {
         <!-- Navigation Menu -->
         <nav class="nav-menu">
           <span
-            v-for="item in visibleMenuItems"
+            v-for="item in menuItems"
             :key="item.path"
             class="nav-item"
             :class="{ active: isActive(item.path) }"

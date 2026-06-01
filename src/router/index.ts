@@ -63,24 +63,7 @@ const router = createRouter({
           name: 'UserProfile',
           component: () => import('@/views/user/profile.vue'),
         },
-        {
-          path: '/assignment/index',
-          name: 'AssignmentIndex',
-          component: () => import('@/views/PlaceholderView.vue'),
-          props: { title: '作业管理' },
-        },
-        {
-          path: '/student/index',
-          name: 'StudentIndex',
-          component: () => import('@/views/PlaceholderView.vue'),
-          props: { title: '学生管理' },
-        },
-        {
-          path: '/class/index',
-          name: 'ClassIndex',
-          component: () => import('@/views/PlaceholderView.vue'),
-          props: { title: '班级管理' },
-        },
+        // 作业/学生/班级 三个 out-of-scope 占位路由已删（CLAUDE.md §1：题库+卷库 only）
         // 卷库主页（D 卡 段③ — 视觉级还原 misikt /papers/index）
         {
           path: '/papers/index',
