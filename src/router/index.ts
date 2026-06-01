@@ -64,11 +64,17 @@ const router = createRouter({
           component: () => import('@/views/user/profile.vue'),
         },
         // 作业/学生/班级 三个 out-of-scope 占位路由已删（CLAUDE.md §1：题库+卷库 only）
-        // 卷库主页（D 卡 段③ — 视觉级还原 misikt /papers/index）
+        // 卷库主页 — 公共试卷（D 卡 段③ — 视觉级还原 misikt /papers/index）
         {
           path: '/papers/index',
           name: 'PapersIndex',
           component: () => import('@/views/papers/index.vue'),
+        },
+        // 我的卷库 — 独立页，scope='mine'（后端按当前用户过滤）
+        {
+          path: '/papers/mine',
+          name: 'PapersMine',
+          component: () => import('@/views/papers/mine.vue'),
         },
         // PRD-001 — 三栏组卷工作台（试卷篮打散成题 → 左考点/中题域/右组卷面板）
         {

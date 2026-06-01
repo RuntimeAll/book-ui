@@ -54,6 +54,7 @@ declare module 'vue' {
     Highlight: typeof import('./src/components/Highlight/index.vue')['default']
     Icon: typeof import('./src/components/Icon/index.vue')['default']
     PaperBasketFab: typeof import('./src/components/business/PaperBasketFab/index.vue')['default']
+    PaperLibrary: typeof import('./src/components/business/PaperLibrary/index.vue')['default']
     PaperPreview: typeof import('./src/components/business/PaperPreview/index.vue')['default']
     QuestionBasket: typeof import('./src/components/business/QuestionBasket/index.vue')['default']
     QuestionCard: typeof import('./src/components/business/QuestionCard/index.vue')['default']

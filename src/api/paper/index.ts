@@ -66,9 +66,15 @@ export interface PaperPageParams {
   pageIndex: number           // 1-based
   pageSize: number
   /**
-   * U 卡新增 — 创建人 user_id（biz_paper.create_by VARCHAR(64)）。
-   * "我的工作台"section "我创建的卷" 传当前老师 user_id 字符串。
-   * 注意 BE 端会做 \\d+ 正则白名单防注入；空串 / 未传 = 不过滤。
+   * scope 新契约（后端按此分流）：
+   *   'public' — 取 is_share=1 的共享卷
+   *   'mine'   — 按当前登录用户 userId 过滤（服务端识别，前端无需传 createBy）
+   * 未传 = 后端默认行为（兼容旧调用方）
+   */
+  scope?: 'public' | 'mine'
+  /**
+   * @deprecated 旧字段，已被 scope='mine' 取代。
+   * 保留以兼容 workspace 聚合页的历史调用，新代码不再使用。
    */
   createBy?: string
 }

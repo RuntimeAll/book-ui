@@ -73,8 +73,8 @@ function goPaperDetail(paper: PaperListItem) {
 }
 
 function goPaperList() {
-  // Q-hotfix 段⑧ — 跳卷库主页 + my=1 自动激活"我的卷库" tab
-  router.push('/papers/index?my=1')
+  // "我的卷库"已独立为 /papers/mine 独立页，直接跳（不再需要 ?my=1 query trick）
+  router.push('/papers/mine')
 }
 
 function goQuestionLib() {
