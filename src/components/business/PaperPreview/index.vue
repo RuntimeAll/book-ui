@@ -251,16 +251,17 @@ async function handleExportPdf() {
           :key="`g-${gIdx}-${group.tagName}`"
           class="pp-group"
         >
-          <h3 class="pp-group-title">{{ group.tagName }}</h3>
+          <!-- 单组（如卷库整卷无 freeTag → 全归"其他"）不显标题，避免冒出无意义的"其他"分段头 -->
+          <h3 v-if="groups.length > 1" class="pp-group-title">{{ group.tagName }}</h3>
           <div
             v-for="(q, qIdx) in group.items"
             :key="q.id"
             class="pp-question"
           >
-            <!-- 题头：全卷连续序号（不显示题型标签，misikt 导出不带题型 tag） -->
-            <div class="pp-q-head">
-              <span class="pp-q-no">{{ globalIndex(gIdx, qIdx) }}.</span>
-            </div>
+            <!-- 题号（全卷连续序号，不显示题型标签）= flex 行左列 -->
+            <span class="pp-q-no">{{ globalIndex(gIdx, qIdx) }}.</span>
+            <!-- 内容列（题干/答案/解析）= flex 行右列，与题号顶对齐，消除号与题干错位 -->
+            <div class="pp-q-content">
 
             <!-- ── 纯图模式（PRD §0.4 misikt 真站铁证，当前默认）──────────────── -->
             <!-- 🟢 hotfix-4：图 URL 经 proxyImage() 改写走 BE /teacher/image-proxy 同源化（PRD §10.2 坑 #12）。 -->
@@ -344,6 +345,7 @@ async function handleExportPdf() {
                 <span v-if="!q.explain && !q.explainImg" class="placeholder">（无解析数据）</span>
               </div>
             </template>
+            </div>
           </div>
         </section>
       </div>
@@ -438,6 +440,9 @@ async function handleExportPdf() {
 }
 
 .pp-question {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
   padding: 12px 0;
   border-bottom: 1px dashed #f0f1f3;
   page-break-inside: avoid;
@@ -447,17 +452,17 @@ async function handleExportPdf() {
   border-bottom: none;
 }
 
-.pp-q-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
-}
-
 .pp-q-no {
+  flex-shrink: 0;
   font-weight: 600;
   color: #1d2129;
   font-size: 15px;
+  line-height: 1.8;       /* 与题干行高一致，号与题干首行顶对齐 */
+}
+
+.pp-q-content {
+  flex: 1;
+  min-width: 0;           /* flex 子项防止图片撑破换行 */
 }
 
 .pp-q-stem {
@@ -481,7 +486,7 @@ async function handleExportPdf() {
   display: block;
   max-width: 100%;
   max-height: 280px;
-  margin-top: 8px;
+  margin-top: 0;          /* 题号已同行左列，题干图不再下移，消除错位 */
   border-radius: 4px;
 }
 
