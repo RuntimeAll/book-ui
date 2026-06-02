@@ -10,12 +10,13 @@
  * 支持 ?mine=1 query：onMounted 树数据就绪后自动选中「我的卷库」节点。
  */
 import { ref, reactive, onMounted, nextTick } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Star } from '@element-plus/icons-vue'
 import { useRouter, useRoute } from 'vue-router'
 import {
   getPaperLazyTree,
   getPaperPage,
+  deletePaper,
   type PaperTreeNode,
   type PaperListItem,
 } from '@/api/paper/index'
@@ -178,6 +179,36 @@ function handleEdit(item: PaperListItem) {
   router.push(`/papers/edit/${item.id}`)
 }
 
+// PRD-A-005 收尾 C 段 — owner 判定（公共卷锁死编辑/删除）
+// 本人卷 = item.createUser === 当前登录用户 id（BE PaperListItemVo 字段名是 createUser:Long，不是 createBy）。
+// 非本人 = 公共卷（page scope=public 返的共享卷），不给编辑/删除入口。
+function isOwner(item: PaperListItem): boolean {
+  const uid = userStore.userInfo?.id
+  if (uid == null || item.createUser == null) return false
+  return String(item.createUser) === String(uid)
+}
+
+// PRD-A-005 收尾 A 段 — 删除试卷（仅本人卷可调；BE 二次 owner 校验兜底）
+async function handleDelete(item: PaperListItem) {
+  try {
+    await ElMessageBox.confirm(
+      `确认删除试卷「${item.name}」？删除后不可恢复。`,
+      '删除试卷',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
+  try {
+    await deletePaper(item.id)
+    ElMessage.success('删除成功')
+    fetchPapers()
+  } catch (e) {
+    console.warn('[PaperLibrary] deletePaper failed', e)
+    ElMessage.error('删除失败')
+  }
+}
+
 function handleNotOpen() {
   ElMessage.info('暂未开放')
 }
@@ -194,6 +225,16 @@ async function handleToggleBasket(item: PaperListItem) {
 
 // ── 生命周期 ──────────────────────────────────────────────
 onMounted(async () => {
+  // owner 判定（isOwner）依赖 userInfo —— 刷新页面后内存态丢失，先兜底拉一次，
+  // 否则公共/我的卷库都判不出本人卷，编辑/删除入口全隐藏。
+  if (!userStore.userInfo) {
+    try {
+      const info = await getCurrentUser()
+      if (info) userStore.setUserInfo(info)
+    } catch (e) {
+      console.warn('[PaperLibrary] getCurrentUser 兜底失败', e)
+    }
+  }
   // loadTree() 内部在树数据就绪后自动选中节点并触发 fetchPapers。
   // ?mine=1 时自动选中合成节点「我的卷库」；否则默认第一个真实节点。
   await loadTree()
@@ -273,7 +314,9 @@ onMounted(async () => {
             </div>
             <div class="paper-card-actions">
               <el-link type="primary" :underline="false" @click="handleView(item)">查看</el-link>
-              <el-link type="primary" :underline="false" @click="handleEdit(item)">编辑</el-link>
+              <!-- C 段：编辑/删除仅本人卷可见，公共卷锁死 -->
+              <el-link v-if="isOwner(item)" type="primary" :underline="false" @click="handleEdit(item)">编辑</el-link>
+              <el-link v-if="isOwner(item)" type="danger" :underline="false" @click="handleDelete(item)">删除</el-link>
               <el-link
                 :type="basket.basketIds.value.has(item.id) ? 'danger' : 'primary'"
                 :underline="false"

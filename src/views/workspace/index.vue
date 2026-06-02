@@ -1,11 +1,17 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useUserStore } from '@/store/user'
 import { getCurrentUser } from '@/api/user'
-import { getPaperPage, type PaperListItem } from '@/api/paper'
-import { getFavoriteFolderTree, type FavoriteFolder } from '@/api/question'
+import { getPaperPage, deletePaper, type PaperListItem } from '@/api/paper'
+import {
+  getFavoriteFolderTree,
+  createFolder,
+  renameFolder,
+  deleteFolder,
+  type FavoriteFolder,
+} from '@/api/question'
 
 // U 卡 段④ — 教师"我的工作台"聚合页（PRD §0.1 U-3）。
 //
@@ -37,10 +43,12 @@ async function fetchMyPapers() {
   }
   myPapersLoading.value = true
   try {
+    // PRD-A-005 收尾 D-bug：传 scope:'mine'（BE 按登录用户 create_by 过滤），
+    // 旧的 createBy 缺省被 BE 当 public 处理 → "我创建的卷"错显示全站公共卷。
     const result = await getPaperPage({
       pageIndex: 1,
       pageSize: 5,
-      createBy: String(uid),
+      scope: 'mine',
     })
     myPapers.value = result?.list ?? []
     myPapersTotal.value = result?.total ?? 0
@@ -50,6 +58,31 @@ async function fetchMyPapers() {
     myPapersTotal.value = 0
   } finally {
     myPapersLoading.value = false
+  }
+}
+
+// ── PRD-A-005 收尾 A 段 — "我创建的卷"试卷 CRUD（scope=mine，均为本人卷可直接操作）──
+function goPaperEdit(paper: PaperListItem) {
+  router.push(`/papers/edit/${paper.id}`)
+}
+
+async function handleDeletePaper(paper: PaperListItem) {
+  try {
+    await ElMessageBox.confirm(
+      `确认删除试卷「${paper.name}」？删除后不可恢复。`,
+      '删除试卷',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+    )
+  } catch {
+    return // 用户取消
+  }
+  try {
+    await deletePaper(paper.id)
+    ElMessage.success('删除成功')
+    await fetchMyPapers()
+  } catch (e) {
+    console.warn('[workspace] deletePaper failed', e)
+    ElMessage.error('删除失败')
   }
 }
 
@@ -65,6 +98,82 @@ async function fetchFavoriteFolders() {
     favoriteTotal.value = 0
   } finally {
     favoriteLoading.value = false
+  }
+}
+
+// ── PRD-A-005 收尾 B 段 — 收藏夹 CRUD（范围限本人；默认夹 id:0 虚拟夹不可改/删）──
+// 判定虚拟默认夹：BE 首位恒返 {id:0,name:"我的试题"}，String 化兼容 number/string id。
+function isDefaultFolder(folder: FavoriteFolder): boolean {
+  return String(folder.id) === '0'
+}
+
+async function handleCreateFolder() {
+  let name = ''
+  try {
+    const { value } = await ElMessageBox.prompt('请输入收藏夹名称', '新建收藏夹', {
+      confirmButtonText: '创建',
+      cancelButtonText: '取消',
+      inputPlaceholder: '收藏夹名称',
+      inputValidator: (v: string) => (v && v.trim() ? true : '名称不能为空'),
+    })
+    name = (value || '').trim()
+  } catch {
+    return // 用户取消
+  }
+  if (!name) return
+  try {
+    await createFolder(name)
+    ElMessage.success('创建成功')
+    await fetchFavoriteFolders()
+  } catch (e) {
+    console.warn('[workspace] createFolder failed', e)
+    ElMessage.error('创建失败')
+  }
+}
+
+async function handleRenameFolder(folder: FavoriteFolder) {
+  if (isDefaultFolder(folder)) return // 默认夹不可改名
+  let name = ''
+  try {
+    const { value } = await ElMessageBox.prompt('请输入新的收藏夹名称', '重命名收藏夹', {
+      confirmButtonText: '保存',
+      cancelButtonText: '取消',
+      inputValue: folder.name,
+      inputValidator: (v: string) => (v && v.trim() ? true : '名称不能为空'),
+    })
+    name = (value || '').trim()
+  } catch {
+    return
+  }
+  if (!name || name === folder.name) return
+  try {
+    await renameFolder(folder.id, name)
+    ElMessage.success('重命名成功')
+    await fetchFavoriteFolders()
+  } catch (e) {
+    console.warn('[workspace] renameFolder failed', e)
+    ElMessage.error('重命名失败')
+  }
+}
+
+async function handleDeleteFolder(folder: FavoriteFolder) {
+  if (isDefaultFolder(folder)) return // 默认夹不可删除
+  try {
+    await ElMessageBox.confirm(
+      `确认删除收藏夹「${folder.name}」？夹内收藏将移至默认夹「我的试题」，不会丢失。`,
+      '删除收藏夹',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
+  try {
+    await deleteFolder(folder.id)
+    ElMessage.success('删除成功')
+    await fetchFavoriteFolders()
+  } catch (e) {
+    console.warn('[workspace] deleteFolder failed', e)
+    ElMessage.error('删除失败')
   }
 }
 
@@ -141,15 +250,25 @@ onMounted(async () => {
               v-for="paper in myPapers"
               :key="paper.id"
               class="paper-item"
-              @click="goPaperDetail(paper)"
             >
-              <div class="paper-name">{{ paper.name }}</div>
-              <div class="paper-meta">
-                <span>{{ paper.questionCount }} 题</span>
-                <span>·</span>
-                <span>{{ paper.score }} 分</span>
-                <span>·</span>
-                <span>{{ paper.createTime }}</span>
+              <div class="paper-item-main" @click="goPaperDetail(paper)">
+                <div class="paper-name">{{ paper.name }}</div>
+                <div class="paper-meta">
+                  <span>{{ paper.questionCount }} 题</span>
+                  <span>·</span>
+                  <span>{{ paper.score }} 分</span>
+                  <span>·</span>
+                  <span>{{ paper.createTime }}</span>
+                </div>
+              </div>
+              <!-- A 段：本人卷（scope=mine 全部本人）可直接编辑/删除，hover 出现 -->
+              <div class="paper-item-actions">
+                <el-button link type="primary" size="small" @click.stop="goPaperEdit(paper)">
+                  编辑
+                </el-button>
+                <el-button link type="danger" size="small" @click.stop="handleDeletePaper(paper)">
+                  删除
+                </el-button>
               </div>
             </li>
           </ul>
@@ -173,10 +292,16 @@ onMounted(async () => {
             <span>我的收藏</span>
             <el-tag size="small" type="warning">{{ favoriteTotal }} 题</el-tag>
           </div>
-          <el-button link type="primary" @click="goFavorites">
-            收藏管理
-            <el-icon><ArrowRight /></el-icon>
-          </el-button>
+          <div class="section-header-actions">
+            <el-button link type="primary" size="small" @click="handleCreateFolder">
+              <el-icon><Plus /></el-icon>
+              新建收藏夹
+            </el-button>
+            <el-button link type="primary" @click="goFavorites">
+              收藏管理
+              <el-icon><ArrowRight /></el-icon>
+            </el-button>
+          </div>
         </div>
         <div v-loading="favoriteLoading" class="section-body">
           <ul v-if="favoriteFolders.length > 0" class="folder-list">
@@ -186,15 +311,31 @@ onMounted(async () => {
               class="folder-item"
             >
               <el-icon color="#f59e0b"><Folder /></el-icon>
-              <span class="folder-name">{{ folder.name }}</span>
+              <div class="folder-info">
+                <span class="folder-name">{{ folder.name }}</span>
+                <span v-if="folder.createTime" class="folder-time">{{ folder.createTime }}</span>
+              </div>
               <el-tag size="small" type="info">{{ folder.count ?? 0 }}</el-tag>
+              <!-- B 段：默认夹「我的试题」(id:0) 虚拟夹，不给改名/删除入口 -->
+              <div v-if="!isDefaultFolder(folder)" class="folder-actions">
+                <el-button link type="primary" size="small" @click="handleRenameFolder(folder)">
+                  改名
+                </el-button>
+                <el-button link type="danger" size="small" @click="handleDeleteFolder(folder)">
+                  删除
+                </el-button>
+              </div>
             </li>
           </ul>
           <el-empty
             v-else
-            description="还没有收藏任何题目"
+            description="还没有任何收藏夹"
             :image-size="60"
-          />
+          >
+            <el-button size="small" type="primary" @click="handleCreateFolder">
+              新建收藏夹
+            </el-button>
+          </el-empty>
         </div>
       </section>
 
@@ -288,14 +429,34 @@ onMounted(async () => {
 }
 
 .paper-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 12px 14px;
   border-radius: 6px;
-  cursor: pointer;
   transition: background 0.2s ease;
 }
 
 .paper-item:hover {
   background: #f5f8ff;
+}
+
+.paper-item-main {
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.paper-item-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.paper-item:hover .paper-item-actions {
+  opacity: 1;
 }
 
 .paper-name {
@@ -322,12 +483,50 @@ onMounted(async () => {
   padding: 10px 14px;
   border-radius: 6px;
   background: #fafafa;
+  transition: background 0.15s ease;
+}
+
+.folder-item:hover {
+  background: #f5f8ff;
+}
+
+.folder-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .folder-name {
-  flex: 1;
   font-size: 13px;
   color: #1d2129;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-time {
+  font-size: 11px;
+  color: #a8abb2;
+}
+
+.folder-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.folder-item:hover .folder-actions {
+  opacity: 1;
+}
+
+.section-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 </style>

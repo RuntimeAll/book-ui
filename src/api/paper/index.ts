@@ -157,3 +157,13 @@ export interface UpdateExamPaperParams {
  */
 export const updateExamPaper = (params: UpdateExamPaperParams) =>
   request.post<PaperDetailVo, PaperDetailVo>('/teacher/exam/paper/update', params)
+
+// ── PRD-A-005 收尾（A-试卷删除）─────────────────────────────────────────
+/**
+ * 删除试卷（PRD-A-005 收尾 A 段）。
+ * BE owner 校验：非本人卷返非成功码（拦截器 code!==1 抛错），事务内删 paper + section + paper_question。
+ * POST /teacher/exam/paper/delete body={paperId}
+ * envelope 由拦截器自动拆，成功无业务数据（BE 返 null）。
+ */
+export const deletePaper = (paperId: number) =>
+  request.post<unknown, unknown>('/teacher/exam/paper/delete', { paperId })

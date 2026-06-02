@@ -12,6 +12,8 @@ import {
 import FreeTagList from '@/components/business/FreeTagList/index.vue'
 import PaperPreview from '@/components/business/PaperPreview/index.vue'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
+import { useUserStore } from '@/store/user'
+import { getCurrentUser } from '@/api/user'
 
 // ── 路由 ────────────────────────────────────────────────────
 const route = useRoute()
@@ -20,6 +22,17 @@ const paperId = computed(() => route.params.id as string)
 
 // ── 试题栏 composable（E 段③ — 全局 singleton，跟题库 / 全局 FAB 联动）──
 const basket = useQuestionBasket()
+
+// ── owner 判定（PRD-A-005 收尾 C 段）──
+// 本人卷 = detail.createBy === 当前登录用户 id（PaperDetailVo.createBy = String）→ 可编辑；
+// 公共卷（非本人）→ "编辑试卷"按钮置灰 + tooltip。
+const userStore = useUserStore()
+const isOwner = computed(() => {
+  const uid = userStore.userInfo?.id
+  const createBy = detail.value?.createBy
+  if (uid == null || createBy == null) return false
+  return String(createBy) === String(uid)
+})
 
 // ── 卷详情数据（E 段② BE 真接口 POST /teacher/exam/paper/detail） ──
 const detail = ref<PaperDetailVo | null>(null)
@@ -141,7 +154,16 @@ function handleEditPaper() {
   router.push(`/papers/edit/${paperId.value}`)
 }
 
-onMounted(() => {
+onMounted(async () => {
+  // owner 判定依赖 userInfo —— 刷新进详情页时内存态丢失，先兜底拉一次。
+  if (!userStore.userInfo) {
+    try {
+      const info = await getCurrentUser()
+      if (info) userStore.setUserInfo(info)
+    } catch (e) {
+      console.warn('[paper-source] getCurrentUser 兜底失败', e)
+    }
+  }
   loadPaperDetail()
 })
 </script>
@@ -159,14 +181,23 @@ onMounted(() => {
         <el-tag v-if="detail?.examYear" type="info" size="small">{{ detail.examYear }}</el-tag>
       </div>
       <div class="topbar-actions">
-        <el-button
-          class="topbar-edit-btn"
-          :disabled="!detail"
-          @click="handleEditPaper"
+        <el-tooltip
+          :disabled="!detail || isOwner"
+          content="公共试卷不可编辑"
+          placement="bottom"
         >
-          <el-icon><Edit /></el-icon>
-          <span>编辑试卷</span>
-        </el-button>
+          <!-- 公共卷锁死：非本人卷 disabled + tooltip（span 包裹保证 disabled 按钮仍能触发 tooltip）-->
+          <span>
+            <el-button
+              class="topbar-edit-btn"
+              :disabled="!detail || !isOwner"
+              @click="handleEditPaper"
+            >
+              <el-icon><Edit /></el-icon>
+              <span>编辑试卷</span>
+            </el-button>
+          </span>
+        </el-tooltip>
         <el-button
           type="primary"
           class="topbar-export-btn"

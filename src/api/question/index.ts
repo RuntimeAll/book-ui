@@ -174,6 +174,31 @@ export const addFavorite = (questionId: number, folderId?: number | string) =>
 export const getFavoriteFolderTree = () =>
   request.get<FavoriteFolder[], FavoriteFolder[]>('/teacher/center/q-folder/tree')
 
+// ── PRD-A-005 收尾（B-收藏夹 CRUD，范围限本人）──────────────────────────
+// BE QuestionFolderController：user_id 一律取登录态，rename/delete 先校验本人夹防越权。
+// 默认夹 {id:0,name:"我的试题"} 是虚拟夹，前端不给改名/删除入口（不调这三个端点）。
+
+/**
+ * 新建收藏夹（POST /teacher/center/q-folder/create）。
+ * body {name, pid?}（pid 缺省 0=根）；返回新夹 id（Long）。
+ */
+export const createFolder = (name: string, pid: number | string = 0) =>
+  request.post<number, number>('/teacher/center/q-folder/create', { name, pid })
+
+/**
+ * 收藏夹改名（POST /teacher/center/q-folder/rename）。
+ * body {id, name}；仅名称可改（时间只展示）。BE 校验本人夹。
+ */
+export const renameFolder = (id: number | string, name: string) =>
+  request.post<unknown, unknown>('/teacher/center/q-folder/rename', { id, name })
+
+/**
+ * 删除收藏夹（POST /teacher/center/q-folder/delete）。
+ * body {id}；BE 把该夹下收藏 folder_id 重置 0（归默认夹，不丢收藏）。
+ */
+export const deleteFolder = (id: number | string) =>
+  request.post<unknown, unknown>('/teacher/center/q-folder/delete', { id })
+
 /**
  * 取消收藏（DELETE /teacher/qd/favorite/{id}）
  */
@@ -273,6 +298,11 @@ export interface PaperDetailVo {
   questionCount: number
   examYear?: string
   paperType?: number
+  /**
+   * 创建人 user_id（PRD-A-005 收尾新增，BE PaperDetailVo.createBy = String）。
+   * owner 判定：String(createBy) === String(userStore.userInfo.id) → 本人卷可编辑；否则公共卷锁死。
+   */
+  createBy?: string | null
   sections: PaperSectionVo[]
 }
 
