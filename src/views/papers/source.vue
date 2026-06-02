@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, Check, View, ShoppingCart, Edit, Star, InfoFilled, Download } from '@element-plus/icons-vue'
@@ -164,6 +164,13 @@ onMounted(async () => {
       console.warn('[paper-source] getCurrentUser 兜底失败', e)
     }
   }
+  loadPaperDetail()
+})
+
+// SPA 内 route.params.id 变化（从一个卷详情直接跳另一个卷）时重新加载 ——
+// 否则 vue-router 复用本组件、onMounted 不重跑，detail 停留旧卷，
+// 题目列表与 isOwner（编辑按钮显隐）全错（PRD-A-005 G6 回归暴露）。
+watch(paperId, () => {
   loadPaperDetail()
 })
 </script>
