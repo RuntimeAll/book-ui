@@ -67,12 +67,14 @@ async function loadTree() {
       handleNodeClick(MINE_NODE)
       await nextTick()
       paperTreeRef.value?.setCurrentKey('__mine__')
-    } else if (realNodes.length > 0) {
-      // 默认选中第一个真实节点
-      const firstNode = realNodes[0]
-      handleNodeClick(firstNode)
+    } else {
+      // A 方向（2026-06-02）：卷库默认进「我的卷库」。
+      // misikt 卷库核心 = 老师自己的卷（create_by）；"公共试卷"靠平台预置（create_user 为空）产生，
+      // dev 无公共卷数据（is_share 全 0、创建人全有值），默认落公共分类页会全空。
+      // 左侧真实分类节点仍可点（点击走 scope=public 按分类筛公共卷），此处仅改默认选中。
+      handleNodeClick(MINE_NODE)
       await nextTick()
-      paperTreeRef.value?.setCurrentKey(firstNode.id)
+      paperTreeRef.value?.setCurrentKey('__mine__')
     }
   } catch (e) {
     console.warn('[paper-tree] lazyTree failed', e)
