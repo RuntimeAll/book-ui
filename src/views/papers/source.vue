@@ -136,6 +136,11 @@ function goBack() {
   router.back()
 }
 
+// PRD-A-005 T4 — 进入试卷编辑页（排序/删/增题）
+function handleEditPaper() {
+  router.push(`/papers/edit/${paperId.value}`)
+}
+
 onMounted(() => {
   loadPaperDetail()
 })
@@ -153,15 +158,25 @@ onMounted(() => {
         <span class="topbar-title">{{ detail?.paperName || '原卷预览' }}</span>
         <el-tag v-if="detail?.examYear" type="info" size="small">{{ detail.examYear }}</el-tag>
       </div>
-      <el-button
-        type="primary"
-        class="topbar-export-btn"
-        :disabled="!detail || allQuestions.length === 0"
-        @click="handleExportPaper"
-      >
-        <el-icon><Download /></el-icon>
-        <span>导出 PDF</span>
-      </el-button>
+      <div class="topbar-actions">
+        <el-button
+          class="topbar-edit-btn"
+          :disabled="!detail"
+          @click="handleEditPaper"
+        >
+          <el-icon><Edit /></el-icon>
+          <span>编辑试卷</span>
+        </el-button>
+        <el-button
+          type="primary"
+          class="topbar-export-btn"
+          :disabled="!detail || allQuestions.length === 0"
+          @click="handleExportPaper"
+        >
+          <el-icon><Download /></el-icon>
+          <span>导出 PDF</span>
+        </el-button>
+      </div>
     </div>
 
     <!-- 内容区 -->

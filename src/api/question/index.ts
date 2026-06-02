@@ -180,6 +180,21 @@ export const getFavoriteFolderTree = () =>
 export const removeFavorite = (questionId: number) =>
   request.delete<unknown, unknown>(`/teacher/qd/favorite/${questionId}`)
 
+// 收藏分页入参（PRD-A-005 T6 契约：GET /teacher/qd/favorite/page?pageNum&pageSize&folderId?）
+export interface FavoritePageParams {
+  pageNum: number
+  pageSize: number
+  folderId?: number | string
+}
+
+/**
+ * 分页拉收藏题列表（PRD-A-005 T6）
+ * GET /teacher/qd/favorite/page —— 返 MisiktPageVo<题VO>（复用题库题 VO QuestionItem），限当前登录 userId。
+ * envelope `/teacher/**` 走 misikt `{code:1}`，request 拦截器已解包，拿到的是 response 内层。
+ */
+export const favoritePage = (params: FavoritePageParams) =>
+  request.get<QuestionPageResult, QuestionPageResult>('/teacher/qd/favorite/page', { params })
+
 /**
  * 拉试题栏内所有题
  */

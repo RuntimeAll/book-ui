@@ -49,15 +49,31 @@ function handleDropdownCommand(command: string) {
 interface MenuItem {
   label: string
   path: string
+  /** PRD-A-005 T2 — 可见角色 role_key 集合；省略 = 任意已登录用户可见 */
+  roles?: string[]
 }
 
-const menuItems: MenuItem[] = [
+const allMenuItems: MenuItem[] = [
   { label: '首页', path: '/home' },
   { label: '我的工作台', path: '/workspace' },                  // U-3 教师工作台聚合页
   { label: '卷库', path: '/papers/index' },
   { label: '题库', path: '/question/index' },
   { label: '资料库', path: '/materials/index' },
+  // 示范受限入口：仅 superadmin 可见，与路由 /admin/console 的 meta.roles 对齐。
+  // A 线主体是 teacher，此项验证"菜单按角色显隐"机制；teacher 登录看不到它。
+  { label: '管理控制台', path: '/admin/console', roles: ['superadmin'] },
 ]
+
+// PRD-A-005 T2 — 菜单按 userStore.roles 过滤显隐（单一事实源 = store roles）。
+// 无 roles 声明的项始终显示；声明了则需与当前用户 roles 有交集。
+const menuItems = computed<MenuItem[]>(() =>
+  allMenuItems.filter(
+    (item) =>
+      !item.roles
+      || item.roles.length === 0
+      || item.roles.some((r) => userStore.roles.includes(r)),
+  ),
+)
 
 function isActive(path: string): boolean {
   if (route.path === path) return true

@@ -20,7 +20,31 @@ export interface LoginPayload {
   clientId: string
   tenantId: string
   grantType: string
+  /** PRD-A-005 T1 — 图形验证码值（captchaEnabled=true 时必传，false 时可省） */
+  code?: string
+  /** PRD-A-005 T1 — 验证码 uuid（与 code 配对，BE 拿它定位 Redis 里的答案） */
+  uuid?: string
 }
+
+/**
+ * PRD-A-005 T1 — GET /auth/code 返回（若依内置，RuoYi 原 envelope，已被拦截器拆出 data 段）。
+ * captchaEnabled=false 时 BE 不下发 img/uuid，FE 据此隐藏验证码控件、提交不带 code/uuid。
+ */
+export interface CaptchaResult {
+  /** 验证码开关；false 时无需展示/传验证码 */
+  captchaEnabled: boolean
+  /** base64 图片（不含 data: 前缀，需自行拼 `data:image/gif;base64,`）；关时可能缺省 */
+  img?: string
+  /** 本次验证码 uuid，提交时回传 */
+  uuid?: string
+}
+
+/**
+ * GET /auth/code — 拉图形验证码（若依内置）。走 RuoYi 原 envelope，
+ * request.ts 拦截器 `/auth/` 分支已剥 envelope，直接返回 data 段（CaptchaResult）。
+ */
+export const getCaptcha = () =>
+  request.get<CaptchaResult, CaptchaResult>('/auth/code')
 
 /**
  * RuoYi /auth/login 成功响应的 data 段（外层 envelope 已被 request.ts 拦截器拆掉）。

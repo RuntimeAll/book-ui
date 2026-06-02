@@ -1,4 +1,5 @@
 import request from '@/http/request'
+import type { PaperDetailVo } from '@/api/question/index'
 
 // ── 类型定义（misikt 真响应字节级对齐，证据：smoke/02-lazyTree-resp.json + 03-page-3001-resp.json）
 // ────────────────────────────────────────────────────────────────────────
@@ -128,3 +129,31 @@ export const createExamPaper = (params: CreateExamPaperParams) =>
     '/teacher/exam/paper/create',
     params,
   )
+
+// ── PRD-A-005 T4 试卷编辑（重排/删/增题保存）────────────────────────────
+
+/** 编辑保存时单题条目（契约 manual：questionId / sectionId / sort / score）*/
+export interface UpdatePaperQuestion {
+  questionId: number
+  sectionId: number
+  sort: number
+  score: number
+}
+
+/** 试卷编辑保存入参（契约 manual：POST /teacher/exam/paper/update）*/
+export interface UpdateExamPaperParams {
+  paperId: number
+  name?: string
+  paperCategoryId?: string | null
+  questions: UpdatePaperQuestion[]
+}
+
+/**
+ * 编辑保存试卷（PRD-A-005 T4 / 契约 manual）。
+ * BE 事务内删旧 biz_paper_question 全量重插（按 sort）+ 重算 question_count / 总 score
+ * + 更新 paper 元信息，返回更新后的 PaperDetailVo（前端拿来刷新详情）。
+ * POST /teacher/exam/paper/update
+ * envelope 由拦截器自动拆，业务拿到的就是 PaperDetailVo。
+ */
+export const updateExamPaper = (params: UpdateExamPaperParams) =>
+  request.post<PaperDetailVo, PaperDetailVo>('/teacher/exam/paper/update', params)

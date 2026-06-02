@@ -1,10 +1,30 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 import AppLayout from '@/layout/AppLayout.vue'
 import { useUserStore } from '@/store/user'
+import { getCurrentUser } from '@/api/user'
+
+// ---------------------------------------------------------------------------
+// PRD-A-005 T2 — 路由 meta 类型增强：页面级权限声明 `meta.roles`
+//
+//   未声明 meta.roles 的路由 → 仅需登录即可访问（A 线绝大多数页面）。
+//   声明 meta.roles: ['xxx'] 的路由 → 当前用户 roles 与之有交集才放行，否则重定向。
+//
+// A 线业务角色实质仅 teacher（无 admin），机制到位为准；此处把"按角色过滤"的
+// 通用能力搭好，受限页以示范级落地（见下方 /admin/console），不硬造真实受限业务页。
+// ---------------------------------------------------------------------------
+declare module 'vue-router' {
+  interface RouteMeta {
+    /** 允许访问该路由的角色 role_key 集合；省略 = 任意已登录用户可访问 */
+    roles?: string[]
+  }
+}
 
 // 无需登录即可访问的白名单
 // U 卡 段⑧ — /register 加入白名单（注册时不能强制登录）
 const PUBLIC_ROUTES = new Set<string>(['/login', '/register'])
+
+// 无权限时的重定向落点（已登录但角色不匹配 meta.roles）
+const NO_PERMISSION_REDIRECT = '/question/index'
 
 const router = createRouter({
   history: createWebHashHistory(),
@@ -32,11 +52,17 @@ const router = createRouter({
           name: 'QuestionCompose',
           component: () => import('@/views/question/compose.vue'),
         },
-        // 组卷工作台（FE-4 真实现）
+        // 组卷工作台（FE-4 真实现，自动组卷草稿）
         {
           path: '/papers/edit',
           name: 'PapersEdit',
           component: () => import('@/views/papers/edit.vue'),
+        },
+        // PRD-A-005 T4 — 编辑已存在试卷（排序/删/增题 → POST update）
+        {
+          path: '/papers/edit/:id',
+          name: 'PapersEditExisting',
+          component: () => import('@/views/papers/editExisting.vue'),
         },
         // 原卷预览页（第十二波）
         {
@@ -56,6 +82,12 @@ const router = createRouter({
           path: '/workspace',
           name: 'Workspace',
           component: () => import('@/views/workspace/index.vue'),
+        },
+        // PRD-A-005 T6 — 收藏管理页（列收藏题 + 取消收藏，工作台「收藏管理」入口指向此）
+        {
+          path: '/favorites/index',
+          name: 'FavoritesIndex',
+          component: () => import('@/views/favorites/index.vue'),
         },
         // PRD-002 — 个人资料页（登录态内页）
         {
@@ -82,6 +114,17 @@ const router = createRouter({
           component: () => import('@/views/PlaceholderView.vue'),
           props: { title: '资料库' },
         },
+        // PRD-A-005 T2 — 页面级权限「示范受限页」
+        //   meta.roles 限定 superadmin 可见（A 线无真实 admin 业务页，这里以管理控制台
+        //   占位页示范"按角色过滤路由"的通用机制；teacher 访问会被守卫重定向）。
+        //   待 A 线出现真正需限制的页时，照此挂 meta.roles 即可，无需改守卫。
+        {
+          path: '/admin/console',
+          name: 'AdminConsole',
+          component: () => import('@/views/PlaceholderView.vue'),
+          props: { title: '管理控制台' },
+          meta: { roles: ['superadmin'] },
+        },
       ],
     },
     // 登录页（无 layout 包裹）
@@ -100,25 +143,52 @@ const router = createRouter({
 })
 
 // ---------------------------------------------------------------------------
-// 全局前置守卫（Y2 卡 2b 波）
+// 全局前置守卫（Y2 卡 2b 波 → PRD-A-005 T2 扩页面级权限）
 //
-// - 白名单路由（/login）→ 直接放行
-// - 其他路由 → 检查 useUserStore().isLoggedIn
-//     已登录 → 放行
-//     未登录 → 跳 /login，带 redirect query 便于登录后回跳
+// 流程：
+//   1. 白名单路由（/login、/register）→ 直接放行
+//   2. 未登录 → 跳 /login，带 redirect query 便于登录后回跳
+//   3. 已登录但 userInfo（含 roles）未就绪 → 守卫内集中拉一次 getCurrentUser 回填
+//      —— userInfo 内存态不持久化，刷新后丢失（[[feedback_fe_user_info_onmount_fallback]]）；
+//         守卫是页面级权限判定点，必须先拿到 roles 再判，否则刷新受限页会被误拦。
+//         业务页 onMounted 的 getCurrentUser 兜底保留（双保险，互不冲突，store 缓存命中后不重拉）。
+//   4. 命中 meta.roles 的路由 → 当前 roles 与之有交集才放行，否则重定向到无权限落点
+//   5. 无 meta.roles → 仅登录即可访问（A 线绝大多数页面）
 //
 // main.ts 顺序为 `app.use(createPinia()).use(router)` — guard 触发时 pinia 已 install，
 // 直接 `useUserStore()` 安全。
 // ---------------------------------------------------------------------------
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   if (PUBLIC_ROUTES.has(to.path)) {
     return true
   }
+
   const userStore = useUserStore()
-  if (userStore.isLoggedIn) {
-    return true
+  if (!userStore.isLoggedIn) {
+    return { path: '/login', query: { redirect: to.fullPath } }
   }
-  return { path: '/login', query: { redirect: to.fullPath } }
+
+  // userInfo（roles）未就绪时集中回填一次（刷新 / 直达受限页场景）。
+  // best-effort：拉失败不阻塞导航（token 真失效会被后续接口 401 拦截器处理），
+  // 仅在该页确有 meta.roles 限制时才视作"无权限"重定向。
+  if (userStore.roles.length === 0) {
+    try {
+      const info = await getCurrentUser()
+      if (info) userStore.setUserInfo(info)
+    } catch (e) {
+      console.warn('[router] 守卫回填 getCurrentUser 失败:', e)
+    }
+  }
+
+  const requiredRoles = to.meta.roles
+  if (requiredRoles && requiredRoles.length > 0) {
+    const hasPermission = requiredRoles.some((r) => userStore.roles.includes(r))
+    if (!hasPermission) {
+      return { path: NO_PERMISSION_REDIRECT }
+    }
+  }
+
+  return true
 })
 
 export default router

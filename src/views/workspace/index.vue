@@ -77,8 +77,9 @@ function goPaperList() {
   router.push('/papers/index?mine=1')
 }
 
-function goQuestionLib() {
-  router.push('/question/index')
+// PRD-A-005 T6 — 进入收藏管理页
+function goFavorites() {
+  router.push('/favorites/index')
 }
 
 function goCreatePaper() {
@@ -172,8 +173,8 @@ onMounted(async () => {
             <span>我的收藏</span>
             <el-tag size="small" type="warning">{{ favoriteTotal }} 题</el-tag>
           </div>
-          <el-button link type="primary" @click="goQuestionLib">
-            去题库收藏
+          <el-button link type="primary" @click="goFavorites">
+            收藏管理
             <el-icon><ArrowRight /></el-icon>
           </el-button>
         </div>

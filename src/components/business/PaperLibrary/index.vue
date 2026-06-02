@@ -173,6 +173,11 @@ function handleView(item: PaperListItem) {
   router.push(`/papers/source/${item.id}`)
 }
 
+// PRD-A-005 T4 — 进入试卷编辑页（排序/删/增题）
+function handleEdit(item: PaperListItem) {
+  router.push(`/papers/edit/${item.id}`)
+}
+
 function handleNotOpen() {
   ElMessage.info('暂未开放')
 }
@@ -268,6 +273,7 @@ onMounted(async () => {
             </div>
             <div class="paper-card-actions">
               <el-link type="primary" :underline="false" @click="handleView(item)">查看</el-link>
+              <el-link type="primary" :underline="false" @click="handleEdit(item)">编辑</el-link>
               <el-link
                 :type="basket.basketIds.value.has(item.id) ? 'danger' : 'primary'"
                 :underline="false"

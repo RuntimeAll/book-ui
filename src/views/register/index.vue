@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { registerTeacher } from '@/api/user'
+import { getCaptcha } from '@/api/auth'
 
 // U 卡 段⑧ — 老师注册页
 //
@@ -20,6 +21,31 @@ const form = reactive({
   password: '',
   passwordConfirm: '',
   nickName: '',
+  code: '',
+})
+
+// PRD-A-005 T1 — 图形验证码状态（注册接口 BE 复用若依 captcha 校验）
+// captchaEnabled=false（如 dev）时隐藏控件、提交不带 code/uuid。
+const captchaEnabled = ref(false)
+const captchaImg = ref('')
+const captchaUuid = ref('')
+
+async function refreshCaptcha() {
+  try {
+    const res = await getCaptcha()
+    captchaEnabled.value = res.captchaEnabled
+    if (res.captchaEnabled) {
+      captchaImg.value = res.img ? `data:image/gif;base64,${res.img}` : ''
+      captchaUuid.value = res.uuid ?? ''
+      form.code = ''
+    }
+  } catch {
+    // 拉验证码失败不阻塞页面；拦截器已提示。开关保持 false（降级为不强制验证码）。
+  }
+}
+
+onMounted(() => {
+  refreshCaptcha()
 })
 
 const validatePasswordConfirm = (
@@ -55,6 +81,16 @@ const rules: FormRules = {
   nickName: [
     { max: 30, message: '真名不超过 30 字符', trigger: 'blur' },
   ],
+  // 验证码必填仅在 captchaEnabled 时生效
+  code: [
+    {
+      validator: (_r: unknown, value: string, cb: (e?: Error) => void) => {
+        if (captchaEnabled.value && !value) cb(new Error('请输入验证码'))
+        else cb()
+      },
+      trigger: 'blur',
+    },
+  ],
 }
 
 const loading = ref(false)
@@ -69,12 +105,17 @@ async function onSubmit() {
       userName: form.userName.trim(),
       password: form.password,
       nickName: form.nickName.trim() || undefined,
+      ...(captchaEnabled.value
+        ? { code: form.code.trim(), uuid: captchaUuid.value }
+        : {}),
     })
     ElMessage.success(`注册成功！欢迎 ${result.userName}，请登录`)
     // 注册后跳登录页 — query 传 username 让 login 页预填
     await router.push({ path: '/login', query: { u: result.userName } })
   } catch {
-    // 拦截器已 ElMessage.error（用户名重复 / 校验失败）
+    // 拦截器已 ElMessage.error（用户名重复 / 校验失败 / 验证码错）
+    // 失败刷新验证码（旧码已失效，避免用户用错码重试）
+    if (captchaEnabled.value) refreshCaptcha()
   } finally {
     loading.value = false
   }
@@ -137,6 +178,27 @@ function goLogin() {
           />
         </el-form-item>
 
+        <!-- PRD-A-005 T1 — 图形验证码（captchaEnabled=false 时整块隐藏） -->
+        <el-form-item v-if="captchaEnabled" label="验证码" prop="code">
+          <div class="captcha-row">
+            <el-input
+              v-model="form.code"
+              placeholder="请输入验证码"
+              autocomplete="off"
+              class="captcha-input"
+              @keyup.enter="onSubmit"
+            />
+            <img
+              v-if="captchaImg"
+              :src="captchaImg"
+              class="captcha-img"
+              alt="点击刷新验证码"
+              title="点击刷新"
+              @click="refreshCaptcha"
+            >
+          </div>
+        </el-form-item>
+
         <el-button
           type="primary"
           class="register-button"
@@ -185,6 +247,26 @@ function goLogin() {
 
 .register-form {
   margin-top: 8px;
+}
+
+.captcha-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.captcha-input {
+  flex: 1;
+}
+
+.captcha-img {
+  height: 40px;
+  width: 120px;
+  border: 1px solid #dcdfe6;
+  border-radius: 4px;
+  cursor: pointer;
+  object-fit: cover;
 }
 
 .register-button {

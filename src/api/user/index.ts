@@ -55,6 +55,10 @@ export interface RegisterTeacherPayload {
   userName: string
   password: string
   nickName?: string
+  /** PRD-A-005 T1 — 图形验证码值（captchaEnabled=true 时必传）；BE 复用若依 captcha 校验 */
+  code?: string
+  /** PRD-A-005 T1 — 验证码 uuid（与 code 配对） */
+  uuid?: string
 }
 
 /** U 卡 段⑧ — 注册响应（BE R<Map> 返） */
