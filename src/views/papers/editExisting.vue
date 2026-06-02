@@ -177,6 +177,8 @@ async function handleSave() {
       name: paperName.value.trim(),
       questions,
     })) as PaperDetailVo | null
+    // 仅成功（code===1，拦截器已拆出 response）才提示成功 + 刷新已保存态；
+    // 失败时拦截器已 Promise.reject，直接走 catch，绝不到这里。
     ElMessage.success('保存成功')
     // 保存后刷新详情：优先用返回 VO，缺失则重拉
     if (updated && updated.paperId) {
@@ -198,7 +200,12 @@ async function handleSave() {
     } else {
       await loadDetail()
     }
-  } catch (e) {
+  } catch (e: any) {
+    // 🔴 保存失败（BE code!==1 / HTTP 错误 / 网络异常）= 阻断式报错，绝不吞。
+    // 拦截器对 code!==1 已弹过一次 message，这里兜底再确保用户看到失败原因；
+    // 不更新任何「已保存」态：editRows / paperName 保持当前内存编辑值 → 可直接重试保存。
+    const msg = e?.message || '保存失败，请稍后重试'
+    ElMessage.error(`保存失败：${msg}`)
     console.warn('[papers/editExisting] save failed', e)
   } finally {
     saving.value = false
