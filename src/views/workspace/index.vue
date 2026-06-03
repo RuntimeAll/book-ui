@@ -186,9 +186,17 @@ function goPaperList() {
   router.push('/papers/index?mine=1')
 }
 
-// PRD-A-005 T6 — 进入收藏管理页
+// PRD-A-005 T6 — 进入收藏管理页（全部收藏，不分夹）
 function goFavorites() {
   router.push('/favorites/index')
+}
+
+// 点收藏夹 → 进收藏管理页并按该夹筛选（默认夹 id:0 也可点，进默认夹看散收藏）
+function goFolderDetail(folder: FavoriteFolder) {
+  router.push({
+    path: '/favorites/index',
+    query: { folderId: folder.id, folderName: folder.name },
+  })
 }
 
 function goCreatePaper() {
@@ -311,7 +319,7 @@ onMounted(async () => {
               class="folder-item"
             >
               <el-icon color="#f59e0b"><Folder /></el-icon>
-              <div class="folder-info">
+              <div class="folder-info clickable" @click="goFolderDetail(folder)">
                 <span class="folder-name">{{ folder.name }}</span>
                 <span v-if="folder.createTime" class="folder-time">{{ folder.createTime }}</span>
               </div>
@@ -496,6 +504,14 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+.folder-info.clickable {
+  cursor: pointer;
+}
+
+.folder-info.clickable:hover .folder-name {
+  color: #4080ff;
 }
 
 .folder-name {

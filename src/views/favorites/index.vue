@@ -7,17 +7,31 @@
  *   点「已收藏」按钮即取消收藏 → 调现有 removeFavorite → 成功后从列表移除（乐观更新）。
  * - userInfo 内存态不持久化，onMounted 兜底拉 getCurrentUser（守卫已挡未登录，这里只为刷新场景兜底）。
  */
-import { onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
-import { Star } from '@element-plus/icons-vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Star, ArrowLeft, EditPen } from '@element-plus/icons-vue'
 import QuestionCard from '@/components/business/QuestionCard/index.vue'
-import { favoritePage, removeFavorite, type QuestionItem } from '@/api/question'
+import { favoritePage, removeFavorite, renameFolder, type QuestionItem } from '@/api/question'
 import { getCurrentUser } from '@/api/user'
 import { useUserStore } from '@/store/user'
 
+const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
+
+// 当前收藏夹上下文（从工作台点夹进入时带 query.folderId；无 query = 全部收藏视图）
+const folderId = computed<number | undefined>(() => {
+  const v = route.query.folderId
+  if (v == null || v === '') return undefined
+  const n = Number(v)
+  return Number.isNaN(n) ? undefined : n
+})
+const inFolderView = computed(() => folderId.value !== undefined)
+const isDefaultFolder = computed(() => folderId.value === 0)
+const folderName = ref<string>(
+  typeof route.query.folderName === 'string' ? route.query.folderName : '',
+)
 
 const questions = ref<QuestionItem[]>([])
 const total = ref(0)
@@ -33,6 +47,7 @@ async function fetchFavorites() {
     const result = await favoritePage({
       pageNum: pageParams.pageNum,
       pageSize: pageParams.pageSize,
+      folderId: folderId.value,
     })
     questions.value = result?.list ?? []
     total.value = result?.total ?? 0
@@ -79,6 +94,45 @@ function handlePageChange(page: number) {
   fetchFavorites()
 }
 
+// 重命名当前收藏夹（仅夹内视图、非默认夹 id:0）
+async function handleRename() {
+  if (folderId.value == null || folderId.value === 0) return
+  let name = ''
+  try {
+    const { value } = await ElMessageBox.prompt('请输入新的收藏夹名称', '重命名收藏夹', {
+      confirmButtonText: '保存',
+      cancelButtonText: '取消',
+      inputValue: folderName.value,
+      inputValidator: (v: string) => (v && v.trim() ? true : '名称不能为空'),
+    })
+    name = (value || '').trim()
+  } catch {
+    return
+  }
+  if (!name || name === folderName.value) return
+  try {
+    await renameFolder(folderId.value, name)
+    folderName.value = name
+    ElMessage.success('重命名成功')
+  } catch (e) {
+    console.warn('[favorites] renameFolder failed', e)
+    ElMessage.error('重命名失败')
+  }
+}
+
+// 返回"全部收藏"视图（清掉 folder query）
+function goAll() {
+  router.push('/favorites/index')
+}
+
+// SPA 内 query.folderId 变化（夹间切换 / 返回全部）重新加载 ——
+// 组件复用、onMounted 不重跑（source.vue 踩过同款坑：SPA 复用不刷新致数据停留旧上下文）。
+watch(folderId, () => {
+  pageParams.pageNum = 1
+  folderName.value = typeof route.query.folderName === 'string' ? route.query.folderName : ''
+  fetchFavorites()
+})
+
 onMounted(async () => {
   // userInfo 内存态不持久化，刷新后兜底拉一次（收藏接口本身按登录 token 取 userId，不依赖此值，
   // 但保持与其他业务页一致的兜底姿势）
@@ -99,10 +153,28 @@ onMounted(async () => {
     <header class="favorites-header">
       <div class="header-title">
         <el-icon color="#f59e0b" class="title-icon"><Star /></el-icon>
-        <span>收藏管理</span>
+        <span>{{ inFolderView ? folderName || '收藏夹' : '收藏管理' }}</span>
         <el-tag size="small" type="warning">{{ total }} 题</el-tag>
+        <el-button
+          v-if="inFolderView && !isDefaultFolder"
+          link
+          type="primary"
+          size="small"
+          @click="handleRename"
+        >
+          <el-icon><EditPen /></el-icon>
+          重命名
+        </el-button>
       </div>
-      <p class="header-sub">管理你收藏的题目 — 点「已收藏」即可取消收藏</p>
+      <div class="header-sub-row">
+        <p class="header-sub">
+          {{ inFolderView ? '当前收藏夹内的题目 — 点「已收藏」即可取消收藏' : '管理你收藏的题目 — 点「已收藏」即可取消收藏' }}
+        </p>
+        <el-button v-if="inFolderView" link type="primary" size="small" @click="goAll">
+          <el-icon><ArrowLeft /></el-icon>
+          全部收藏
+        </el-button>
+      </div>
     </header>
 
     <div v-loading="loading" class="favorites-body">
@@ -170,10 +242,22 @@ onMounted(async () => {
   font-size: 22px;
 }
 
+.header-sub-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+}
+
 .header-sub {
   font-size: 13px;
   color: #86909c;
   margin: 8px 0 0;
+}
+
+.header-sub-row .header-sub {
+  margin: 0;
 }
 
 .favorites-body {
