@@ -58,11 +58,11 @@ const router = createRouter({
           name: 'PapersEdit',
           component: () => import('@/views/papers/edit.vue'),
         },
-        // PRD-A-005 T4 — 编辑已存在试卷（排序/删/增题 → POST update）
+        // PRD-A-006 — 编辑已并入 source.vue 双态查看页；旧路由 /papers/edit/:id 重定向到
+        // 查看页编辑态（?edit=1 自动进编辑），兼容工作台/旧链接的编辑入口。editExisting.vue 已废弃删除。
         {
           path: '/papers/edit/:id',
-          name: 'PapersEditExisting',
-          component: () => import('@/views/papers/editExisting.vue'),
+          redirect: (to) => ({ path: `/papers/source/${to.params.id}`, query: { edit: '1' } }),
         },
         // 原卷预览页（第十二波）
         {
