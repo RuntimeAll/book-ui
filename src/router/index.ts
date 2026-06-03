@@ -32,7 +32,7 @@ const router = createRouter({
     {
       path: '/',
       component: AppLayout,
-      redirect: '/question/index',
+      redirect: '/home',
       children: [
         // 题库（FE-2 真实现）
         {
@@ -70,12 +70,11 @@ const router = createRouter({
           name: 'PapersSource',
           component: () => import('@/views/papers/source.vue'),
         },
-        // 空壳菜单页
+        // 🔴 C 线首页 = AI 组卷（AI 相关统一从首页进）。嵌 Dify WF3 chatbot + 透传 teacher_id。
         {
           path: '/home',
           name: 'Home',
-          component: () => import('@/views/PlaceholderView.vue'),
-          props: { title: '首页' },
+          component: () => import('@/views/ai-compose/index.vue'),
         },
         // U 卡 段④ — 教师我的工作台聚合页
         {
@@ -113,12 +112,6 @@ const router = createRouter({
           name: 'MaterialsIndex',
           component: () => import('@/views/PlaceholderView.vue'),
           props: { title: '资料库' },
-        },
-        // C 线 — AI 组卷（嵌 Dify WF3 工作流，生成卷落当前老师「我的卷库」）
-        {
-          path: '/ai-compose',
-          name: 'AiCompose',
-          component: () => import('@/views/ai-compose/index.vue'),
         },
         // PRD-A-005 T2 — 页面级权限「示范受限页」
         //   meta.roles 限定 superadmin 可见（A 线无真实 admin 业务页，这里以管理控制台

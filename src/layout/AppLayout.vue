@@ -58,7 +58,6 @@ const allMenuItems: MenuItem[] = [
   { label: '我的工作台', path: '/workspace' },                  // U-3 教师工作台聚合页
   { label: '卷库', path: '/papers/index' },
   { label: '题库', path: '/question/index' },
-  { label: 'AI 组卷', path: '/ai-compose' },
   { label: '资料库', path: '/materials/index' },
   // 示范受限入口：仅 superadmin 可见，与路由 /admin/console 的 meta.roles 对齐。
   // A 线主体是 teacher，此项验证"菜单按角色显隐"机制；teacher 登录看不到它。
