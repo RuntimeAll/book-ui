@@ -237,6 +237,49 @@ const numberGroups = computed<NumberGroup[]>(() => {
   }))
 })
 
+// ── 按知识点分组（knowledge tab）────────────────────────────────────────────
+// 分组 key = 首考点 knowledgeName；无考点归"未分类"排末尾；全卷连续序号
+interface KnowledgeSectionGroup {
+  title: string
+  rows: { row: EditRow; globalIndex: number; editRowIndex: number }[]
+}
+
+const knowledgeSectionGroups = computed<KnowledgeSectionGroup[]>(() => {
+  const knowledgeOrder: string[] = []
+  const knowledgeMap = new Map<string, { row: EditRow; globalIndex: number; editRowIndex: number }[]>()
+  const unknownKey = '未分类'
+
+  editRows.value.forEach((r, i) => {
+    const kName =
+      r.questionKnowledges && r.questionKnowledges.length > 0
+        ? (r.questionKnowledges[0].knowledgeName || '未分类')
+        : '未分类'
+    if (!knowledgeMap.has(kName)) {
+      knowledgeOrder.push(kName)
+      knowledgeMap.set(kName, [])
+    }
+    knowledgeMap.get(kName)!.push({ row: r, globalIndex: i + 1, editRowIndex: i })
+  })
+
+  // 把"未分类"排到末尾
+  const orderedKeys = [
+    ...knowledgeOrder.filter((k) => k !== unknownKey),
+    ...(knowledgeOrder.includes(unknownKey) ? [unknownKey] : []),
+  ]
+
+  return orderedKeys.map((kName) => ({
+    title: kName,
+    rows: knowledgeMap.get(kName)!,
+  }))
+})
+
+const knowledgeNumberGroups = computed<NumberGroup[]>(() => {
+  return knowledgeSectionGroups.value.map((g, gIdx) => ({
+    title: `${cnLabel(gIdx)}、${g.title}（共${g.rows.length}题）`,
+    nums: g.rows.map((r) => r.globalIndex),
+  }))
+})
+
 // ── 自由排序 tab — 平铺所有题（无分组，可跨题型拖）──────────────────────────
 // 自由排序使用平铺结构（misikt 视觉：全部题号块在同一网格内）
 // 每个 freesort item 持 editRowIndex，拖拽后重排 editRows
@@ -536,11 +579,11 @@ async function handleSave() {
         sections.push({ sectionId, name, sort: ++sortIdx })
       })
 
-      // TODO[Wave2b]: suggestTime 待 BE 扩展 UpdateExamPaperBo 后接入
       await updateExamPaper({
         paperId: Number(paperId.value),
         name: paperName.value.trim(),
         questions,
+        suggestTime: suggestTime.value,
         ...(sections.length > 0 ? { sections } : {}),
       })
       ElMessage.success('保存成功')
@@ -654,6 +697,8 @@ watch(paperId, async (newId) => {
 
         <!-- 大题分组 + 题卡列 -->
         <template v-else>
+          <!-- 按题型 / 自由排序 tab 时，左栏按题型分组 -->
+          <template v-if="activeTab !== 'knowledge'">
           <section
             v-for="(group, gIdx) in sectionGroups"
             :key="gIdx"
@@ -816,6 +861,159 @@ watch(paperId, async (newId) => {
               </div>
             </div>
           </section>
+          </template>
+
+          <!-- 按知识点 tab 时，左栏按首考点分组 -->
+          <template v-else>
+          <section
+            v-for="(group, gIdx) in knowledgeSectionGroups"
+            :key="`k-${gIdx}`"
+            class="wb-section"
+          >
+            <div class="wb-section-title">
+              <span class="section-label">{{ cnLabel(gIdx) }}、{{ group.title }}</span>
+              <span class="section-count">（共 {{ group.rows.length }} 题）</span>
+            </div>
+
+            <div
+              v-for="{ row, globalIndex, editRowIndex } in group.rows"
+              :key="row.id"
+              class="source-question-card workbench-card"
+            >
+              <div class="q-meta-top">
+                <div class="q-meta-top-left">
+                  <span
+                    class="q-type-tag"
+                    :class="`q-type--${getQuestionTypeTag(row.questionType)}`"
+                  >
+                    {{ getQuestionTypeLabel(row.questionType) }}
+                  </span>
+                  <span class="meta-label">难度:</span>
+                  <el-rate
+                    :model-value="row.difficult ?? 0"
+                    :max="4"
+                    disabled
+                    class="meta-rate"
+                  />
+                  <template v-if="row.questionKnowledges && row.questionKnowledges.length > 0">
+                    <span class="meta-label">考点:</span>
+                    <el-tag type="primary" size="small" class="primary-knowledge-tag">
+                      {{ row.questionKnowledges[0].knowledgeName || row.questionKnowledges[0].knowledgeId }}
+                    </el-tag>
+                  </template>
+                  <span v-if="row.examPaperName" class="source-text">
+                    来源: {{ row.examPaperName }}{{ row.examYear ? ` · ${row.examYear}年` : '' }}
+                  </span>
+                </div>
+                <div class="q-global-num">{{ globalIndex }}</div>
+              </div>
+
+              <div class="q-stem-area">
+                <img
+                  v-if="row.stemImg"
+                  :src="row.stemImg"
+                  class="q-stem-img"
+                  alt="题干"
+                  referrerpolicy="no-referrer"
+                  loading="lazy"
+                  @error="(e: Event) => ((e.target as HTMLImageElement).style.display = 'none')"
+                />
+                <p v-else-if="row.stemText" class="q-stem-text">{{ row.stemText }}</p>
+                <p v-else class="q-stem-placeholder">（题目 ID: {{ row.id }}）</p>
+              </div>
+
+              <div v-if="row._showExplain" class="q-explain-area">
+                <div class="explain-label">解析：</div>
+                <img
+                  v-if="row.explainImg"
+                  :src="row.explainImg"
+                  class="q-explain-img"
+                  alt="解析"
+                  referrerpolicy="no-referrer"
+                  loading="lazy"
+                />
+                <p v-else class="q-stem-placeholder">暂无解析图</p>
+              </div>
+
+              <div class="q-toolbar">
+                <div class="toolbar-score">
+                  <span class="toolbar-label">分值</span>
+                  <el-input-number
+                    v-model="row._score"
+                    :min="0"
+                    :max="100"
+                    :step="1"
+                    size="small"
+                    controls-position="right"
+                    style="width: 100px;"
+                  />
+                </div>
+                <div class="toolbar-divider" />
+                <el-button
+                  size="small"
+                  link
+                  :type="row._showExplain ? 'primary' : 'default'"
+                  class="toolbar-btn"
+                  @click="toggleExplain(row)"
+                >
+                  解析
+                </el-button>
+                <div class="toolbar-divider" />
+                <el-button
+                  size="small"
+                  link
+                  class="toolbar-btn"
+                  :disabled="editRowIndex === 0"
+                  @click="moveUp(editRowIndex)"
+                >
+                  <el-icon><Top /></el-icon>
+                  上移
+                </el-button>
+                <el-button
+                  size="small"
+                  link
+                  class="toolbar-btn"
+                  :disabled="editRowIndex === editRows.length - 1"
+                  @click="moveDown(editRowIndex)"
+                >
+                  <el-icon><Bottom /></el-icon>
+                  下移
+                </el-button>
+                <el-button
+                  size="small"
+                  link
+                  type="danger"
+                  class="toolbar-btn"
+                  @click="deleteRow(editRowIndex)"
+                >
+                  <el-icon><Delete /></el-icon>
+                  删除
+                </el-button>
+                <div class="toolbar-divider" />
+                <el-button
+                  size="small"
+                  link
+                  class="toolbar-btn"
+                  :loading="row._replacing"
+                  @click="handleReplace(row, editRowIndex)"
+                >
+                  <el-icon v-if="!row._replacing"><Refresh /></el-icon>
+                  换一题
+                </el-button>
+                <el-button
+                  size="small"
+                  link
+                  type="primary"
+                  class="toolbar-btn"
+                  @click="handleDetail(row)"
+                >
+                  <el-icon><InfoFilled /></el-icon>
+                  详情
+                </el-button>
+              </div>
+            </div>
+          </section>
+          </template>
         </template>
       </div>
 
@@ -831,10 +1029,30 @@ watch(paperId, async (newId) => {
 
           <!-- 题号块网格 -->
           <div class="number-grid-wrap">
-            <!-- 按题型 / 按知识点 tab（静态展示）-->
-            <template v-if="activeTab === 'type' || activeTab === 'knowledge'">
+            <!-- 按题型 tab（静态展示）-->
+            <template v-if="activeTab === 'type'">
               <div
                 v-for="ng in numberGroups"
+                :key="ng.title"
+                class="number-group"
+              >
+                <div class="number-group-title">{{ ng.title }}</div>
+                <div class="number-grid">
+                  <div
+                    v-for="n in ng.nums"
+                    :key="n"
+                    class="number-cell"
+                  >
+                    {{ n }}
+                  </div>
+                </div>
+              </div>
+            </template>
+
+            <!-- 按知识点 tab（按首考点分组）-->
+            <template v-else-if="activeTab === 'knowledge'">
+              <div
+                v-for="ng in knowledgeNumberGroups"
                 :key="ng.title"
                 class="number-group"
               >
@@ -997,12 +1215,13 @@ watch(paperId, async (newId) => {
     </div>
 
     <!-- PaperPreview 弹窗（下载 PDF）
-         PaperPreview 内部自带答案/解析 checkbox，右栏 showAnswer/showExplain 为 Wave2b
-         接入 PaperPreview 新 props 时的预留状态，本波已展示勾选 UI，暂不传入 -->
+         右栏 showAnswer/showExplain 作为初始勾选态传入，弹窗内仍可二次调整 -->
     <PaperPreview
       :visible="previewVisible"
       :paper-name="exportPaperName"
       :ids="exportQuestionIds"
+      :initial-show-answer="showAnswer"
+      :initial-show-explain="showExplain"
       @update:visible="previewVisible = $event"
     />
   </div>

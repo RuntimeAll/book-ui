@@ -159,6 +159,8 @@ export interface UpdateExamPaperParams {
   questions: UpdatePaperQuestion[]
   /** 可选：大题重命名（design.md §0.2；BE v1 只处理 sectionId 非空条目）*/
   sections?: UpdatePaperSection[]
+  /** 答题时间（分钟）— BE PRD-A-007 Wave1 已支持写 biz_paper.suggest_time */
+  suggestTime?: number
 }
 
 /**
