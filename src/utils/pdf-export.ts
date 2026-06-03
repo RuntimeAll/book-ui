@@ -45,6 +45,15 @@ export async function exportPaperToPdf(options: PdfExportOptions): Promise<void>
   await waitAllImagesLoaded(root)
 
   onProgress?.('生成截图…')
+  // 🔴 分页断点测量（必须在 html2canvas 之前，DOM 还在原位时取几何）：
+  //   收集每道题 .pp-question 的「底部 Y」（css px，相对 root 顶）作为安全切页点，
+  //   保证分页时不把一道题拦腰截断（旧版按固定 A4 高度硬切，跨页题被切断）。
+  const rootRect = root.getBoundingClientRect()
+  const questionEls = Array.from(root.querySelectorAll('.pp-question')) as HTMLElement[]
+  const breakYsCss = questionEls
+    .map(el => el.getBoundingClientRect().bottom - rootRect.top)
+    .filter(y => y > 0)
+
   // 🔴 用户铁则（2026-05-23）：绝对禁压缩图片质量，除非用户明确同意
   //   scale=2 高分辨率截图（不擅自降）；PNG 无损编码（不擅自 JPEG）
   //   体积大可接受，质量损失绝对不可接受 — memory feedback_no_image_quality_compression
@@ -71,6 +80,26 @@ export async function exportPaperToPdf(options: PdfExportOptions): Promise<void>
   const pageContentHeightMm = a4HeightMm - marginMm * 2
   const pageContentHeightPx = Math.floor(pageContentHeightMm * pxPerMm)
 
+  // css px → canvas px 的缩放比（canvas 是 root 整体 scrollHeight × html2canvas scale）
+  const cssToCanvas = canvas.height / root.scrollHeight
+  const breakYsPx = breakYsCss
+    .map(y => Math.round(y * cssToCanvas))
+    .filter(y => y > 0 && y <= canvas.height)
+    .sort((a, b) => a - b)
+
+  // 给定一页起点 yStart，求该页终点：优先落在「最靠近一整页高度、又不超出」的题目边界上，
+  // 不切断题目；若单题本身高于一整页（无边界可落）则只能硬切一整页（不可避免）。
+  function nextPageEnd(yStart: number): number {
+    const maxEnd = yStart + pageContentHeightPx
+    if (maxEnd >= canvas.height) return canvas.height
+    let chosen = -1
+    for (const y of breakYsPx) {
+      if (y > yStart && y <= maxEnd) chosen = y
+      else if (y > maxEnd) break
+    }
+    return chosen > yStart ? chosen : maxEnd
+  }
+
   let yOffsetPx = 0
   let pageIndex = 0
 
@@ -78,7 +107,8 @@ export async function exportPaperToPdf(options: PdfExportOptions): Promise<void>
   //   toDataURL('image/png') 默认无损 — 体积大可接受，质量损失绝对不可接受
   //   memory feedback_no_image_quality_compression
   while (yOffsetPx < canvas.height) {
-    const sliceHeightPx = Math.min(pageContentHeightPx, canvas.height - yOffsetPx)
+    const yEnd = nextPageEnd(yOffsetPx)
+    const sliceHeightPx = yEnd - yOffsetPx
 
     const pageCanvas = document.createElement('canvas')
     pageCanvas.width = canvas.width
@@ -97,7 +127,7 @@ export async function exportPaperToPdf(options: PdfExportOptions): Promise<void>
     if (pageIndex > 0) pdf.addPage()
     pdf.addImage(imgData, 'PNG', marginMm, marginMm, imgWidthMm, imgHeightMm)
 
-    yOffsetPx += sliceHeightPx
+    yOffsetPx = yEnd
     pageIndex++
   }
 
