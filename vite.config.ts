@@ -16,7 +16,9 @@ import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 // 18+ 端点（详见 PRD §3.1）全走本地 — 无白名单/fallback 分支。
 // ---------------------------------------------------------------------------
 
-const BOOK_SERVER_TARGET = 'http://localhost:8080'
+// 🔴 C 线（AI 编排）独立 FE：proxy 指向 C 线后端 :8090（master-ai，含 AI 组卷/落库接口），
+//    dev 端口 8091（贴着 C BE 8090）。与 A 线 book-ui(:5173→:8080) 目录+端口双隔离。
+const BOOK_SERVER_TARGET = 'http://localhost:8090'
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -36,7 +38,7 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5173,
+    port: 8091,
     proxy: {
       '/api': {
         target: BOOK_SERVER_TARGET,

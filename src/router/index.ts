@@ -114,6 +114,12 @@ const router = createRouter({
           component: () => import('@/views/PlaceholderView.vue'),
           props: { title: '资料库' },
         },
+        // C 线 — AI 组卷（嵌 Dify WF3 工作流，生成卷落当前老师「我的卷库」）
+        {
+          path: '/ai-compose',
+          name: 'AiCompose',
+          component: () => import('@/views/ai-compose/index.vue'),
+        },
         // PRD-A-005 T2 — 页面级权限「示范受限页」
         //   meta.roles 限定 superadmin 可见（A 线无真实 admin 业务页，这里以管理控制台
         //   占位页示范"按角色过滤路由"的通用机制；teacher 访问会被守卫重定向）。
