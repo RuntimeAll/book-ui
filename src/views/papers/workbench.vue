@@ -1615,9 +1615,12 @@ watch(paperId, async (newId) => {
   width: 300px;
   flex-shrink: 0;
   position: sticky;
-  top: 57px; /* topbar 高度 */
-  height: calc(100vh - 57px);
-  max-height: calc(100vh - 57px);
+  top: 57px; /* 工作台 topbar 高度 */
+  /* 滚动容器是 .el-main.app-main（顶部在视口 y=60，上面有 60px 全局 header），
+     不是 window。可用高度 = 100vh - 60(全局header) - 57(工作台topbar sticky 偏移)。
+     用 57px 会导致 rail 底超出滚动视口 60px → 控制台底部「保存」被切。改 117px 后控制台始终全可见且吸顶固定。*/
+  height: calc(100vh - 117px);
+  max-height: calc(100vh - 117px);
   /* 不再自身 overflow-y:auto，交给内部两区管理 */
   padding: 12px 12px 12px 0;
   display: flex;

@@ -64,10 +64,14 @@ const PAGE_SIZE = 6
 async function doSearch() {
   loading.value = true
   try {
+    // ⚠️ 不 seed subjectId：试卷题携带的 subjectId 是分类树前缀 id（如 3001002 公共卷库分类），
+    // 不是 questionPage 能用的章节 subjectId（章节走 biz_question_knowledge JOIN）。
+    // 实测用它过滤 questionPage 必返 0 → 用 questionType + difficult 作为"该题条件"检索种子（实测 type5+难度3 = 2924 候选）。
     const params = {
       pageIndex: currentPage.value,
       pageSize: PAGE_SIZE,
-      subjectId: props.question.subjectId,
+      notTaskQuestion: 0,
+      notUsedQuestion: 0,
       ...(filterType.value !== '' ? { questionType: Number(filterType.value) } : {}),
       ...(filterDiff.value !== '' ? { difficult: Number(filterDiff.value) } : {}),
       ...(filterKeyword.value.trim() ? { keyWord: filterKeyword.value.trim() } : {}),
