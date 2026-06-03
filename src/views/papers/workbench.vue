@@ -33,9 +33,9 @@ import {
 import Sortable from 'sortablejs'
 import {
   getPaperDetail,
-  replaceQuestion,
   type PaperDetailVo,
   type PaperSourceQuestion,
+  type QuestionItem,
 } from '@/api/question/index'
 import {
   createExamPaper,
@@ -44,6 +44,7 @@ import {
   type UpdatePaperSection,
 } from '@/api/paper/index'
 import PaperPreview from '@/components/business/PaperPreview/index.vue'
+import ReplaceQuestionDialog from './components/ReplaceQuestionDialog.vue'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
 import { useUserStore } from '@/store/user'
 import { getCurrentUser } from '@/api/user'
@@ -285,6 +286,7 @@ const knowledgeNumberGroups = computed<NumberGroup[]>(() => {
 // 每个 freesort item 持 editRowIndex，拖拽后重排 editRows
 
 interface FreesortItem {
+  id: number            // 题目稳定身份键（用于 v-for :key，避免拖拽后 key 乱序）
   globalIndex: number   // 拖前序号（仅展示，拖后由位置决定）
   editRowIndex: number  // 在 editRows 中的位置
   sectionId: number     // 所属 sectionId（对应 sectionNameMap）
@@ -300,6 +302,7 @@ const freesortGroups = computed(() => {
         sectionId: 0,
         sectionName: defaultName,
         items: editRows.value.map((r, i) => ({
+          id: r.id,
           globalIndex: i + 1,
           editRowIndex: i,
           sectionId: 0,
@@ -318,7 +321,7 @@ const freesortGroups = computed(() => {
       groupOrder.push(sid)
       groupMap.set(sid, [])
     }
-    groupMap.get(sid)!.push({ globalIndex: i + 1, editRowIndex: i, sectionId: sid })
+    groupMap.get(sid)!.push({ id: r.id, globalIndex: i + 1, editRowIndex: i, sectionId: sid })
   })
 
   return groupOrder.map((sid) => ({
@@ -329,6 +332,8 @@ const freesortGroups = computed(() => {
 })
 
 // ── Sortablejs 拖拽（自由排序 tab）─────────────────────────────────────────
+// renderKey 递增 → 强制自由排序网格完整 remount，确保拖后题号块按新 editRows 顺序连续渲染
+const freesortRenderKey = ref(0)
 const freesortContainerRefs = ref<(HTMLElement | null)[]>([])
 let sortableInstances: Sortable[] = []
 
@@ -388,6 +393,10 @@ function initSortable() {
           // 按 newOrder 重排 editRows
           const oldRows = [...editRows.value]
           editRows.value = newOrder.map((i) => oldRows[i])
+
+          // 强制干净重渲染：递增 renderKey → freesort group :key 变化 → remount → sortable 重绑
+          freesortRenderKey.value++
+          nextTick(() => initSortable())
         },
       })
       sortableInstances.push(instance)
@@ -451,35 +460,42 @@ function toggleExplain(row: EditRow) {
   row._showExplain = !row._showExplain
 }
 
-// 换一题
-async function handleReplace(row: EditRow, idx: number) {
-  if (row._replacing) return
-  row._replacing = true
-  try {
-    const result = await replaceQuestion({
-      currentQuestionId: row.id,
-      excludeIds: paperQuestionIds.value,
-    })
-    if (!result) {
-      ElMessage.info('暂无可替换的同类题')
-      return
-    }
-    const newRow: EditRow = {
-      ...(result as PaperSourceQuestion),
-      _sectionId: row._sectionId,
-      _score: Number(result.score ?? 0),
-      _showExplain: false,
-      _replacing: false,
-    }
-    const arr = [...editRows.value]
-    arr.splice(idx, 1, newRow)
-    editRows.value = arr
-    ElMessage.success('已替换为同类题')
-  } catch (e) {
-    console.warn('[workbench] replaceQuestion failed', e)
-    ElMessage.error('换一题失败，请稍后重试')
-  } finally {
-    row._replacing = false
+// 换一题 — 打开检索弹窗让老师自己挑（PRD-A-007 Wave4 改动②）
+const replaceDialogVisible = ref(false)
+const replaceTargetRow = ref<EditRow | null>(null)
+const replaceTargetIdx = ref(-1)
+
+function handleReplace(row: EditRow, idx: number) {
+  replaceTargetRow.value = row
+  replaceTargetIdx.value = idx
+  replaceDialogVisible.value = true
+}
+
+function onReplaceSelect(picked: QuestionItem) {
+  const idx = replaceTargetIdx.value
+  const origRow = replaceTargetRow.value
+  if (idx < 0 || !origRow) return
+
+  const newRow: EditRow = {
+    ...(picked as PaperSourceQuestion),
+    _sectionId: origRow._sectionId,
+    _score: origRow._score,        // 保留原分值
+    _showExplain: false,
+    _replacing: false,
+  }
+  const arr = [...editRows.value]
+  arr.splice(idx, 1, newRow)
+  editRows.value = arr
+  ElMessage.success('已替换该题')
+}
+
+// 题号块点击 → 左栏滚动定位（PRD-A-007 Wave4 改动③）
+function scrollToQuestion(n: number) {
+  const el = document.getElementById('wb-q-' + n)
+  if (el) {
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    el.classList.add('wb-card-flash')
+    setTimeout(() => el.classList.remove('wb-card-flash'), 1200)
   }
 }
 
@@ -714,6 +730,7 @@ watch(paperId, async (newId) => {
             <div
               v-for="{ row, globalIndex, editRowIndex } in group.rows"
               :key="row.id"
+              :id="'wb-q-' + globalIndex"
               class="source-question-card workbench-card"
             >
               <!-- 顶部 meta：左(题型标签/难度/考点/来源) / 右(连续序号圆圈) -->
@@ -841,10 +858,9 @@ watch(paperId, async (newId) => {
                   size="small"
                   link
                   class="toolbar-btn"
-                  :loading="row._replacing"
                   @click="handleReplace(row, editRowIndex)"
                 >
-                  <el-icon v-if="!row._replacing"><Refresh /></el-icon>
+                  <el-icon><Refresh /></el-icon>
                   换一题
                 </el-button>
                 <!-- 详情 -->
@@ -878,6 +894,7 @@ watch(paperId, async (newId) => {
             <div
               v-for="{ row, globalIndex, editRowIndex } in group.rows"
               :key="row.id"
+              :id="'wb-q-' + globalIndex"
               class="source-question-card workbench-card"
             >
               <div class="q-meta-top">
@@ -994,10 +1011,9 @@ watch(paperId, async (newId) => {
                   size="small"
                   link
                   class="toolbar-btn"
-                  :loading="row._replacing"
                   @click="handleReplace(row, editRowIndex)"
                 >
-                  <el-icon v-if="!row._replacing"><Refresh /></el-icon>
+                  <el-icon><Refresh /></el-icon>
                   换一题
                 </el-button>
                 <el-button
@@ -1020,6 +1036,8 @@ watch(paperId, async (newId) => {
       <!-- ══ 右固定栏（sticky）══ -->
       <div class="workbench-right">
         <div class="right-panel">
+          <!-- 上部可滚区：tabs + 题号块网格 + 继续挑题/清空 -->
+          <div class="right-scroll-area">
           <!-- 分组 tabs（按题型 / 按知识点 / 自由排序）-->
           <el-tabs v-model="activeTab" class="right-tabs">
             <el-tab-pane label="按题型" name="type" />
@@ -1029,7 +1047,7 @@ watch(paperId, async (newId) => {
 
           <!-- 题号块网格 -->
           <div class="number-grid-wrap">
-            <!-- 按题型 tab（静态展示）-->
+            <!-- 按题型 tab（点击题号块 → 左栏滚动定位 改动③）-->
             <template v-if="activeTab === 'type'">
               <div
                 v-for="ng in numberGroups"
@@ -1042,6 +1060,7 @@ watch(paperId, async (newId) => {
                     v-for="n in ng.nums"
                     :key="n"
                     class="number-cell"
+                    @click="scrollToQuestion(n)"
                   >
                     {{ n }}
                   </div>
@@ -1049,7 +1068,7 @@ watch(paperId, async (newId) => {
               </div>
             </template>
 
-            <!-- 按知识点 tab（按首考点分组）-->
+            <!-- 按知识点 tab（点击题号块 → 左栏滚动定位 改动③）-->
             <template v-else-if="activeTab === 'knowledge'">
               <div
                 v-for="ng in knowledgeNumberGroups"
@@ -1062,6 +1081,7 @@ watch(paperId, async (newId) => {
                     v-for="n in ng.nums"
                     :key="n"
                     class="number-cell"
+                    @click="scrollToQuestion(n)"
                   >
                     {{ n }}
                   </div>
@@ -1070,10 +1090,11 @@ watch(paperId, async (newId) => {
             </template>
 
             <!-- 自由排序 tab：sortablejs 拖拽网格 -->
+            <!-- :key 含 freesortRenderKey → 拖后强制 remount，确保题号块按新 editRows 顺序渲染（改动④a）-->
             <template v-else>
               <div
                 v-for="(group, gIdx) in freesortGroups"
-                :key="group.sectionId"
+                :key="group.sectionId + '-' + freesortRenderKey"
                 class="number-group freesort-number-group"
               >
                 <!-- 大题分组头 + ✏️ 重命名（仅编辑态且有 sectionId 时可改）-->
@@ -1119,7 +1140,7 @@ watch(paperId, async (newId) => {
                 >
                   <div
                     v-for="item in group.items"
-                    :key="item.editRowIndex"
+                    :key="item.id"
                     class="number-cell freesort-cell"
                     :data-edit-row-index="item.editRowIndex"
                     :title="`第 ${item.globalIndex} 题，拖拽可重新排序`"
@@ -1148,68 +1169,68 @@ watch(paperId, async (newId) => {
               清空试题
             </el-button>
           </div>
+          </div><!-- /right-scroll-area -->
 
-          <el-divider style="margin: 12px 0;" />
-
-          <!-- 答题时间 -->
-          <div class="right-section">
-            <div class="right-section-label">答题时间</div>
-            <div class="time-ctrl">
-              <el-button size="small" circle @click="handleTimeDecrease">−</el-button>
-              <span class="time-value">{{ suggestTime }}</span>
-              <el-button size="small" circle @click="handleTimeIncrease">+</el-button>
-              <span class="time-unit">分钟</span>
+          <!-- 底部固定控制台（改动④b）-->
+          <div class="right-console">
+            <!-- 答题时间 -->
+            <div class="right-section">
+              <div class="right-section-label">答题时间</div>
+              <div class="time-ctrl">
+                <el-button size="small" circle @click="handleTimeDecrease">−</el-button>
+                <span class="time-value">{{ suggestTime }}</span>
+                <el-button size="small" circle @click="handleTimeIncrease">+</el-button>
+                <span class="time-unit">分钟</span>
+              </div>
             </div>
-          </div>
 
-          <!-- 导出选项 -->
-          <div class="right-section">
-            <div class="right-section-label">导出选项</div>
-            <div class="export-options">
-              <el-checkbox v-model="showAnswer">包含答案</el-checkbox>
-              <el-checkbox v-model="showExplain">包含解析</el-checkbox>
+            <!-- 导出选项 -->
+            <div class="right-section">
+              <div class="right-section-label">导出选项</div>
+              <div class="export-options">
+                <el-checkbox v-model="showAnswer">包含答案</el-checkbox>
+                <el-checkbox v-model="showExplain">包含解析</el-checkbox>
+              </div>
             </div>
-          </div>
 
-          <el-divider style="margin: 12px 0;" />
-
-          <!-- 下载 PDF -->
-          <el-button
-            class="action-btn"
-            @click="handleExportPdf"
-            :disabled="editRows.length === 0"
-          >
-            下载 PDF
-          </el-button>
-
-          <!-- 保存修改 / 创建试卷 -->
-          <el-button
-            v-if="isEditMode"
-            class="action-btn primary-btn"
-            type="primary"
-            :loading="saving"
-            :disabled="!isOwner"
-            @click="handleSave"
-          >
-            <el-tooltip
-              v-if="!isOwner"
-              content="公共试卷不可编辑"
-              placement="left"
+            <!-- 下载 PDF -->
+            <el-button
+              class="action-btn"
+              @click="handleExportPdf"
+              :disabled="editRows.length === 0"
             >
-              <span>保存修改</span>
-            </el-tooltip>
-            <span v-else>保存修改</span>
-          </el-button>
-          <el-button
-            v-else
-            class="action-btn create-btn"
-            type="success"
-            :loading="saving"
-            :disabled="editRows.length === 0"
-            @click="handleSave"
-          >
-            创建试卷
-          </el-button>
+              下载 PDF
+            </el-button>
+
+            <!-- 保存修改 / 创建试卷 -->
+            <el-button
+              v-if="isEditMode"
+              class="action-btn primary-btn"
+              type="primary"
+              :loading="saving"
+              :disabled="!isOwner"
+              @click="handleSave"
+            >
+              <el-tooltip
+                v-if="!isOwner"
+                content="公共试卷不可编辑"
+                placement="left"
+              >
+                <span>保存修改</span>
+              </el-tooltip>
+              <span v-else>保存修改</span>
+            </el-button>
+            <el-button
+              v-else
+              class="action-btn create-btn"
+              type="success"
+              :loading="saving"
+              :disabled="editRows.length === 0"
+              @click="handleSave"
+            >
+              创建试卷
+            </el-button>
+          </div><!-- /right-console -->
         </div>
       </div>
     </div>
@@ -1223,6 +1244,15 @@ watch(paperId, async (newId) => {
       :initial-show-answer="showAnswer"
       :initial-show-explain="showExplain"
       @update:visible="previewVisible = $event"
+    />
+
+    <!-- 换一题检索弹窗（PRD-A-007 Wave4 改动②）-->
+    <ReplaceQuestionDialog
+      v-if="replaceTargetRow"
+      v-model:visible="replaceDialogVisible"
+      :question="replaceTargetRow"
+      :exclude-ids="paperQuestionIds"
+      @select="onReplaceSelect"
     />
   </div>
 </template>
@@ -1519,6 +1549,7 @@ watch(paperId, async (newId) => {
 }
 
 /* ── 底部工具栏（misikt 风格）── */
+/* 改动①：默认隐藏，悬停题卡才显示，保留占位不跳高 */
 .q-toolbar {
   display: flex;
   align-items: center;
@@ -1526,6 +1557,24 @@ watch(paperId, async (newId) => {
   padding: 10px 0 12px;
   border-top: 1px solid #f7f8fa;
   flex-wrap: wrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+
+.workbench-card:hover .q-toolbar {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* 改动③：题卡闪烁高亮（点击题号块定位时）*/
+.wb-card-flash {
+  animation: wbFlash 1.2s;
+}
+
+@keyframes wbFlash {
+  0%, 100% { box-shadow: none; }
+  30% { box-shadow: 0 0 0 3px #4080ff55; }
 }
 
 .toolbar-score {
@@ -1561,22 +1610,47 @@ watch(paperId, async (newId) => {
   color: #4080ff;
 }
 
-/* ── 右固定栏 ── */
+/* ── 右固定栏（改动④b）── */
 .workbench-right {
   width: 300px;
   flex-shrink: 0;
   position: sticky;
   top: 57px; /* topbar 高度 */
+  height: calc(100vh - 57px);
   max-height: calc(100vh - 57px);
-  overflow-y: auto;
+  /* 不再自身 overflow-y:auto，交给内部两区管理 */
   padding: 12px 12px 12px 0;
+  display: flex;
+  flex-direction: column;
 }
 
+/* right-panel 占满 sticky 高度，内部 flex 拆两区 */
 .right-panel {
   background: #fff;
   border-radius: 10px;
   border: 1px solid #f2f3f5;
-  padding: 14px 16px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* 上部可滚区（tabs + 题号网格 + 继续挑题/清空）*/
+.right-scroll-area {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 16px 8px;
+}
+
+/* 底部固定控制台（答题时间 + 导出 + PDF + 保存）*/
+.right-console {
+  flex-shrink: 0;
+  border-top: 1px solid #f0f2f5;
+  padding: 12px 16px 14px;
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.04);
 }
 
 /* tabs */
