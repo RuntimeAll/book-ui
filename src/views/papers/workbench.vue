@@ -1,6 +1,7 @@
 <script setup lang="ts">
 /**
  * PRD-A-007 Wave1 — misikt 式两栏组卷工作台
+ * PRD-A-007 Wave2a — 自由排序拖拽 + 大题标题重命名
  *
  * 入口：
  *   新建态 /papers/workbench        → 数据源 useQuestionBasket，动作"创建试卷"
@@ -11,8 +12,13 @@
  *
  * 右固定栏（~30%, sticky）：tabs(按题型/按知识点/自由排序) + 题号块网格 +
  *   继续挑题/清空 + 答题时间[- N +] + 导出选项 + 下载PDF + 保存/创建
+ *
+ * Wave2a 新增：
+ *   - 自由排序 tab：sortablejs 拖拽题号块 → 同步 editRows 顺序 → 左栏实时刷新
+ *   - 大题标题 ✏️ 重命名：inline 编辑，保存时带 sections[] 持久化
+ *   - 「+ 添加分类」置灰（BE v1 未实现新建 section）
  */
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -22,7 +28,9 @@ import {
   Delete,
   InfoFilled,
   Refresh,
+  Edit,
 } from '@element-plus/icons-vue'
+import Sortable from 'sortablejs'
 import {
   getPaperDetail,
   replaceQuestion,
@@ -33,6 +41,7 @@ import {
   createExamPaper,
   updateExamPaper,
   type UpdatePaperQuestion,
+  type UpdatePaperSection,
 } from '@/api/paper/index'
 import PaperPreview from '@/components/business/PaperPreview/index.vue'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
@@ -95,6 +104,36 @@ const paperName = ref('未命名草稿')
 const defaultSectionId = ref<number>(0)
 const saving = ref(false)
 
+// ── 大题分组的 section 信息（重命名用）──────────────────────────────────────
+// key = sectionId，value = 当前显示名称（初始从 paperDetail sections 读入）
+const sectionNameMap = ref<Map<number, string>>(new Map())
+// 当前处于内联编辑的 sectionId（null = 不在编辑）
+const editingSectionId = ref<number | null>(null)
+// 内联编辑中的临时值
+const editingSectionName = ref('')
+
+function startRenameSection(sectionId: number) {
+  editingSectionId.value = sectionId
+  editingSectionName.value = sectionNameMap.value.get(sectionId) ?? ''
+  nextTick(() => {
+    const inp = document.querySelector<HTMLInputElement>('.rename-input input')
+    inp?.focus()
+    inp?.select()
+  })
+}
+
+function commitRenameSection(sectionId: number) {
+  const trimmed = editingSectionName.value.trim()
+  if (trimmed) {
+    sectionNameMap.value.set(sectionId, trimmed)
+  }
+  editingSectionId.value = null
+}
+
+function cancelRenameSection() {
+  editingSectionId.value = null
+}
+
 // 全卷已有题 ids（换一题 excludeIds 用）
 const paperQuestionIds = computed<number[]>(() => editRows.value.map((r) => r.id))
 
@@ -113,10 +152,18 @@ function buildEditRowsFromBasket() {
   }))
 }
 
-// 编辑态：从 detail 构建 editRows
+// 编辑态：从 detail 构建 editRows + 初始化 sectionNameMap
 function buildEditRows() {
   const sections = paperDetail.value?.sections ?? []
   if (sections.length > 0) defaultSectionId.value = sections[0].sectionId
+
+  // 初始化大题名称 map（PaperSectionVo 字段名 = title）
+  const nameMap = new Map<number, string>()
+  sections.forEach((sec) => {
+    nameMap.set(sec.sectionId, sec.title || `大题${sec.sectionId}`)
+  })
+  sectionNameMap.value = nameMap
+
   const rows: EditRow[] = []
   sections.forEach((sec) => {
     ;(sec.questions || []).forEach((q) => {
@@ -179,6 +226,7 @@ const sectionGroups = computed<SectionGroup[]>(() => {
 // 右栏题号网格（按题型分组）
 interface NumberGroup {
   title: string
+  sectionId?: number // 编辑态下关联 sectionId，重命名用
   nums: number[]
 }
 
@@ -187,6 +235,151 @@ const numberGroups = computed<NumberGroup[]>(() => {
     title: `${cnLabel(gIdx)}、${g.title}（共${g.rows.length}题）`,
     nums: g.rows.map((r) => r.globalIndex),
   }))
+})
+
+// ── 自由排序 tab — 平铺所有题（无分组，可跨题型拖）──────────────────────────
+// 自由排序使用平铺结构（misikt 视觉：全部题号块在同一网格内）
+// 每个 freesort item 持 editRowIndex，拖拽后重排 editRows
+
+interface FreesortItem {
+  globalIndex: number   // 拖前序号（仅展示，拖后由位置决定）
+  editRowIndex: number  // 在 editRows 中的位置
+  sectionId: number     // 所属 sectionId（对应 sectionNameMap）
+}
+
+// 编辑态按 section 分组平铺；新建态全在 sectionId=0 的默认组
+const freesortGroups = computed(() => {
+  if (!isEditMode.value || sectionNameMap.value.size === 0) {
+    // 新建态 or 无 section map：全部归一组
+    const defaultName = '试题'
+    return [
+      {
+        sectionId: 0,
+        sectionName: defaultName,
+        items: editRows.value.map((r, i) => ({
+          globalIndex: i + 1,
+          editRowIndex: i,
+          sectionId: 0,
+        })) as FreesortItem[],
+      },
+    ]
+  }
+
+  // 编辑态：按 sectionId 分组（保持 editRows 出现顺序）
+  const groupOrder: number[] = []
+  const groupMap = new Map<number, FreesortItem[]>()
+
+  editRows.value.forEach((r, i) => {
+    const sid = r._sectionId || defaultSectionId.value
+    if (!groupMap.has(sid)) {
+      groupOrder.push(sid)
+      groupMap.set(sid, [])
+    }
+    groupMap.get(sid)!.push({ globalIndex: i + 1, editRowIndex: i, sectionId: sid })
+  })
+
+  return groupOrder.map((sid) => ({
+    sectionId: sid,
+    sectionName: sectionNameMap.value.get(sid) ?? `大题${sid}`,
+    items: groupMap.get(sid)!,
+  }))
+})
+
+// ── Sortablejs 拖拽（自由排序 tab）─────────────────────────────────────────
+const freesortContainerRefs = ref<(HTMLElement | null)[]>([])
+let sortableInstances: Sortable[] = []
+
+function setFreesortContainerRef(el: HTMLElement | null, idx: number) {
+  freesortContainerRefs.value[idx] = el
+}
+
+function initSortable() {
+  destroySortable()
+  nextTick(() => {
+    freesortContainerRefs.value.forEach((el, gIdx) => {
+      if (!el) return
+      const group = freesortGroups.value[gIdx]
+      if (!group) return
+
+      const instance = Sortable.create(el, {
+        group: 'freesort',         // 允许跨分组拖拽
+        animation: 150,
+        ghostClass: 'freesort-ghost',
+        chosenClass: 'freesort-chosen',
+        dragClass: 'freesort-drag',
+        onEnd(evt) {
+          // 从哪个 group 拖出
+          const fromGroupIdx = Number(evt.from.getAttribute('data-group-idx'))
+          // 拖到哪个 group
+          const toGroupIdx = Number(evt.to.getAttribute('data-group-idx'))
+          const oldIdx = evt.oldIndex ?? 0
+          const newIdx = evt.newIndex ?? 0
+
+          if (fromGroupIdx === toGroupIdx && oldIdx === newIdx) return
+
+          // 从 freesortGroups 计算当前各 item 的 editRowIndex 映射（拖前快照）
+          // 注意：sortablejs 已在 DOM 层移动，但我们的数据还未变
+          // 策略：根据 DOM 当前各格的 data-edit-row-index 重建 editRows 顺序
+
+          // 收集 DOM 当前顺序的 editRowIndex 列表（跨所有 group 拼接）
+          const allContainers = Array.from(
+            document.querySelectorAll<HTMLElement>('.freesort-grid[data-group-idx]'),
+          ).sort(
+            (a, b) =>
+              Number(a.getAttribute('data-group-idx')) -
+              Number(b.getAttribute('data-group-idx')),
+          )
+
+          const newOrder: number[] = []
+          allContainers.forEach((container) => {
+            container
+              .querySelectorAll<HTMLElement>('[data-edit-row-index]')
+              .forEach((cell) => {
+                const idx = Number(cell.getAttribute('data-edit-row-index'))
+                newOrder.push(idx)
+              })
+          })
+
+          if (newOrder.length !== editRows.value.length) return
+
+          // 按 newOrder 重排 editRows
+          const oldRows = [...editRows.value]
+          editRows.value = newOrder.map((i) => oldRows[i])
+        },
+      })
+      sortableInstances.push(instance)
+    })
+  })
+}
+
+function destroySortable() {
+  sortableInstances.forEach((s) => s.destroy())
+  sortableInstances = []
+}
+
+// activeTab 切换到 freesort 时初始化 sortable
+const activeTab = ref<'type' | 'knowledge' | 'freesort'>('type')
+
+watch(activeTab, (tab) => {
+  if (tab === 'freesort') {
+    nextTick(() => initSortable())
+  } else {
+    destroySortable()
+  }
+})
+
+// editRows 变化时，若在 freesort tab 则重建 sortable（保持绑定最新 DOM）
+watch(
+  () => editRows.value.length,
+  () => {
+    if (activeTab.value === 'freesort') {
+      nextTick(() => initSortable())
+    }
+  },
+)
+
+onBeforeUnmount(() => {
+  destroySortable()
 })
 
 // ── 题卡操作 ────────────────────────────────────────────────────────────────
@@ -261,7 +454,6 @@ function handleDetail(row: EditRow) {
 }
 
 // ── 右栏状态 ────────────────────────────────────────────────────────────────
-const activeTab = ref<'type' | 'knowledge' | 'freesort'>('type')
 const suggestTime = ref<number>(120)
 const showAnswer = ref(false)
 const showExplain = ref(false)
@@ -327,6 +519,7 @@ async function handleSave() {
   }
   saving.value = true
   try {
+    // sort = 拖拽后 editRows 位置 i+1（1-based 连续，拖拽单一数据源保证）
     const questions: UpdatePaperQuestion[] = editRows.value.map((r, i) => ({
       questionId: r.id,
       sectionId: r._sectionId || defaultSectionId.value,
@@ -336,17 +529,25 @@ async function handleSave() {
 
     if (isEditMode.value) {
       // 编辑态：updateExamPaper
-      // TODO[Wave2]: suggestTime 待 BE 扩展 UpdateExamPaperBo 后接入
+      // sections：仅发已有 sectionId 非空的重命名条目（BE v1 不支持新建 section）
+      const sections: UpdatePaperSection[] = []
+      let sortIdx = 0
+      sectionNameMap.value.forEach((name, sectionId) => {
+        sections.push({ sectionId, name, sort: ++sortIdx })
+      })
+
+      // TODO[Wave2b]: suggestTime 待 BE 扩展 UpdateExamPaperBo 后接入
       await updateExamPaper({
         paperId: Number(paperId.value),
         name: paperName.value.trim(),
         questions,
+        ...(sections.length > 0 ? { sections } : {}),
       })
       ElMessage.success('保存成功')
       // 回查看态
       router.push(`/papers/source/${paperId.value}`)
     } else {
-      // 新建态：createExamPaper
+      // 新建态：createExamPaper（不支持 sections，由 BE 自动建默认 section）
       const result = await createExamPaper({
         name: paperName.value.trim(),
         questionIds: editRows.value.map((r) => r.id),
@@ -630,6 +831,7 @@ watch(paperId, async (newId) => {
 
           <!-- 题号块网格 -->
           <div class="number-grid-wrap">
+            <!-- 按题型 / 按知识点 tab（静态展示）-->
             <template v-if="activeTab === 'type' || activeTab === 'knowledge'">
               <div
                 v-for="ng in numberGroups"
@@ -649,30 +851,70 @@ watch(paperId, async (newId) => {
               </div>
             </template>
 
-            <!-- 自由排序 tab：壳（Wave2 接 sortablejs 拖拽）-->
+            <!-- 自由排序 tab：sortablejs 拖拽网格 -->
             <template v-else>
               <div
-                v-for="ng in numberGroups"
-                :key="ng.title"
-                class="number-group"
+                v-for="(group, gIdx) in freesortGroups"
+                :key="group.sectionId"
+                class="number-group freesort-number-group"
               >
+                <!-- 大题分组头 + ✏️ 重命名（仅编辑态且有 sectionId 时可改）-->
                 <div class="number-group-title freesort-group-title">
-                  {{ ng.title }}
+                  <!-- 内联编辑态 -->
+                  <template v-if="editingSectionId === group.sectionId && group.sectionId !== 0">
+                    <el-input
+                      v-model="editingSectionName"
+                      class="rename-input"
+                      size="small"
+                      :maxlength="50"
+                      @keyup.enter="commitRenameSection(group.sectionId)"
+                      @keyup.esc="cancelRenameSection"
+                      @blur="commitRenameSection(group.sectionId)"
+                    />
+                  </template>
+                  <!-- 展示态 -->
+                  <template v-else>
+                    <span class="freesort-group-name">
+                      {{ group.sectionName }}（共{{ group.items.length }}题）
+                    </span>
+                    <!-- ✏️ 仅编辑态可改，新建态无 sectionId -->
+                    <el-tooltip
+                      v-if="isEditMode && group.sectionId !== 0"
+                      content="重命名大题标题"
+                      placement="top"
+                    >
+                      <el-icon
+                        class="rename-trigger"
+                        @click="startRenameSection(group.sectionId)"
+                      >
+                        <Edit />
+                      </el-icon>
+                    </el-tooltip>
+                  </template>
                 </div>
-                <div class="number-grid">
+
+                <!-- 可拖拽题号块容器（sortablejs 挂载点）-->
+                <div
+                  :ref="(el) => setFreesortContainerRef(el as HTMLElement | null, gIdx)"
+                  class="number-grid freesort-grid"
+                  :data-group-idx="gIdx"
+                >
                   <div
-                    v-for="n in ng.nums"
-                    :key="n"
+                    v-for="item in group.items"
+                    :key="item.editRowIndex"
                     class="number-cell freesort-cell"
-                    title="Wave2 拖拽功能上线后可拖拽排序"
+                    :data-edit-row-index="item.editRowIndex"
+                    :title="`第 ${item.globalIndex} 题，拖拽可重新排序`"
                   >
-                    {{ n }}
+                    {{ item.globalIndex }}
                   </div>
                 </div>
               </div>
-              <!-- 添加分类（Wave2 实装，本波占位）-->
+
+              <!-- + 添加分类（BE v1 未实现新建 section，置灰 + TODO 注释）-->
+              <!-- TODO[Wave2b]: BE 支持 sectionId=null 新建 section 后取消 disabled -->
               <el-button class="add-section-btn" size="small" plain disabled>
-                + 添加分类（Wave2）
+                + 添加分类
               </el-button>
             </template>
           </div>
@@ -755,7 +997,7 @@ watch(paperId, async (newId) => {
     </div>
 
     <!-- PaperPreview 弹窗（下载 PDF）
-         PaperPreview 内部自带答案/解析 checkbox，右栏 showAnswer/showExplain 为 Wave2
+         PaperPreview 内部自带答案/解析 checkbox，右栏 showAnswer/showExplain 为 Wave2b
          接入 PaperPreview 新 props 时的预留状态，本波已展示勾选 UI，暂不传入 -->
     <PaperPreview
       :visible="previewVisible"
@@ -1057,14 +1299,6 @@ watch(paperId, async (newId) => {
   display: block;
 }
 
-.q-explain-text {
-  font-size: 13px;
-  line-height: 1.6;
-  color: #4e5969;
-  margin: 0;
-  white-space: pre-wrap;
-}
-
 /* ── 底部工具栏（misikt 风格）── */
 .q-toolbar {
   display: flex;
@@ -1159,13 +1393,65 @@ watch(paperId, async (newId) => {
   gap: 4px;
 }
 
-.freesort-group-title {
-  cursor: default;
+/* ── 自由排序 tab 特有样式 ── */
+.freesort-number-group {
+  /* 保持 number-group 间距一致 */
 }
 
-.edit-icon {
+.freesort-group-title {
+  min-height: 24px;
+}
+
+.freesort-group-name {
+  flex: 1;
   font-size: 12px;
+  font-weight: 600;
+  color: #4e5969;
+}
+
+/* ✏️ 重命名触发图标 */
+.rename-trigger {
+  font-size: 13px;
   color: #86909c;
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 3px;
+  transition: color 0.15s, background 0.15s;
+  flex-shrink: 0;
+}
+
+.rename-trigger:hover {
+  color: #4080ff;
+  background: #f0f5ff;
+}
+
+/* 内联重命名输入框 */
+.rename-input {
+  flex: 1;
+}
+
+:deep(.rename-input .el-input__wrapper) {
+  padding: 2px 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* 拖拽网格容器 */
+.freesort-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 38px; /* 空组可拖入 */
+  padding: 4px;
+  border-radius: 6px;
+  transition: background 0.15s;
+}
+
+.freesort-grid:empty::after {
+  content: '拖拽题目到此处';
+  font-size: 11px;
+  color: #c9cdd4;
+  padding: 6px;
 }
 
 .number-grid {
@@ -1188,6 +1474,7 @@ watch(paperId, async (newId) => {
   cursor: pointer;
   transition: all 0.15s;
   background: #f0f5ff;
+  user-select: none;
 }
 
 .number-cell:hover {
@@ -1195,9 +1482,32 @@ watch(paperId, async (newId) => {
   color: #fff;
 }
 
+/* 自由排序格：可拖，hover 提示 */
 .freesort-cell {
-  cursor: default;
-  opacity: 0.7;
+  cursor: grab;
+}
+
+.freesort-cell:active {
+  cursor: grabbing;
+}
+
+/* sortablejs 拖拽中状态 */
+.freesort-ghost {
+  opacity: 0.4;
+  background: #e8f0ff !important;
+  border-color: #4080ff !important;
+  border-style: dashed !important;
+}
+
+.freesort-chosen {
+  background: #4080ff !important;
+  color: #fff !important;
+  box-shadow: 0 2px 8px rgba(64, 128, 255, 0.4);
+}
+
+.freesort-drag {
+  opacity: 0.9;
+  box-shadow: 0 4px 12px rgba(64, 128, 255, 0.3);
 }
 
 .add-section-btn {
