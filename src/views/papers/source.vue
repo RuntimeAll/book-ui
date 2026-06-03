@@ -192,11 +192,10 @@ function buildEditRowsFromDetail() {
   editPaperName.value = detail.value?.paperName || ''
 }
 
-// 进入编辑态（owner 才可，公共卷按钮已 disabled）——原地切，不跳页
+// PRD-A-007：编辑按钮改指新两栏工作台（不再原地切 source.vue 内联编辑态）
 function enterEdit() {
   if (!detail.value || !isOwner.value) return
-  buildEditRowsFromDetail()
-  mode.value = 'edit'
+  router.push(`/papers/workbench/${paperId.value}`)
 }
 
 function cancelEdit() {
@@ -278,7 +277,7 @@ async function handleSave() {
   }
 }
 
-// 进入编辑态入口（替代原跳页）—— owner 点"编辑试卷"原地切编辑态
+// PRD-A-007：编辑试卷 → 跳新两栏工作台
 function handleEditPaper() {
   enterEdit()
 }

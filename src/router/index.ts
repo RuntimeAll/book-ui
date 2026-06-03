@@ -46,23 +46,33 @@ const router = createRouter({
           name: 'QuestionDetail',
           component: () => import('@/views/question/detail.vue'),
         },
-        // Q 卡 段② — 组卷工作台（新页面，试题栏 → 去组卷 → 这里）
+        // PRD-A-007 — misikt 式两栏组卷工作台（新建态 + 编辑态同页两入口）
+        // 新建态（无 id）：数据源 = useQuestionBasket，动作"创建试卷"
+        // 编辑态（带 id）：加载 paper detail，动作"保存修改"
+        {
+          path: '/papers/workbench',
+          name: 'PapersWorkbench',
+          component: () => import('@/views/papers/workbench.vue'),
+        },
+        {
+          path: '/papers/workbench/:id',
+          name: 'PapersWorkbenchEdit',
+          component: () => import('@/views/papers/workbench.vue'),
+        },
+        // PRD-A-007 路由收敛 — 旧 /question/compose 重定向到新两栏工作台（新建态）
         {
           path: '/question/compose',
-          name: 'QuestionCompose',
-          component: () => import('@/views/question/compose.vue'),
+          redirect: '/papers/workbench',
         },
-        // 组卷工作台（FE-4 真实现，自动组卷草稿）
+        // PRD-A-007 路由收敛 — 旧 /papers/edit 重定向到新两栏工作台（新建态）
         {
           path: '/papers/edit',
-          name: 'PapersEdit',
-          component: () => import('@/views/papers/edit.vue'),
+          redirect: '/papers/workbench',
         },
-        // PRD-A-006 — 编辑已并入 source.vue 双态查看页；旧路由 /papers/edit/:id 重定向到
-        // 查看页编辑态（?edit=1 自动进编辑），兼容工作台/旧链接的编辑入口。editExisting.vue 已废弃删除。
+        // PRD-A-007 路由收敛 — 旧 /papers/edit/:id 重定向到新两栏工作台（编辑态）
         {
           path: '/papers/edit/:id',
-          redirect: (to) => ({ path: `/papers/source/${to.params.id}`, query: { edit: '1' } }),
+          redirect: (to) => ({ path: `/papers/workbench/${to.params.id}` }),
         },
         // 原卷预览页（第十二波）
         {

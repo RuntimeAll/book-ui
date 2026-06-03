@@ -370,3 +370,22 @@ export const getPaperDetail = (paperId: number | string) =>
 // V1 删除：addErrorBasket / removeErrorBasket / reportQuestion 三个 API 函数
 // 原因：错题栏 + 题目报错本卡范围不实现，view 改为 noop + ElMessage warning "功能开发中"。
 // 错题栏体验：localStorage-only（视图层 view-only），不调 BE 端点。
+
+// ── PRD-A-007 T1 换一题（BE 新端点） ────────────────────────────────────────
+
+export interface ReplaceQuestionParams {
+  currentQuestionId: number
+  excludeIds: number[]
+}
+
+/**
+ * 换一题 — 推荐同考点（兜底同题型）、未在本卷的一道题原位替换。
+ * 逻辑：同 subject + 同首考点 + id NOT IN excludeIds → 兜底同 question_type；仍无则返 null。
+ * POST /teacher/question/replace
+ * envelope 由拦截器自动拆，业务拿到的是 QuestionDetail | null。
+ */
+export const replaceQuestion = (params: ReplaceQuestionParams) =>
+  request.post<QuestionDetail | null, QuestionDetail | null>(
+    '/teacher/question/replace',
+    params,
+  )

@@ -1,0 +1,1276 @@
+<script setup lang="ts">
+/**
+ * PRD-A-007 Wave1 — misikt 式两栏组卷工作台
+ *
+ * 入口：
+ *   新建态 /papers/workbench        → 数据源 useQuestionBasket，动作"创建试卷"
+ *   编辑态 /papers/workbench/:id    → 加载 paper detail，动作"保存修改"
+ *
+ * 左主栏（~70%）：试卷标题(行内可改) + 大题分组头 + 题卡列（复用 .source-question-card 骨架）
+ *   每题底部工具栏：分值[- N +] | 解析 toggle | 上移 | 下移 | 删除 | 换一题 | 详情
+ *
+ * 右固定栏（~30%, sticky）：tabs(按题型/按知识点/自由排序) + 题号块网格 +
+ *   继续挑题/清空 + 答题时间[- N +] + 导出选项 + 下载PDF + 保存/创建
+ */
+import { ref, computed, onMounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import {
+  ArrowLeft,
+  Top,
+  Bottom,
+  Delete,
+  InfoFilled,
+  Refresh,
+} from '@element-plus/icons-vue'
+import {
+  getPaperDetail,
+  replaceQuestion,
+  type PaperDetailVo,
+  type PaperSourceQuestion,
+} from '@/api/question/index'
+import {
+  createExamPaper,
+  updateExamPaper,
+  type UpdatePaperQuestion,
+} from '@/api/paper/index'
+import PaperPreview from '@/components/business/PaperPreview/index.vue'
+import { useQuestionBasket } from '@/composables/useQuestionBasket'
+import { useUserStore } from '@/store/user'
+import { getCurrentUser } from '@/api/user'
+
+// ── 路由 ────────────────────────────────────────────────────────────────────
+const route = useRoute()
+const router = useRouter()
+const paperId = computed(() => route.params.id as string | undefined)
+const isEditMode = computed(() => !!paperId.value)
+
+// ── 试题栏（新建态数据源）────────────────────────────────────────────────────
+const basket = useQuestionBasket()
+
+// ── 用户 / owner 判定 ────────────────────────────────────────────────────────
+const userStore = useUserStore()
+const isOwner = computed(() => {
+  if (!isEditMode.value) return true // 新建态 = 自己创建，不需 owner 校验
+  const uid = userStore.userInfo?.id
+  const createBy = paperDetail.value?.createBy
+  if (uid == null || createBy == null) return false
+  return String(createBy) === String(uid)
+})
+
+// ── 试卷详情（编辑态）────────────────────────────────────────────────────────
+const paperDetail = ref<PaperDetailVo | null>(null)
+const detailLoading = ref(false)
+
+async function loadPaperDetail() {
+  if (!paperId.value) return
+  detailLoading.value = true
+  paperDetail.value = null
+  try {
+    const res = await getPaperDetail(paperId.value)
+    if (res && (res as { paperId?: unknown }).paperId) {
+      paperDetail.value = res as PaperDetailVo
+      buildEditRows()
+    } else {
+      ElMessage.warning('试卷数据加载失败')
+    }
+  } catch (e) {
+    console.warn('[workbench] loadPaperDetail failed', e)
+    ElMessage.warning('试卷数据加载失败（接口需登录态）')
+  } finally {
+    detailLoading.value = false
+  }
+}
+
+// ── EditRow（统一编辑行，同时承载新建/编辑两态）────────────────────────────
+interface EditRow extends PaperSourceQuestion {
+  _sectionId: number
+  _score: number
+  _showExplain: boolean // 解析 toggle（本地视图态）
+  _replacing: boolean   // 换一题 loading
+}
+
+const editRows = ref<EditRow[]>([])
+const paperName = ref('未命名草稿')
+const defaultSectionId = ref<number>(0)
+const saving = ref(false)
+
+// 全卷已有题 ids（换一题 excludeIds 用）
+const paperQuestionIds = computed<number[]>(() => editRows.value.map((r) => r.id))
+
+const totalScore = computed<number>(() =>
+  editRows.value.reduce((sum, r) => sum + (Number(r._score) || 0), 0),
+)
+
+// 新建态：从 basket 构建 editRows
+function buildEditRowsFromBasket() {
+  editRows.value = basket.items.value.map((q) => ({
+    ...(q as PaperSourceQuestion),
+    _sectionId: 0,
+    _score: Number(q.score ?? 0),
+    _showExplain: false,
+    _replacing: false,
+  }))
+}
+
+// 编辑态：从 detail 构建 editRows
+function buildEditRows() {
+  const sections = paperDetail.value?.sections ?? []
+  if (sections.length > 0) defaultSectionId.value = sections[0].sectionId
+  const rows: EditRow[] = []
+  sections.forEach((sec) => {
+    ;(sec.questions || []).forEach((q) => {
+      rows.push({
+        ...q,
+        _sectionId: sec.sectionId,
+        _score: Number(q.pqScore ?? q.score ?? 0),
+        _showExplain: false,
+        _replacing: false,
+      })
+    })
+  })
+  rows.sort((a, b) => Number(a.sortNum ?? a.sort ?? 0) - Number(b.sortNum ?? b.sort ?? 0))
+  editRows.value = rows
+  paperName.value = paperDetail.value?.paperName || ''
+}
+
+// ── 大题分组（按题型分组，全卷连续序号）──────────────────────────────────────
+interface SectionGroup {
+  title: string
+  rows: { row: EditRow; globalIndex: number; editRowIndex: number }[]
+}
+
+const CN_NUM = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十']
+function cnLabel(i: number) {
+  return CN_NUM[i] ?? String(i + 1)
+}
+
+function getQuestionTypeLabel(type: number): string {
+  const map: Record<number, string> = { 1: '选择题', 4: '填空题', 5: '简答题', 2: '判断题', 3: '应用题' }
+  return map[type] ?? `题型${type}`
+}
+
+function getQuestionTypeTag(type: number): string {
+  const map: Record<number, string> = { 1: 'primary', 4: 'success', 5: 'warning', 2: 'info', 3: 'danger' }
+  return map[type] ?? 'info'
+}
+
+// 按题型分组，全局序号按 editRows 原始顺序（第i题 = 序号i+1，跨分组连续）
+const sectionGroups = computed<SectionGroup[]>(() => {
+  // 先建 type → 题目列表 的有序 map（保持 editRows 内遇到题型的顺序）
+  const typeOrder: number[] = []
+  const typeMap = new Map<number, { row: EditRow; globalIndex: number; editRowIndex: number }[]>()
+
+  editRows.value.forEach((r, i) => {
+    const t = r.questionType
+    if (!typeMap.has(t)) {
+      typeOrder.push(t)
+      typeMap.set(t, [])
+    }
+    typeMap.get(t)!.push({ row: r, globalIndex: i + 1, editRowIndex: i })
+  })
+
+  return typeOrder.map((type) => ({
+    title: getQuestionTypeLabel(type),
+    rows: typeMap.get(type)!,
+  }))
+})
+
+// 右栏题号网格（按题型分组）
+interface NumberGroup {
+  title: string
+  nums: number[]
+}
+
+const numberGroups = computed<NumberGroup[]>(() => {
+  return sectionGroups.value.map((g, gIdx) => ({
+    title: `${cnLabel(gIdx)}、${g.title}（共${g.rows.length}题）`,
+    nums: g.rows.map((r) => r.globalIndex),
+  }))
+})
+
+// ── 题卡操作 ────────────────────────────────────────────────────────────────
+function moveUp(idx: number) {
+  if (idx <= 0) return
+  const arr = [...editRows.value]
+  ;[arr[idx - 1], arr[idx]] = [arr[idx], arr[idx - 1]]
+  editRows.value = arr
+}
+
+function moveDown(idx: number) {
+  if (idx >= editRows.value.length - 1) return
+  const arr = [...editRows.value]
+  ;[arr[idx], arr[idx + 1]] = [arr[idx + 1], arr[idx]]
+  editRows.value = arr
+}
+
+function deleteRow(idx: number) {
+  const arr = [...editRows.value]
+  arr.splice(idx, 1)
+  editRows.value = arr
+  ElMessage.success('已移除该题')
+}
+
+function toggleExplain(row: EditRow) {
+  row._showExplain = !row._showExplain
+}
+
+// 换一题
+async function handleReplace(row: EditRow, idx: number) {
+  if (row._replacing) return
+  row._replacing = true
+  try {
+    const result = await replaceQuestion({
+      currentQuestionId: row.id,
+      excludeIds: paperQuestionIds.value,
+    })
+    if (!result) {
+      ElMessage.info('暂无可替换的同类题')
+      return
+    }
+    const newRow: EditRow = {
+      ...(result as PaperSourceQuestion),
+      _sectionId: row._sectionId,
+      _score: Number(result.score ?? 0),
+      _showExplain: false,
+      _replacing: false,
+    }
+    const arr = [...editRows.value]
+    arr.splice(idx, 1, newRow)
+    editRows.value = arr
+    ElMessage.success('已替换为同类题')
+  } catch (e) {
+    console.warn('[workbench] replaceQuestion failed', e)
+    ElMessage.error('换一题失败，请稍后重试')
+  } finally {
+    row._replacing = false
+  }
+}
+
+function handleDetail(row: EditRow) {
+  // 存 cache 供详情页兜底
+  try {
+    const cacheKey = 'book-ui:question-cache-by-id'
+    const existing = JSON.parse(localStorage.getItem(cacheKey) || '{}')
+    existing[String(row.id)] = row
+    localStorage.setItem(cacheKey, JSON.stringify(existing))
+  } catch (e) {
+    console.warn('[workbench] detail cache write failed', e)
+  }
+  router.push(`/question/detail/${row.id}`)
+}
+
+// ── 右栏状态 ────────────────────────────────────────────────────────────────
+const activeTab = ref<'type' | 'knowledge' | 'freesort'>('type')
+const suggestTime = ref<number>(120)
+const showAnswer = ref(false)
+const showExplain = ref(false)
+const previewVisible = ref(false)
+
+// 编辑态加载后同步 suggestTime
+watch(paperDetail, (d) => {
+  if (d?.suggestTime) suggestTime.value = d.suggestTime
+})
+
+function handleTimeDecrease() {
+  if (suggestTime.value > 0) suggestTime.value -= 5
+}
+
+function handleTimeIncrease() {
+  suggestTime.value += 5
+}
+
+// 继续挑题 → 跳题库
+function handleContinuePick() {
+  router.push('/question/index')
+}
+
+// 清空试题栏（仅新建态有意义）
+async function handleClearBasket() {
+  if (editRows.value.length === 0) return
+  try {
+    await ElMessageBox.confirm('确认清空当前所有题目？', '清空确认', {
+      confirmButtonText: '确定清空',
+      cancelButtonText: '取消',
+      type: 'warning',
+    })
+    editRows.value = []
+    if (!isEditMode.value) {
+      await basket.clear()
+    }
+  } catch {
+    // 取消
+  }
+}
+
+// 导出 PDF
+function handleExportPdf() {
+  if (editRows.value.length === 0) {
+    ElMessage.warning('试卷暂无题目，无法导出')
+    return
+  }
+  previewVisible.value = true
+}
+
+const exportQuestionIds = computed<number[]>(() => editRows.value.map((r) => r.id))
+const exportPaperName = computed(() => paperName.value.trim() || '未命名试卷')
+
+// ── 保存 / 创建 ──────────────────────────────────────────────────────────────
+async function handleSave() {
+  if (editRows.value.length === 0) {
+    ElMessage.warning('试卷至少需要 1 道题')
+    return
+  }
+  if (!paperName.value.trim()) {
+    ElMessage.warning('请输入试卷名称')
+    return
+  }
+  saving.value = true
+  try {
+    const questions: UpdatePaperQuestion[] = editRows.value.map((r, i) => ({
+      questionId: r.id,
+      sectionId: r._sectionId || defaultSectionId.value,
+      sort: i + 1,
+      score: Number(r._score) || 0,
+    }))
+
+    if (isEditMode.value) {
+      // 编辑态：updateExamPaper
+      // TODO[Wave2]: suggestTime 待 BE 扩展 UpdateExamPaperBo 后接入
+      await updateExamPaper({
+        paperId: Number(paperId.value),
+        name: paperName.value.trim(),
+        questions,
+      })
+      ElMessage.success('保存成功')
+      // 回查看态
+      router.push(`/papers/source/${paperId.value}`)
+    } else {
+      // 新建态：createExamPaper
+      const result = await createExamPaper({
+        name: paperName.value.trim(),
+        questionIds: editRows.value.map((r) => r.id),
+      })
+      if (!result || !result.paperId) {
+        ElMessage.error('创建失败：服务器未返回试卷 ID')
+        return
+      }
+      ElMessage.success(`已创建试卷《${paperName.value.trim()}》— ${result.questionCount} 题`)
+      await basket.clear()
+      router.push(`/papers/source/${result.paperId}`)
+    }
+  } catch (e: unknown) {
+    const msg = (e as { message?: string })?.message || '操作失败，请稍后重试'
+    ElMessage.error(`操作失败：${msg}`)
+    console.warn('[workbench] save/create failed', e)
+  } finally {
+    saving.value = false
+  }
+}
+
+function goBack() {
+  router.back()
+}
+
+// ── 初始化 ───────────────────────────────────────────────────────────────────
+onMounted(async () => {
+  if (!userStore.userInfo) {
+    try {
+      const info = await getCurrentUser()
+      if (info) userStore.setUserInfo(info)
+    } catch (e) {
+      console.warn('[workbench] getCurrentUser 兜底失败', e)
+    }
+  }
+
+  if (isEditMode.value) {
+    await loadPaperDetail()
+  } else {
+    // 新建态：从 basket 同步
+    buildEditRowsFromBasket()
+    // basket 变化时同步（SPA 内 basket 可能在题库页更新）
+    watch(
+      () => basket.items.value,
+      () => {
+        if (!isEditMode.value) buildEditRowsFromBasket()
+      },
+      { deep: true },
+    )
+  }
+})
+
+// SPA 内路由 id 变化时重新加载
+watch(paperId, async (newId) => {
+  if (newId) {
+    await loadPaperDetail()
+  } else {
+    buildEditRowsFromBasket()
+  }
+})
+</script>
+
+<template>
+  <div class="workbench-page">
+    <!-- 顶部导航栏 -->
+    <div class="workbench-topbar">
+      <el-button link class="back-btn" @click="goBack">
+        <el-icon><ArrowLeft /></el-icon>
+        <span>返回</span>
+      </el-button>
+
+      <!-- 试卷标题行内编辑 -->
+      <el-input
+        v-model="paperName"
+        placeholder="请输入试卷名称"
+        class="title-input"
+        size="default"
+        :maxlength="200"
+      />
+
+      <!-- 右侧统计 pill -->
+      <div class="topbar-stat">
+        <span class="stat-num">{{ editRows.length }}</span><span class="stat-unit">题</span>
+        <span class="stat-sep">·</span>
+        <span class="stat-num total">{{ totalScore }}</span><span class="stat-unit">分</span>
+      </div>
+    </div>
+
+    <!-- 两栏主体 -->
+    <div class="workbench-body">
+      <!-- ══ 左主栏 ══ -->
+      <div class="workbench-left">
+        <!-- loading -->
+        <div v-if="detailLoading" class="wb-loading">
+          <el-skeleton :rows="10" animated style="max-width: 100%;" />
+        </div>
+
+        <!-- 空态 -->
+        <div v-else-if="editRows.length === 0" class="wb-empty">
+          <el-empty description="试卷暂无题目，请从题库挑题或使用试题栏添加">
+            <el-button type="primary" @click="handleContinuePick">去题库选题</el-button>
+          </el-empty>
+        </div>
+
+        <!-- 大题分组 + 题卡列 -->
+        <template v-else>
+          <section
+            v-for="(group, gIdx) in sectionGroups"
+            :key="gIdx"
+            class="wb-section"
+          >
+            <!-- 大题分组头（左侧蓝条 misikt 风格）-->
+            <div class="wb-section-title">
+              <span class="section-label">{{ cnLabel(gIdx) }}、{{ group.title }}</span>
+              <span class="section-count">（共 {{ group.rows.length }} 题）</span>
+            </div>
+
+            <!-- 题卡（复用 .source-question-card 骨架 — 视觉铁则）-->
+            <div
+              v-for="{ row, globalIndex, editRowIndex } in group.rows"
+              :key="row.id"
+              class="source-question-card workbench-card"
+            >
+              <!-- 顶部 meta：左(题型标签/难度/考点/来源) / 右(连续序号圆圈) -->
+              <div class="q-meta-top">
+                <div class="q-meta-top-left">
+                  <span
+                    class="q-type-tag"
+                    :class="`q-type--${getQuestionTypeTag(row.questionType)}`"
+                  >
+                    {{ getQuestionTypeLabel(row.questionType) }}
+                  </span>
+                  <span class="meta-label">难度:</span>
+                  <el-rate
+                    :model-value="row.difficult ?? 0"
+                    :max="4"
+                    disabled
+                    class="meta-rate"
+                  />
+                  <template v-if="row.questionKnowledges && row.questionKnowledges.length > 0">
+                    <span class="meta-label">考点:</span>
+                    <el-tag type="primary" size="small" class="primary-knowledge-tag">
+                      {{ row.questionKnowledges[0].knowledgeName || row.questionKnowledges[0].knowledgeId }}
+                    </el-tag>
+                  </template>
+                  <span v-if="row.examPaperName" class="source-text">
+                    来源: {{ row.examPaperName }}{{ row.examYear ? ` · ${row.examYear}年` : '' }}
+                  </span>
+                </div>
+                <!-- 全卷连续序号 -->
+                <div class="q-global-num">{{ globalIndex }}</div>
+              </div>
+
+              <!-- 题干区 -->
+              <div class="q-stem-area">
+                <img
+                  v-if="row.stemImg"
+                  :src="row.stemImg"
+                  class="q-stem-img"
+                  alt="题干"
+                  referrerpolicy="no-referrer"
+                  loading="lazy"
+                  @error="(e: Event) => ((e.target as HTMLImageElement).style.display = 'none')"
+                />
+                <p v-else-if="row.stemText" class="q-stem-text">{{ row.stemText }}</p>
+                <p v-else class="q-stem-placeholder">（题目 ID: {{ row.id }}）</p>
+              </div>
+
+              <!-- 解析区（toggle 显示，图模式 — 与 PaperPreview 一致）-->
+              <div v-if="row._showExplain" class="q-explain-area">
+                <div class="explain-label">解析：</div>
+                <img
+                  v-if="row.explainImg"
+                  :src="row.explainImg"
+                  class="q-explain-img"
+                  alt="解析"
+                  referrerpolicy="no-referrer"
+                  loading="lazy"
+                />
+                <p v-else class="q-stem-placeholder">暂无解析图</p>
+              </div>
+
+              <!-- 底部工具栏（misikt 风格：分值 | 解析 | 上移 | 下移 | 删除 | 换一题 | 详情）-->
+              <div class="q-toolbar">
+                <!-- 分值 -->
+                <div class="toolbar-score">
+                  <span class="toolbar-label">分值</span>
+                  <el-input-number
+                    v-model="row._score"
+                    :min="0"
+                    :max="100"
+                    :step="1"
+                    size="small"
+                    controls-position="right"
+                    style="width: 100px;"
+                  />
+                </div>
+                <div class="toolbar-divider" />
+                <!-- 解析 toggle -->
+                <el-button
+                  size="small"
+                  link
+                  :type="row._showExplain ? 'primary' : 'default'"
+                  class="toolbar-btn"
+                  @click="toggleExplain(row)"
+                >
+                  解析
+                </el-button>
+                <div class="toolbar-divider" />
+                <!-- 上移 -->
+                <el-button
+                  size="small"
+                  link
+                  class="toolbar-btn"
+                  :disabled="editRowIndex === 0"
+                  @click="moveUp(editRowIndex)"
+                >
+                  <el-icon><Top /></el-icon>
+                  上移
+                </el-button>
+                <!-- 下移 -->
+                <el-button
+                  size="small"
+                  link
+                  class="toolbar-btn"
+                  :disabled="editRowIndex === editRows.length - 1"
+                  @click="moveDown(editRowIndex)"
+                >
+                  <el-icon><Bottom /></el-icon>
+                  下移
+                </el-button>
+                <!-- 删除 -->
+                <el-button
+                  size="small"
+                  link
+                  type="danger"
+                  class="toolbar-btn"
+                  @click="deleteRow(editRowIndex)"
+                >
+                  <el-icon><Delete /></el-icon>
+                  删除
+                </el-button>
+                <div class="toolbar-divider" />
+                <!-- 换一题 -->
+                <el-button
+                  size="small"
+                  link
+                  class="toolbar-btn"
+                  :loading="row._replacing"
+                  @click="handleReplace(row, editRowIndex)"
+                >
+                  <el-icon v-if="!row._replacing"><Refresh /></el-icon>
+                  换一题
+                </el-button>
+                <!-- 详情 -->
+                <el-button
+                  size="small"
+                  link
+                  type="primary"
+                  class="toolbar-btn"
+                  @click="handleDetail(row)"
+                >
+                  <el-icon><InfoFilled /></el-icon>
+                  详情
+                </el-button>
+              </div>
+            </div>
+          </section>
+        </template>
+      </div>
+
+      <!-- ══ 右固定栏（sticky）══ -->
+      <div class="workbench-right">
+        <div class="right-panel">
+          <!-- 分组 tabs（按题型 / 按知识点 / 自由排序）-->
+          <el-tabs v-model="activeTab" class="right-tabs">
+            <el-tab-pane label="按题型" name="type" />
+            <el-tab-pane label="按知识点" name="knowledge" />
+            <el-tab-pane label="自由排序" name="freesort" />
+          </el-tabs>
+
+          <!-- 题号块网格 -->
+          <div class="number-grid-wrap">
+            <template v-if="activeTab === 'type' || activeTab === 'knowledge'">
+              <div
+                v-for="ng in numberGroups"
+                :key="ng.title"
+                class="number-group"
+              >
+                <div class="number-group-title">{{ ng.title }}</div>
+                <div class="number-grid">
+                  <div
+                    v-for="n in ng.nums"
+                    :key="n"
+                    class="number-cell"
+                  >
+                    {{ n }}
+                  </div>
+                </div>
+              </div>
+            </template>
+
+            <!-- 自由排序 tab：壳（Wave2 接 sortablejs 拖拽）-->
+            <template v-else>
+              <div
+                v-for="ng in numberGroups"
+                :key="ng.title"
+                class="number-group"
+              >
+                <div class="number-group-title freesort-group-title">
+                  {{ ng.title }}
+                </div>
+                <div class="number-grid">
+                  <div
+                    v-for="n in ng.nums"
+                    :key="n"
+                    class="number-cell freesort-cell"
+                    title="Wave2 拖拽功能上线后可拖拽排序"
+                  >
+                    {{ n }}
+                  </div>
+                </div>
+              </div>
+              <!-- 添加分类（Wave2 实装，本波占位）-->
+              <el-button class="add-section-btn" size="small" plain disabled>
+                + 添加分类（Wave2）
+              </el-button>
+            </template>
+          </div>
+
+          <el-divider style="margin: 12px 0;" />
+
+          <!-- 继续挑题 / 清空试题 -->
+          <div class="right-action-row">
+            <el-button class="continue-btn" size="small" @click="handleContinuePick">
+              &lt; 继续挑题
+            </el-button>
+            <el-button class="clear-btn" size="small" type="danger" plain @click="handleClearBasket">
+              清空试题
+            </el-button>
+          </div>
+
+          <el-divider style="margin: 12px 0;" />
+
+          <!-- 答题时间 -->
+          <div class="right-section">
+            <div class="right-section-label">答题时间</div>
+            <div class="time-ctrl">
+              <el-button size="small" circle @click="handleTimeDecrease">−</el-button>
+              <span class="time-value">{{ suggestTime }}</span>
+              <el-button size="small" circle @click="handleTimeIncrease">+</el-button>
+              <span class="time-unit">分钟</span>
+            </div>
+          </div>
+
+          <!-- 导出选项 -->
+          <div class="right-section">
+            <div class="right-section-label">导出选项</div>
+            <div class="export-options">
+              <el-checkbox v-model="showAnswer">包含答案</el-checkbox>
+              <el-checkbox v-model="showExplain">包含解析</el-checkbox>
+            </div>
+          </div>
+
+          <el-divider style="margin: 12px 0;" />
+
+          <!-- 下载 PDF -->
+          <el-button
+            class="action-btn"
+            @click="handleExportPdf"
+            :disabled="editRows.length === 0"
+          >
+            下载 PDF
+          </el-button>
+
+          <!-- 保存修改 / 创建试卷 -->
+          <el-button
+            v-if="isEditMode"
+            class="action-btn primary-btn"
+            type="primary"
+            :loading="saving"
+            :disabled="!isOwner"
+            @click="handleSave"
+          >
+            <el-tooltip
+              v-if="!isOwner"
+              content="公共试卷不可编辑"
+              placement="left"
+            >
+              <span>保存修改</span>
+            </el-tooltip>
+            <span v-else>保存修改</span>
+          </el-button>
+          <el-button
+            v-else
+            class="action-btn create-btn"
+            type="success"
+            :loading="saving"
+            :disabled="editRows.length === 0"
+            @click="handleSave"
+          >
+            创建试卷
+          </el-button>
+        </div>
+      </div>
+    </div>
+
+    <!-- PaperPreview 弹窗（下载 PDF）
+         PaperPreview 内部自带答案/解析 checkbox，右栏 showAnswer/showExplain 为 Wave2
+         接入 PaperPreview 新 props 时的预留状态，本波已展示勾选 UI，暂不传入 -->
+    <PaperPreview
+      :visible="previewVisible"
+      :paper-name="exportPaperName"
+      :ids="exportQuestionIds"
+      @update:visible="previewVisible = $event"
+    />
+  </div>
+</template>
+
+<style scoped>
+/* ── 整页布局 ── */
+.workbench-page {
+  min-height: 100vh;
+  background: #f0f2f5;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── 顶部导航栏 ── */
+.workbench-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 24px;
+  background: #fff;
+  border-bottom: 1px solid #f2f3f5;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.back-btn {
+  color: #4e5969;
+  font-size: 14px;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.back-btn:hover {
+  color: #4080ff;
+}
+
+.title-input {
+  flex: 1;
+  max-width: 500px;
+}
+
+.title-input :deep(.el-input__inner) {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.topbar-stat {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+  background: #f8f9ff;
+  border: 1px solid #e8f0ff;
+  border-radius: 8px;
+  padding: 6px 14px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.stat-num {
+  font-size: 18px;
+  font-weight: 700;
+  color: #1d2129;
+}
+
+.stat-num.total {
+  color: #4080ff;
+}
+
+.stat-unit {
+  font-size: 12px;
+  color: #86909c;
+}
+
+.stat-sep {
+  margin: 0 6px;
+  color: #c9cdd4;
+}
+
+/* ── 两栏主体 ── */
+.workbench-body {
+  display: flex;
+  gap: 0;
+  flex: 1;
+  align-items: flex-start;
+}
+
+/* ── 左主栏 ── */
+.workbench-left {
+  flex: 1;
+  min-width: 0;
+  padding: 16px 20px;
+}
+
+.wb-loading,
+.wb-empty {
+  display: flex;
+  justify-content: center;
+  padding: 40px 0;
+}
+
+/* ── 大题分组 ── */
+.wb-section {
+  margin-bottom: 18px;
+}
+
+.wb-section-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #1d2129;
+  margin: 0 0 10px;
+  padding: 10px 14px;
+  background: #fff;
+  border-left: 4px solid #4080ff;
+  border-radius: 4px;
+  border: 1px solid #f2f3f5;
+  border-left-width: 4px;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.section-label {
+  font-weight: 700;
+}
+
+.section-count {
+  font-size: 12px;
+  font-weight: 400;
+  color: #86909c;
+}
+
+/* ── 题目卡片（复用 source.vue .source-question-card 骨架）── */
+.source-question-card {
+  background: #fff;
+  border-radius: 10px;
+  border: 1px solid #f2f3f5;
+  padding: 16px 20px;
+  margin-bottom: 10px;
+  transition: all 0.2s;
+}
+
+.source-question-card:hover {
+  box-shadow: 0 4px 16px rgba(64, 128, 255, 0.1);
+  border-color: #d0e2ff;
+}
+
+/* workbench-card 特有：底部工具栏需要更多 padding 空间 */
+.workbench-card {
+  padding-bottom: 0;
+}
+
+/* ── 顶部 meta 行 ── */
+.q-meta-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #f7f8fa;
+}
+
+.q-meta-top-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.meta-label {
+  font-size: 12px;
+  color: #86909c;
+  font-weight: 500;
+}
+
+.meta-rate {
+  height: 18px;
+}
+
+:deep(.meta-rate .el-rate__item) {
+  font-size: 15px;
+}
+
+.primary-knowledge-tag {
+  font-size: 12px;
+}
+
+.source-text {
+  font-size: 12px;
+  color: #86909c;
+}
+
+/* 全卷连续序号圆圈 */
+.q-global-num {
+  width: 28px;
+  height: 28px;
+  background: linear-gradient(135deg, #4080ff, #3370e8);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* 题型标签 */
+.q-type-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.q-type--primary {
+  background: #e8f0ff;
+  color: #3564d0;
+}
+
+.q-type--success {
+  background: #e8fff0;
+  color: #0d7a4a;
+}
+
+.q-type--warning {
+  background: #fff7e6;
+  color: #b45309;
+}
+
+.q-type--info {
+  background: #f0f0f0;
+  color: #6b7280;
+}
+
+.q-type--danger {
+  background: #fff0f0;
+  color: #d32f2f;
+}
+
+/* ── 题干区 ── */
+.q-stem-area {
+  min-height: 60px;
+  margin-bottom: 10px;
+}
+
+.q-stem-img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+.q-stem-text {
+  font-size: 14px;
+  line-height: 1.7;
+  color: #1d2129;
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.q-stem-placeholder {
+  font-size: 13px;
+  color: #c9cdd4;
+  margin: 0;
+}
+
+/* ── 解析区 ── */
+.q-explain-area {
+  background: #f8fffe;
+  border-left: 3px solid #34c38f;
+  border-radius: 0 6px 6px 0;
+  padding: 10px 14px;
+  margin-bottom: 10px;
+}
+
+.explain-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #0d7a4a;
+  margin-bottom: 6px;
+}
+
+.q-explain-img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+.q-explain-text {
+  font-size: 13px;
+  line-height: 1.6;
+  color: #4e5969;
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+/* ── 底部工具栏（misikt 风格）── */
+.q-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 0 12px;
+  border-top: 1px solid #f7f8fa;
+  flex-wrap: wrap;
+}
+
+.toolbar-score {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.toolbar-label {
+  font-size: 12px;
+  color: #86909c;
+}
+
+.toolbar-divider {
+  width: 1px;
+  height: 16px;
+  background: #e4e7ed;
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+
+.toolbar-btn {
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 6px;
+  height: 28px;
+  color: #4e5969;
+}
+
+.toolbar-btn:hover {
+  color: #4080ff;
+}
+
+/* ── 右固定栏 ── */
+.workbench-right {
+  width: 300px;
+  flex-shrink: 0;
+  position: sticky;
+  top: 57px; /* topbar 高度 */
+  max-height: calc(100vh - 57px);
+  overflow-y: auto;
+  padding: 12px 12px 12px 0;
+}
+
+.right-panel {
+  background: #fff;
+  border-radius: 10px;
+  border: 1px solid #f2f3f5;
+  padding: 14px 16px;
+}
+
+/* tabs */
+.right-tabs {
+  margin-bottom: 0;
+}
+
+:deep(.right-tabs .el-tabs__header) {
+  margin-bottom: 10px;
+}
+
+:deep(.right-tabs .el-tabs__item) {
+  font-size: 13px;
+  padding: 0 10px;
+}
+
+/* 题号分组 */
+.number-grid-wrap {
+  min-height: 80px;
+}
+
+.number-group {
+  margin-bottom: 12px;
+}
+
+.number-group-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #4e5969;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.freesort-group-title {
+  cursor: default;
+}
+
+.edit-icon {
+  font-size: 12px;
+  color: #86909c;
+}
+
+.number-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.number-cell {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  border: 1px solid #4080ff;
+  color: #4080ff;
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s;
+  background: #f0f5ff;
+}
+
+.number-cell:hover {
+  background: #4080ff;
+  color: #fff;
+}
+
+.freesort-cell {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.add-section-btn {
+  width: 100%;
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+/* 操作行 */
+.right-action-row {
+  display: flex;
+  gap: 8px;
+}
+
+.continue-btn,
+.clear-btn {
+  flex: 1;
+  font-size: 12px;
+}
+
+/* 右栏 section */
+.right-section {
+  margin-bottom: 14px;
+}
+
+.right-section-label {
+  font-size: 12px;
+  color: #86909c;
+  margin-bottom: 8px;
+  font-weight: 500;
+}
+
+/* 答题时间控制 */
+.time-ctrl {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.time-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: #1d2129;
+  min-width: 48px;
+  text-align: center;
+}
+
+.time-unit {
+  font-size: 13px;
+  color: #86909c;
+}
+
+/* 导出选项 */
+.export-options {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* 动作按钮 */
+.action-btn {
+  width: 100%;
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+
+.primary-btn {
+  background: #4080ff;
+  border-color: #4080ff;
+}
+
+.create-btn {
+  background: #34c38f;
+  border-color: #34c38f;
+}
+</style>
