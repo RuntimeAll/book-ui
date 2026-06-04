@@ -174,10 +174,10 @@ async function handleCreateFolder() {
       </div>
     </div>
 
-    <!-- 底部：+ 新建收藏夹（占位，不实现）-->
+    <!-- 底部：+ 新建收藏夹（已实现：ElMessageBox.prompt → createFolder）-->
     <template #footer>
       <div class="drawer-footer">
-        <el-button class="new-folder-btn" @click="handleCreateFolder">
+        <el-button type="primary" plain class="new-folder-btn" @click="handleCreateFolder">
           + 新建收藏夹
         </el-button>
       </div>
@@ -293,10 +293,10 @@ async function handleCreateFolder() {
   border-top: 1px solid #f2f3f5;
 }
 
+/* 正常可点蓝色虚线按钮（用户 2026-06-05「别灰度」：去掉禁用态灰，本就是已实现的可点功能）*/
 .new-folder-btn {
   width: 100%;
   border-style: dashed;
-  color: #c9cdd4;
-  border-color: #e5e6eb;
+  font-weight: 500;
 }
 </style>

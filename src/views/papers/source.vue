@@ -1,11 +1,10 @@
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, Check, ShoppingCart, Edit, Star, InfoFilled, Download, Top, Bottom, Delete, Plus, DocumentChecked, Close } from '@element-plus/icons-vue'
 import {
   getPaperDetail,
-  addFavorite,
   removeFavorite,
   type PaperDetailVo,
   type PaperSectionVo,
@@ -17,6 +16,7 @@ import FreeTagList from '@/components/business/FreeTagList/index.vue'
 import PaperPreview from '@/components/business/PaperPreview/index.vue'
 import QuestionCard from '@/components/business/QuestionCard/index.vue'
 import SketchPad from '@/components/business/SketchPad/index.vue'
+import FavoriteFolderDrawer from '@/components/FavoriteFolderDrawer/index.vue'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
 import { useUserStore } from '@/store/user'
 import { getCurrentUser } from '@/api/user'
@@ -145,30 +145,44 @@ async function handleBasketToggle(q: PaperSourceQuestion) {
 
 // ── 草稿纸 ──────────────────────────────────────────────────
 const sketchVisible = ref(false)
-
-// ── 草稿 / 收藏 placeholder（misikt 风格题块顶部右侧）──
 function handleDraft() {
   sketchVisible.value = true
 }
-// 收藏（用户 2026-06-04 拍板实现）：toggle addFavorite/removeFavorite；source 卷题无 isFavorite 字段，
-// 用本地 Set 记录本次会话收藏态（刷新丢失可接受 — 详情页有持久收藏态）。
-const favoritedIds = reactive(new Set<number>())
-async function handleFavorite(q: PaperSourceQuestion) {
-  const id = q.id
-  try {
-    if (favoritedIds.has(id)) {
-      await removeFavorite(id)
-      favoritedIds.delete(id)
-      ElMessage.success('已取消收藏')
-    } else {
-      await addFavorite(id)
-      favoritedIds.add(id)
-      ElMessage.success('已收藏')
+
+// ── 收藏（用户 2026-06-05 重修：对齐题库范式，走收藏目录抽屉 + 真态 isFavorite）──
+// source 页题目现已带后端 isFavorite（PaperDetailServiceImpl LEFT JOIN biz_question_favorite），
+// 故与题库一致：未收藏→弹收藏目录抽屉(addFavorite 选夹)，已收藏→直接 removeFavorite。星标反映真态、可持久。
+const favDrawerVisible = ref(false)
+const favDrawerQuestionId = ref<number>(0)
+
+// 在 detail.sections[].questions[] 里按 id 定位题对象并 patch isFavorite（Vue3 深响应，直接改触发重渲染）
+function patchFavorite(id: number, val: boolean) {
+  for (const sec of detail.value?.sections ?? []) {
+    const q = (sec.questions || []).find((x) => x.id === id)
+    if (q) {
+      q.isFavorite = val
+      return
     }
-  } catch (e) {
-    console.warn('[source] favorite failed', e)
-    ElMessage.warning('收藏操作失败')
   }
+}
+
+function handleFavorite(q: PaperSourceQuestion) {
+  if (q.isFavorite) {
+    // 已收藏 → 直接取消（乐观更新 + 异步调 API）
+    patchFavorite(q.id, false)
+    ElMessage.success('已取消收藏')
+    removeFavorite(q.id).catch((e) => {
+      console.warn('[source] removeFavorite failed (local state already updated)', e)
+    })
+  } else {
+    // 未收藏 → 弹收藏目录抽屉（与题库一致）
+    favDrawerQuestionId.value = q.id
+    favDrawerVisible.value = true
+  }
+}
+
+function handleFavDrawerSuccess(_folderId: number | string | undefined) {
+  if (favDrawerQuestionId.value) patchFavorite(favDrawerQuestionId.value, true)
 }
 
 function goBack() {
@@ -481,10 +495,10 @@ watch(paperId, async () => {
                   size="small"
                   link
                   class="action-icon-btn"
-                  :class="{ 'is-fav': favoritedIds.has(q.id) }"
+                  :class="{ 'is-fav': q.isFavorite }"
                   @click="handleFavorite(q)"
                 >
-                  <el-icon><Star /></el-icon>
+                  <el-icon><Star /></el-icon>{{ q.isFavorite ? '已收藏' : '收藏' }}
                 </el-button>
                 <el-button
                   size="small"
@@ -691,7 +705,14 @@ watch(paperId, async () => {
       </template>
     </el-dialog>
 
-    <!-- 草稿纸 -->
+    <!-- 收藏目录抽屉（与题库一致：未收藏题点收藏 → 选目录）-->
+    <FavoriteFolderDrawer
+      v-model="favDrawerVisible"
+      :question-id="favDrawerQuestionId"
+      @success="handleFavDrawerSuccess"
+    />
+
+    <!-- 草稿纸（覆盖式涂画）-->
     <SketchPad v-model:visible="sketchVisible" />
   </div>
 </template>
