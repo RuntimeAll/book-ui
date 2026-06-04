@@ -9,7 +9,7 @@
  *
  * 支持 ?mine=1 query：onMounted 树数据就绪后自动选中「我的卷库」节点。
  */
-import { ref, reactive, onMounted, nextTick } from 'vue'
+import { ref, reactive, onMounted, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Star } from '@element-plus/icons-vue'
 import { useRouter, useRoute } from 'vue-router'
@@ -35,7 +35,7 @@ const TEXTBOOK_OPTIONS = [
 ]
 const selectedTextbook = ref('zhejiao-new')
 
-// ── 左侧目录树关键字筛选框（占位，输入不响应 — PRD §2 不在范围）
+// ── 左侧目录树关键字筛选（用户 2026-06-04 拍板实现）：watch 关键词 → el-tree 内置 filter，按 title 子串匹配 ──
 const treeFilterKeyword = ref('')
 
 // ── 合成节点常量（id 不与真实分类 id 冲突；title 对齐树 label 字段名）
@@ -46,6 +46,15 @@ const MINE_NODE = { id: '__mine__', title: '我的卷库', children: [] } as unk
 const treeData = ref<PaperTreeNode[]>([])
 const treeLoading = ref(false)
 const paperTreeRef = ref()
+
+// 关键字筛选：filterTreeNode 决定节点显隐（按 title 子串），watch 关键词触发 el-tree 内置 filter
+function filterTreeNode(value: string, data: PaperTreeNode): boolean {
+  if (!value) return true
+  return ((data as { title?: string }).title ?? '').includes(value)
+}
+watch(treeFilterKeyword, (val) => {
+  paperTreeRef.value?.filter(val)
+})
 
 // ── scope 内部状态（由树选中节点驱动）──────────────────────
 // 'public' → 公共卷（真实分类节点），'mine' → 我的卷库（合成节点）
@@ -260,14 +269,13 @@ onMounted(async () => {
           :value="opt.value"
         />
       </el-select>
-      <!-- 关键字筛选（占位，无响应）-->
+      <!-- 关键字筛选（实时筛选目录树，用户 2026-06-04 拍板实现）-->
       <el-input
         v-model="treeFilterKeyword"
         class="sidebar-filter"
         placeholder="输入关键字筛选"
         size="default"
         clearable
-        @change="handleNotOpen"
       />
       <!-- 树（含末尾合成节点「我的卷库」）-->
       <div v-loading="treeLoading" class="tree-wrap">
@@ -276,6 +284,7 @@ onMounted(async () => {
           :data="treeData"
           node-key="id"
           :props="{ children: 'children', label: 'title' }"
+          :filter-node-method="filterTreeNode"
           highlight-current
           :expand-on-click-node="false"
           @node-click="handleNodeClick"

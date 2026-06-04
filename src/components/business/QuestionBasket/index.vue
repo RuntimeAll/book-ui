@@ -7,11 +7,12 @@
  *
  * 抽离自第十二波前的 src/views/question/index.vue（模板行 766-892 / style 1265-1410）。
  */
-import { ref } from 'vue'
+import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ShoppingCart, Delete, DocumentAdd, Close } from '@element-plus/icons-vue'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
+import { getQuestionDetail, type QuestionItem } from '@/api/question/index'
 
 const basket = useQuestionBasket()
 const router = useRouter()
@@ -49,6 +50,31 @@ function getQuestionTypeLabel(type: number): string {
 function getQuestionTypeTag(type: number): 'success' | 'warning' | 'info' | 'primary' | 'danger' {
   const map: Record<number, 'primary' | 'success' | 'warning'> = { 1: 'primary', 4: 'success', 5: 'warning' }
   return map[type] ?? 'info'
+}
+
+// ── 展开解析（用户 2026-06-04 拍板实现）：toggle 显示该题解析图；item 自带 explainImg 优先，
+//    无则懒加载 getQuestionDetail 补取（试题栏 item 来自列表，可能不含解析图）──
+const explainState = reactive<Record<number, { open: boolean; img: string; loading: boolean }>>({})
+
+async function toggleExplain(item: QuestionItem) {
+  const id = item.id
+  if (!explainState[id]) explainState[id] = { open: false, img: '', loading: false }
+  const st = explainState[id]
+  st.open = !st.open
+  if (st.open && !st.img && !st.loading) {
+    const own = (item as { explainImg?: string }).explainImg
+    if (own) { st.img = own; return }
+    st.loading = true
+    try {
+      const res = await getQuestionDetail(id)
+      st.img = (res as { explainImg?: string })?.explainImg ?? ''
+    } catch (e) {
+      console.warn('[basket] load explain failed', e)
+      st.img = ''
+    } finally {
+      st.loading = false
+    }
+  }
 }
 </script>
 
@@ -147,9 +173,9 @@ function getQuestionTypeTag(type: number): 'success' | 'warning' | 'info' | 'pri
             <div class="basket-item-ops">
               <el-button
                 size="small"
-                @click="ElMessage.info('展开解析功能开发中')"
+                @click="toggleExplain(item)"
               >
-                展开解析
+                {{ explainState[item.id]?.open ? '收起解析' : '展开解析' }}
               </el-button>
               <el-button
                 size="small"
@@ -172,6 +198,19 @@ function getQuestionTypeTag(type: number): 'success' | 'warning' | 'info' | 'pri
             />
             <span v-else-if="item.stemText" class="basket-stem-text">{{ item.stemText }}</span>
             <span v-else class="stem-placeholder">题 ID: {{ item.id }}</span>
+          </div>
+          <!-- 展开解析区（懒加载 explainImg）-->
+          <div v-if="explainState[item.id]?.open" class="basket-item-explain">
+            <el-skeleton v-if="explainState[item.id]?.loading" :rows="2" animated />
+            <img
+              v-else-if="explainState[item.id]?.img"
+              :src="explainState[item.id]?.img"
+              class="basket-explain-img"
+              referrerpolicy="no-referrer"
+              alt="解析"
+              @error="(e: Event) => ((e.target as HTMLImageElement).style.display='none')"
+            />
+            <span v-else class="basket-explain-empty">暂无解析</span>
           </div>
         </div>
       </el-scrollbar>
@@ -327,6 +366,23 @@ function getQuestionTypeTag(type: number): 'success' | 'warning' | 'info' | 'pri
   font-size: 13px;
   color: #1d2129;
   line-height: 1.5;
+}
+
+.basket-item-explain {
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: #fafbfc;
+  border-radius: 6px;
+}
+
+.basket-explain-img {
+  max-width: 100%;
+  display: block;
+}
+
+.basket-explain-empty {
+  font-size: 12px;
+  color: #c9cdd4;
 }
 
 .basket-footer {

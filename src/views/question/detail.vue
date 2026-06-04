@@ -7,7 +7,6 @@ import {
   Star,
   Edit,
   ShoppingCart,
-  Warning,
   ChatDotRound,
   Plus,
 } from '@element-plus/icons-vue'
@@ -204,11 +203,6 @@ async function loadSimilar() {
   } finally {
     similarLoading.value = false
   }
-}
-
-// ── 题目报错（V1：功能开发中，本卡 PRD F-5 删 API 函数 + view 改 noop） ─────
-function handleReport() {
-  ElMessage.info('题目报错功能开发中，敬请期待')
 }
 
 // ── 工具 ─────────────────────────────────────────────────────
@@ -508,20 +502,6 @@ onMounted(async () => {
           </div>
         </div>
 
-        <!-- 题目报错 按钮 -->
-        <div class="sidebar-card sidebar-card--report">
-          <el-button
-            type="warning"
-            plain
-            size="default"
-            class="report-btn"
-            @click="handleReport"
-          >
-            <el-icon><Warning /></el-icon>
-            题目报错
-          </el-button>
-        </div>
-
         <!-- 题型信息 -->
         <div class="sidebar-card sidebar-card--info">
           <div class="info-item">
@@ -532,10 +512,8 @@ onMounted(async () => {
             <span class="info-label">题目ID</span>
             <span class="info-value">{{ question.id }}</span>
           </div>
-          <div class="info-item">
-            <span class="info-label">创建时间</span>
-            <span class="info-value">{{ question.createTime || '—' }}</span>
-          </div>
+          <!-- 创建时间已隐藏(用户 2026-06-04 拍板): BE createTime 是 misikt 导入占位时间戳(1764000000000),
+               非真实创建时间, 对老师无意义; 待录题功能落地后题目有真实 createTime 再恢复。 -->
         </div>
       </div>
     </div>

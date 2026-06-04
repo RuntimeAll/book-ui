@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Folder } from '@element-plus/icons-vue'
-import { getFavoriteFolderTree, addFavorite, type FavoriteFolder } from '@/api/question/index'
+import { getFavoriteFolderTree, addFavorite, createFolder, type FavoriteFolder } from '@/api/question/index'
 
 // ── Props / Emits ──────────────────────────────────────────
 interface Props {
@@ -95,6 +95,26 @@ async function handleSelectFolder(folder: FavoriteFolder) {
       selectedFolderId.value = undefined
     })
 }
+
+// ── 新建收藏夹（用户 2026-06-04 拍板实现；BE 端点 POST /teacher/center/q-folder/create 全有）──
+async function handleCreateFolder() {
+  try {
+    const { value } = await ElMessageBox.prompt('输入收藏夹名称', '新建收藏夹', {
+      confirmButtonText: '创建',
+      cancelButtonText: '取消',
+      inputPattern: /\S/,
+      inputErrorMessage: '名称不能为空',
+    })
+    await createFolder(value.trim())
+    ElMessage.success('收藏夹已创建')
+    loadFolders()
+  } catch (e) {
+    if (e !== 'cancel') {
+      console.warn('[favorite] createFolder failed', e)
+      ElMessage.warning('创建收藏夹失败')
+    }
+  }
+}
 </script>
 
 <template>
@@ -157,7 +177,7 @@ async function handleSelectFolder(folder: FavoriteFolder) {
     <!-- 底部：+ 新建收藏夹（占位，不实现）-->
     <template #footer>
       <div class="drawer-footer">
-        <el-button disabled class="new-folder-btn" @click.prevent>
+        <el-button class="new-folder-btn" @click="handleCreateFolder">
           + 新建收藏夹
         </el-button>
       </div>

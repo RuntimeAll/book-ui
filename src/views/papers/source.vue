@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, Check, ShoppingCart, Edit, Star, InfoFilled, Download, Top, Bottom, Delete, Plus, DocumentChecked, Close } from '@element-plus/icons-vue'
 import {
   getPaperDetail,
+  addFavorite,
+  removeFavorite,
   type PaperDetailVo,
   type PaperSectionVo,
   type PaperSourceQuestion,
@@ -144,8 +146,25 @@ async function handleBasketToggle(q: PaperSourceQuestion) {
 function handleDraft() {
   ElMessage.info('草稿功能开发中')
 }
-function handleFavorite() {
-  ElMessage.info('收藏功能开发中')
+// 收藏（用户 2026-06-04 拍板实现）：toggle addFavorite/removeFavorite；source 卷题无 isFavorite 字段，
+// 用本地 Set 记录本次会话收藏态（刷新丢失可接受 — 详情页有持久收藏态）。
+const favoritedIds = reactive(new Set<number>())
+async function handleFavorite(q: PaperSourceQuestion) {
+  const id = q.id
+  try {
+    if (favoritedIds.has(id)) {
+      await removeFavorite(id)
+      favoritedIds.delete(id)
+      ElMessage.success('已取消收藏')
+    } else {
+      await addFavorite(id)
+      favoritedIds.add(id)
+      ElMessage.success('已收藏')
+    }
+  } catch (e) {
+    console.warn('[source] favorite failed', e)
+    ElMessage.warning('收藏操作失败')
+  }
 }
 
 function goBack() {
@@ -454,7 +473,13 @@ watch(paperId, async () => {
                 <el-button size="small" link class="action-icon-btn" @click="handleDraft">
                   <el-icon><Edit /></el-icon>草稿
                 </el-button>
-                <el-button size="small" link class="action-icon-btn" @click="handleFavorite">
+                <el-button
+                  size="small"
+                  link
+                  class="action-icon-btn"
+                  :class="{ 'is-fav': favoritedIds.has(q.id) }"
+                  @click="handleFavorite(q)"
+                >
                   <el-icon><Star /></el-icon>
                 </el-button>
                 <el-button
@@ -883,6 +908,10 @@ watch(paperId, async () => {
 
 .action-icon-btn:hover {
   color: #4080ff;
+}
+
+.action-icon-btn.is-fav {
+  color: #f7ba1e;
 }
 
 .action-basket-btn {
