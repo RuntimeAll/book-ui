@@ -16,6 +16,7 @@ import { updateExamPaper, type UpdatePaperQuestion } from '@/api/paper/index'
 import FreeTagList from '@/components/business/FreeTagList/index.vue'
 import PaperPreview from '@/components/business/PaperPreview/index.vue'
 import QuestionCard from '@/components/business/QuestionCard/index.vue'
+import SketchPad from '@/components/business/SketchPad/index.vue'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
 import { useUserStore } from '@/store/user'
 import { getCurrentUser } from '@/api/user'
@@ -142,9 +143,12 @@ async function handleBasketToggle(q: PaperSourceQuestion) {
   }
 }
 
+// ── 草稿纸 ──────────────────────────────────────────────────
+const sketchVisible = ref(false)
+
 // ── 草稿 / 收藏 placeholder（misikt 风格题块顶部右侧）──
 function handleDraft() {
-  ElMessage.info('草稿功能开发中')
+  sketchVisible.value = true
 }
 // 收藏（用户 2026-06-04 拍板实现）：toggle addFavorite/removeFavorite；source 卷题无 isFavorite 字段，
 // 用本地 Set 记录本次会话收藏态（刷新丢失可接受 — 详情页有持久收藏态）。
@@ -686,6 +690,9 @@ watch(paperId, async () => {
         <el-button @click="addDialogVisible = false">关闭</el-button>
       </template>
     </el-dialog>
+
+    <!-- 草稿纸 -->
+    <SketchPad v-model:visible="sketchVisible" />
   </div>
 </template>
 

@@ -16,6 +16,7 @@ import FavoriteFolderDrawer from '@/components/FavoriteFolderDrawer/index.vue'
 import ContentWrap from '@/components/ContentWrap/index.vue'
 import SearchWrap from '@/components/SearchWrap/index.vue'
 import QuestionCard from '@/components/business/QuestionCard/index.vue'
+import SketchPad from '@/components/business/SketchPad/index.vue'
 
 // ── 路由 ────────────────────────────────────────────────────
 const router = useRouter()
@@ -191,9 +192,12 @@ async function handleBasketToggle(question: QuestionItem) {
   }
 }
 
+// ── 草稿纸 ──────────────────────────────────────────────────
+const sketchVisible = ref(false)
+
 // ── 空壳按钮 ─────────────────────────────────────────────────
-function handleDraft(q: QuestionItem) {
-  ElMessage.info(`草稿功能开发中 (id: ${q.id})`)
+function handleDraft(_q: QuestionItem) {
+  sketchVisible.value = true
 }
 
 const favoriteLoading = reactive<Set<number>>(new Set())
@@ -431,6 +435,9 @@ onMounted(async () => {
       :question-id="favDrawerQuestionId"
       @success="handleFavDrawerSuccess"
     />
+
+    <!-- 草稿纸 -->
+    <SketchPad v-model:visible="sketchVisible" />
   </div>
 </template>
 

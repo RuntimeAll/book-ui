@@ -24,6 +24,7 @@ import {
   type SimilarQuestion,
 } from '@/api/question/index'
 import FreeTagList from '@/components/business/FreeTagList/index.vue'
+import SketchPad from '@/components/business/SketchPad/index.vue'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
 
 // ── 路由 ────────────────────────────────────────────────────
@@ -34,6 +35,9 @@ const router = useRouter()
 // 精度丢失 → BE 查 DB 没这个 id → "题目详情加载失败"。改全程 string，BE @PathVariable
 // Long 收 numeric string 自动 parse 不丢精度。
 const questionId = computed(() => String(route.params.id))
+
+// ── 草稿纸 ──────────────────────────────────────────────────
+const sketchVisible = ref(false)
 
 // ── 试题栏（全局 singleton composable） ──────────────────────
 const basket = useQuestionBasket()
@@ -290,7 +294,7 @@ onMounted(async () => {
           </div>
           <div class="meta-right">
             <!-- 草稿 -->
-            <el-button size="small" class="action-btn" @click="ElMessage.info('草稿功能开发中')">
+            <el-button size="small" class="action-btn" @click="sketchVisible = true">
               <el-icon><Edit /></el-icon>草稿
             </el-button>
             <!-- 收藏 -->
@@ -518,6 +522,9 @@ onMounted(async () => {
       </div>
     </div>
   </div>
+
+  <!-- 草稿纸 -->
+  <SketchPad v-model:visible="sketchVisible" />
 </template>
 
 <style scoped>

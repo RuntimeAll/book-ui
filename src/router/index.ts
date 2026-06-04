@@ -80,12 +80,11 @@ const router = createRouter({
           name: 'PapersSource',
           component: () => import('@/views/papers/source.vue'),
         },
-        // 空壳菜单页
+        // 首页（用户 2026-06-04 拍板做真首页：去 misikt 门面 + 北极星理念 + 快捷入口 + AI 预告；将来切 Agent 聊天页）
         {
           path: '/home',
           name: 'Home',
-          component: () => import('@/views/PlaceholderView.vue'),
-          props: { title: '首页' },
+          component: () => import('@/views/home/index.vue'),
         },
         // U 卡 段④ — 教师我的工作台聚合页
         {
