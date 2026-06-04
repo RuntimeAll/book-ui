@@ -118,23 +118,16 @@ const router = createRouter({
           name: 'PapersBasket',
           component: () => import('@/views/papers/basket.vue'),
         },
+        // 资料库：菜单已隐藏（用户 2026-06-04「暂不做开发」），路由保留备用，待开发时恢复 AppLayout 菜单项即可。
         {
           path: '/materials/index',
           name: 'MaterialsIndex',
           component: () => import('@/views/PlaceholderView.vue'),
           props: { title: '资料库' },
         },
-        // PRD-A-005 T2 — 页面级权限「示范受限页」
-        //   meta.roles 限定 superadmin 可见（A 线无真实 admin 业务页，这里以管理控制台
-        //   占位页示范"按角色过滤路由"的通用机制；teacher 访问会被守卫重定向）。
-        //   待 A 线出现真正需限制的页时，照此挂 meta.roles 即可，无需改守卫。
-        {
-          path: '/admin/console',
-          name: 'AdminConsole',
-          component: () => import('@/views/PlaceholderView.vue'),
-          props: { title: '管理控制台' },
-          meta: { roles: ['superadmin'] },
-        },
+        // 管理控制台 /admin/console：纯占位无业务，用户 2026-06-04 拍板移除（菜单 + 路由一并清）。
+        //   原为 PRD-A-005「页面级权限·按角色显隐」示范页；A 线无真实 admin 业务，故撤。
+        //   若将来需页面级权限示范，照 meta.roles 模式挂任意真实页即可，无需复活此占位。
       ],
     },
     // 登录页（无 layout 包裹）
