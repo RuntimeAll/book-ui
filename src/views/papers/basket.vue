@@ -273,20 +273,32 @@ async function handleClearAll(): Promise<void> {
 
 .wb-paper-chip {
   max-width: 280px;
-  display: inline-flex;
-  align-items: center;
 }
 
+/* el-tag 的 slot 包在 .el-tag__content 里；让它单行省略，名称不撑出标签框 */
+.wb-paper-chip :deep(.el-tag__content) {
+  display: inline-flex;
+  align-items: baseline;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* 🔴 chip-name 必须 inline-block —— inline 元素会忽略 max-width / text-overflow:ellipsis，
+   导致长卷名按原长渲染撑出 el-tag 框（短名碰巧不超才没暴露）。改 inline-block 后截断生效。 */
 .wb-paper-chip .chip-name {
-  max-width: 200px;
+  display: inline-block;
+  max-width: 190px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  vertical-align: bottom;
 }
 
 .wb-paper-chip .chip-count {
   color: #86909c;
   flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .wb-columns {
