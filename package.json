@@ -15,6 +15,7 @@
     "html2canvas": "^1.4.1",
     "jspdf": "^4.2.1",
     "pinia": "^3.0.1",
+    "sortablejs": "^1.15.7",
     "vue": "^3.5.34",
     "vue-router": "^4.5.1"
   },
@@ -22,6 +23,7 @@
     "@iconify-json/ep": "^1.2.4",
     "@iconify/vue": "^5.0.1",
     "@types/node": "^24.12.3",
+    "@types/sortablejs": "^1.15.9",
     "@unocss/preset-attributify": "^66.6.8",
     "@unocss/preset-icons": "^66.6.8",
     "@unocss/preset-wind3": "^66.6.8",

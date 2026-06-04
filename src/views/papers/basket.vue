@@ -13,6 +13,7 @@
  * 详情 = 复用题库题目详情页 /question/detail/:id(共享组件，禁重造)。
  */
 import { ref, computed, onMounted, watch } from 'vue'
+import { ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { usePaperBasket } from '@/composables/usePaperBasket'
 import { useBasketWorkbench } from '@/composables/useBasketWorkbench'
@@ -98,6 +99,21 @@ const failedHint = computed(() =>
 )
 
 const rightTab = ref<'compose' | 'analysis'>('compose')
+
+// ── 清空试卷篮（带二次确认）──────────────────────────────────
+async function handleClearAll(): Promise<void> {
+  if (basket.count.value === 0) return
+  try {
+    await ElMessageBox.confirm(
+      `确认清空试卷篮内全部 ${basket.count.value} 张试卷？`,
+      '清空确认',
+      { confirmButtonText: '确定清空', cancelButtonText: '取消', type: 'warning' },
+    )
+    await basket.clear()
+  } catch {
+    // 取消
+  }
+}
 </script>
 
 <template>
@@ -113,7 +129,36 @@ const rightTab = ref<'compose' | 'analysis'>('compose')
         <el-tag v-if="failedHint" type="warning" size="small" effect="plain">{{ failedHint }}</el-tag>
       </div>
       <div class="wb-topbar-right">
+        <el-button
+          v-if="basket.count.value > 0"
+          size="small"
+          type="danger"
+          plain
+          @click="handleClearAll"
+        >
+          清空试卷篮
+        </el-button>
         <el-button size="small" @click="router.push('/papers/index')">返回卷库</el-button>
+      </div>
+    </div>
+
+    <!-- ── 已选试卷条：展示篮内所有卷 + 逐张移除 ── -->
+    <div v-if="basket.count.value > 0" class="wb-selected-strip">
+      <span class="wb-selected-label">已选试卷：</span>
+      <div class="wb-selected-chips">
+        <el-tag
+          v-for="p in basket.items.value"
+          :key="p.id"
+          class="wb-paper-chip"
+          type="info"
+          effect="plain"
+          closable
+          :disable-transitions="false"
+          @close="basket.remove(p.id)"
+        >
+          <span class="chip-name" :title="p.name">{{ p.name }}</span>
+          <span v-if="p.questionCount" class="chip-count">（{{ p.questionCount }}题）</span>
+        </el-tag>
       </div>
     </div>
 
@@ -196,6 +241,64 @@ const rightTab = ref<'compose' | 'analysis'>('compose')
   display: inline-flex;
   align-items: center;
   gap: 4px;
+}
+
+/* ── 已选试卷条 ── */
+.wb-selected-strip {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 16px;
+  background: #fff;
+  border-bottom: 1px solid #f2f3f5;
+  flex-shrink: 0;
+  max-height: 84px;
+  overflow-y: auto;
+}
+
+.wb-selected-label {
+  font-size: 12px;
+  color: #86909c;
+  font-weight: 500;
+  flex-shrink: 0;
+  line-height: 24px;
+}
+
+.wb-selected-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.wb-paper-chip {
+  max-width: 280px;
+}
+
+/* el-tag 的 slot 包在 .el-tag__content 里；让它单行省略，名称不撑出标签框 */
+.wb-paper-chip :deep(.el-tag__content) {
+  display: inline-flex;
+  align-items: baseline;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* 🔴 chip-name 必须 inline-block —— inline 元素会忽略 max-width / text-overflow:ellipsis，
+   导致长卷名按原长渲染撑出 el-tag 框（短名碰巧不超才没暴露）。改 inline-block 后截断生效。 */
+.wb-paper-chip .chip-name {
+  display: inline-block;
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+.wb-paper-chip .chip-count {
+  color: #86909c;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .wb-columns {

@@ -140,12 +140,27 @@ export interface UpdatePaperQuestion {
   score: number
 }
 
+/**
+ * 大题分区（重命名）— design.md §0.2 SectionBo 契约
+ * sectionId 非空 = 更新已有 section name/sort（v1 只支持重命名已有）
+ * sectionId 空 = 新建（BE v1 未实现，FE 不发此项）
+ */
+export interface UpdatePaperSection {
+  sectionId: number | null
+  name: string
+  sort: number
+}
+
 /** 试卷编辑保存入参（契约 manual：POST /teacher/exam/paper/update）*/
 export interface UpdateExamPaperParams {
   paperId: number
   name?: string
   paperCategoryId?: string | null
   questions: UpdatePaperQuestion[]
+  /** 可选：大题重命名（design.md §0.2；BE v1 只处理 sectionId 非空条目）*/
+  sections?: UpdatePaperSection[]
+  /** 答题时间（分钟）— BE PRD-A-007 Wave1 已支持写 biz_paper.suggest_time */
+  suggestTime?: number
 }
 
 /**

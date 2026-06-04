@@ -22,6 +22,10 @@ const props = defineProps<{
   visible: boolean
   paperName: string
   ids: number[]  // basket 提供的题目 id 列表（入参顺序 = 显示顺序）
+  /** 打开时的初始"显示答案"勾选态（可选，默认 false）— Wave2b 工作台右栏联动 */
+  initialShowAnswer?: boolean
+  /** 打开时的初始"显示解析"勾选态（可选，默认 false）— Wave2b 工作台右栏联动 */
+  initialShowExplain?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -167,6 +171,9 @@ watch(
   () => props.visible,
   async (vis) => {
     if (!vis) return
+    // 打开时同步外部传入的初始勾选态（外部未传则保持内部已有值）
+    if (props.initialShowAnswer !== undefined) showAnswer.value = props.initialShowAnswer
+    if (props.initialShowExplain !== undefined) showExplain.value = props.initialShowExplain
     const idsKey = props.ids.join(',')
     if (idsKey === lastLoadedIds.value && questions.value.length > 0) {
       // 同一组 ids 已加载过 — 跳过 fetch，只重 typeset 一次（防上次切走 MathJax 残留）
