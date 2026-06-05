@@ -34,11 +34,8 @@ const emit = defineEmits<{
 
 // ── 渲染模式 ────────────────────────────────────────────────────────────────
 // PRD §0.4 misikt 真站铁证：预览模态 + PDF 均为纯图模式（pdftotext 提取 0 文本 / 全位图）。
-// 富文本模式（v-html stemText + parseOptions 选项 + v-html answer/explain）代码保留，未来 V2 可能启用
-// （场景：当题目缺图 / 数据建模升级后 stemText 含完整 LaTeX 源 / 答案文字态可显时）。
-// 切换方式：改下面这一行即可。
-// TODO[V2]：富文本模式 — 当 image_asset OCR 文字源足够完整时切换。
-const RENDER_MODE = 'image-only' as 'image-only' | 'rich-text'
+// V1 仅支持 image-only 模式；富文本模式待 B-014 录题完成后再考虑。
+const RENDER_MODE = 'image-only' as const
 
 // ── 状态 ────────────────────────────────────────────────────────────────────
 const loading = ref(false)
@@ -57,35 +54,6 @@ const today = (() => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 })()
 
-
-// 解析 optionsJson — BE 返回字符串（["A. xxx", "B. yyy"] 或 [{key:'A', text:'...'}] 两种历史口径并存）。
-// 容错：parse 失败返 null（不渲染选项区）；空字符串 / null 直接返 null。
-interface OptionItem { key: string; text: string }
-function parseOptions(json: string | null | undefined): OptionItem[] | null {
-  if (!json || !json.trim()) return null
-  try {
-    const arr = JSON.parse(json)
-    if (!Array.isArray(arr)) return null
-    return arr.map((it: unknown, idx: number): OptionItem => {
-      if (typeof it === 'string') {
-        // 旧口径："A. 选项文本" — split 首个 '.'
-        const m = /^([A-Z])[.、]?\s*(.+)$/s.exec(it)
-        return m ? { key: m[1], text: m[2] } : { key: String.fromCharCode(65 + idx), text: it }
-      }
-      if (it && typeof it === 'object') {
-        const o = it as Record<string, unknown>
-        return {
-          key: typeof o.key === 'string' ? o.key : String.fromCharCode(65 + idx),
-          text: typeof o.text === 'string' ? o.text : String(o.text ?? ''),
-        }
-      }
-      return { key: String.fromCharCode(65 + idx), text: String(it) }
-    })
-  } catch (e) {
-    console.warn('[PaperPreview] parseOptions failed', e, json)
-    return null
-  }
-}
 
 // 按 basket ids 入参顺序 reorder（兜底 BE 不保序场景；BE 走 FIND_IN_SET 已保序，此处冗余兜底）
 function reorderByIds(items: QuestionDetail[], orderIds: number[]): QuestionDetail[] {
@@ -311,47 +279,6 @@ async function handleExportPdf() {
               </div>
             </template>
 
-            <!-- ── 富文本模式（V2 待启用 — TODO）─────────────────────────────── -->
-            <!-- 触发条件：image_asset OCR 文字源完整 / 用户切到富文本视图 / admin 后台编辑场景 -->
-            <!-- 启用方式：把上面 RENDER_MODE 改为 'rich-text' 即可 -->
-            <template v-else-if="RENDER_MODE === 'rich-text'">
-              <!-- 题干：stemText v-html + stemImg 兜底 -->
-              <div class="pp-q-stem">
-                <div v-if="q.stemText" class="stem-text" v-html="q.stemText"></div>
-                <img v-if="q.stemImg" :src="q.stemImg" alt="题干图" class="stem-img" />
-              </div>
-
-              <!-- 选项区（仅 optionsJson 解析成功时渲染） -->
-              <ol
-                v-if="parseOptions(q.optionsJson)"
-                class="pp-q-options"
-              >
-                <li
-                  v-for="opt in parseOptions(q.optionsJson)!"
-                  :key="opt.key"
-                  class="pp-q-option"
-                >
-                  <span class="opt-key">{{ opt.key }}.</span>
-                  <span class="opt-text" v-html="opt.text"></span>
-                </li>
-              </ol>
-
-              <!-- 答案：v-html answer + answerImg 兜底 -->
-              <div v-show="showAnswer" class="pp-q-answer">
-                <span class="label">【答案】</span>
-                <span v-if="q.answer" v-html="q.answer"></span>
-                <img v-if="q.answerImg" :src="q.answerImg" alt="答案图" class="ans-img" />
-                <span v-if="!q.answer && !q.answerImg" class="placeholder">（无答案数据）</span>
-              </div>
-
-              <!-- 解析：v-html explain + explainImg 兜底 -->
-              <div v-show="showExplain" class="pp-q-explain">
-                <span class="label">【解析】</span>
-                <span v-if="q.explain" v-html="q.explain"></span>
-                <img v-if="q.explainImg" :src="q.explainImg" alt="解析图" class="exp-img" />
-                <span v-if="!q.explain && !q.explainImg" class="placeholder">（无解析数据）</span>
-              </div>
-            </template>
             </div>
           </div>
         </section>

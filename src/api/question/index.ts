@@ -8,7 +8,6 @@ export interface SubjectNode {
   title: string                  // 节点名称（misikt 真实字段）
   parentId: string | null
   hasChildren?: boolean
-  isShare?: string | null
   key?: string
   value?: string
   level?: number
@@ -23,8 +22,6 @@ export interface QuestionKnowledge {
   questionId: number
   knowledgeId: string
   knowledgeName: string
-  knowledgeImg?: string
-  knowledgeVideo?: string | null
   createTime?: string | null
 }
 
@@ -46,7 +43,6 @@ export interface QuestionItem {
   answerImg?: string | null
   explainImg?: string | null
   fileBin?: string | null
-  videoUrl?: string | null
   questionKnowledges?: QuestionKnowledge[]    // ⚠️ 真实字段名
   questionStdKnowledges?: QuestionKnowledge[] | null
   subjectId?: string
@@ -54,16 +50,11 @@ export interface QuestionItem {
   createUser?: number
   score?: number
   status?: number
-  shortTitle?: string | null
-  isShare?: number | string
   isSelected?: boolean | null
   isWrongBook?: boolean | null
-  isRepeat?: number
-  repeatQuestionId?: number | null
   examYear?: string | null
   examPaperId?: number | null
   examPaperName?: string | null
-  scoreStd?: string | null
   freeTag?: string | null              // 老字段（字符串），段③字典化后保留兼容
   freeTags?: FreeTagVo[]               // X 卡 段② BE 新字段，position asc 已排序
   isFavorite?: boolean                 // J 卡 段② BE LEFT JOIN biz_question_favorite 返回，FE 列表心形态判断
@@ -97,8 +88,7 @@ export interface QuestionDetail extends QuestionItem {
   // ── Q' 卡 段③ 扩展 — BE QuestionDetailVo 详情字段（list / select 端点返回） ──
   answer?: string | null              // 答案文本（HTML/纯文本）
   explain?: string | null             // 解析文本（HTML/纯文本）
-  optionsJson?: string | null         // 选项 JSON 字符串（例：[{"key":"A","text":"..."}]，需 JSON.parse）
-  // 以下字段 QuestionItem 已声明（fileBin / videoUrl / scoreStd / questionStdKnowledges 全部可选），
+  // 以下字段 QuestionItem 已声明（fileBin / questionStdKnowledges 全部可选），
   // 列表 page 端点空返，list / select 详情端点才真有值 — 这里不重复声明。
 }
 
@@ -314,7 +304,7 @@ export const getQuestionDetail = (questionId: number) =>
   request.post<QuestionDetail, QuestionDetail>(`/teacher/question/select/${questionId}`)
 
 
-// Q' 卡 段① BE 新端点 — 按 ids 批查完整字段（含 answer / explain / optionsJson / freeTags / questionStdKnowledges）。
+// Q' 卡 段① BE 新端点 — 按 ids 批查完整字段（含 answer / explain / freeTags / questionStdKnowledges）。
 // query string = ?ids=1,2,3 逗号分隔（axios params 对 string 不会重复 key）；上限 100（BE 端约束）；
 // 软删自动过滤（BE WHERE status<>'2'）；顺序按 FIND_IN_SET 保入参顺序（FE 仍需 reorder 兜底）。
 export const questionListByIds = (ids: number[]) =>

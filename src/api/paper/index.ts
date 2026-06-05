@@ -15,11 +15,10 @@ export interface PaperTreeNode {
   value: string               // = id
   level: number | null        // misikt 没填，固定 null
   nodeDataSum: number | null  // misikt 没填，固定 null
-  isShare: '0' | '1'          // 字符串！不是 number
   children?: PaperTreeNode[]  // 叶节点不返该字段
 }
 
-// page list 元素（15 字段 misikt 字节级对齐 — 见 02-be-summary §4.2）
+// page list 元素（misikt 字节级对齐 — 见 02-be-summary §4.2）
 export interface PaperListItem {
   id: number
   name: string
@@ -28,12 +27,9 @@ export interface PaperListItem {
   suggestTime: number | null
   createTime: string          // 'YYYY-MM-DD' 字符串（不是 ms timestamp）
   finishTime: string | null
-  hgScore: number | null
   createUser: number
-  directoryName: string | null
   subjectId: string
   paperType: 1 | 2 | 6        // 1=日常 / 2=月考 / 6=专题
-  frameTextContentId: number | null
   status: 1                   // 已发布
   sort: number                // 通常 = id
 }
