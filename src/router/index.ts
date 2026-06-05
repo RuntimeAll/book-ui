@@ -80,7 +80,8 @@ const router = createRouter({
           name: 'PapersSource',
           component: () => import('@/views/papers/source.vue'),
         },
-        // 🔴 C 线首页 = AI 组卷（AI 相关统一从首页进）。嵌 Dify WF3 chatbot + 透传 teacher_id。
+        // 🔴 C 线首页 = 老师 vibe 聊天入口（PRD-C-004）。双栏：左对话流 + 右组卷画布，
+        //    调 ai-orchestrator :8092 /chat（vite proxy /ai）。原 Dify chatbot 壳已弃用替换。
         {
           path: '/home',
           name: 'Home',

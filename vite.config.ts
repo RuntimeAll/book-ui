@@ -20,6 +20,12 @@ import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 //    dev 端口 8091（贴着 C BE 8090）。与 A 线 book-ui(:5173→:8080) 目录+端口双隔离。
 const BOOK_SERVER_TARGET = 'http://localhost:8090'
 
+// 🔴 PRD-C-004：AI 编排服务 ai-orchestrator（Python/FastAPI, :8092）。
+//    前端调 /ai/chat → vite proxy rewrite 掉 /ai → 转 http://localhost:8092/chat。
+//    走同源避免浏览器直连跨端口 CORS。ai-orchestrator 返回裸 JSON（非 misikt envelope），
+//    所以聊天调用独立封装（src/api/chat），不复用 /api 那套 misikt 拦截器。
+const AI_ORCHESTRATOR_TARGET = 'http://localhost:8092'
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
@@ -45,6 +51,12 @@ export default defineConfig({
         changeOrigin: true,
         secure: false,
         rewrite: (p) => p.replace(/^\/api/, ''),
+      },
+      '/ai': {
+        target: AI_ORCHESTRATOR_TARGET,
+        changeOrigin: true,
+        secure: false,
+        rewrite: (p) => p.replace(/^\/ai/, ''),
       },
     },
   },
