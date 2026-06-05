@@ -1,24 +1,23 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onBeforeUnmount, ref } from 'vue'
 import { useUserStore } from '@/store/user'
 import { getCurrentUser } from '@/api/user'
-import { postChat } from '@/api/chat'
-import type { ChatPaper, ChatResponse } from '@/api/chat'
+import { streamChat } from '@/api/chat'
+import type { ChatEvent, ChatPaper, ChatStreamHandle } from '@/api/chat'
 
 // ---------------------------------------------------------------------------
-// PRD-C-004 — 老师 vibe 聊天入口（双栏）
+// PRD-C-005 — 老师 vibe 聊天入口（双栏），SSE 全流式逐字渲染 V2
 //
-// 替换原 Dify chatbot 嵌入壳（Dify 已弃用）。贴北极星 vibe coding：
-//   左栏 = 对话流：老师消息 + AI 回复（intentEcho 思路回显 / needAsk 反问）。
-//   右栏 = 工作画布：渲染组卷结果（paper 标题 + outline / 题目列表），空态占位。
+// 复用 C-004 双栏布局，只换接收/渲染层：从"一次性 await 拿 JSON"改成 SSE 流式逐字。
+//   左栏 = 对话流：老师消息 + AI 思路（逐 token 打字机气泡）+ WF3 阶段步骤灯 + 人话 notes。
+//   右栏 = 工作画布：出卷完成时填充（paper 标题 + 题目 / 提纲），空态占位。
 //
-// 入口就一个聊天输入框 + 发送，无 Agent 选择器 / 技能卡片 / 下拉（全自动语言路由的形）。
+// 入口就一个聊天输入框 + 发送，无 Agent 选择器 / 技能卡片（全自动语言路由的形）。
 // 单轮即走：不存对话历史（对话流仅本次内存态，刷新清空）。
 //
-// 接口：POST /ai/chat {message, teacherId} → vite proxy 同源转 :8092/chat。
-//   组卷命中: {ok,route:'compose',intentEcho,paperId,outline,paper,paperUrl,notes}
-//   非组卷  : {ok,needAsk:true,ask}
-//   异常    : {ok:false,error}
+// 接口：POST /ai/chat {message,teacherId} → vite proxy 同源转 :8092/chat（SSE）。
+//   事件协议见 @/api/chat：stage/intent/outline/notes/paper/needAsk/error/done。
+//   发送后立刻进"接收中"态（左栏开始冒泡 + 阶段灯亮），不是转圈干等。
 // ---------------------------------------------------------------------------
 
 const userStore = useUserStore()
@@ -38,6 +37,8 @@ onMounted(async () => {
 })
 
 // ---- 左栏：对话流 ----------------------------------------------------------
+// echo  = AI 逐字思路气泡（intent/outline token 追加进当前 echo 气泡）
+// ask   = 反问气泡；error = 兜底提示；info = 人话 notes 句子
 type Msg =
   | { role: 'user'; text: string }
   | { role: 'ai'; kind: 'echo' | 'ask' | 'error' | 'info'; text: string }
@@ -47,10 +48,24 @@ const input = ref('')
 const sending = ref(false)
 const streamRef = ref<HTMLElement | null>(null)
 
+// ---- 左栏：WF3 阶段步骤灯（stage 事件逐条出现 + running/done 状态）----------
+interface StageItem {
+  key: string
+  label: string
+  status: 'running' | 'done'
+  detail?: string
+}
+const stages = ref<StageItem[]>([])
+
 // ---- 右栏：工作画布 --------------------------------------------------------
 const paper = ref<ChatPaper | null>(null)
 const outline = ref<Array<Record<string, unknown>>>([])
 const paperUrl = ref<string>('')
+
+// 当前正在逐字追加的 AI 气泡下标（intent/outline token 流落点）；-1 = 尚未开气泡。
+let echoIdx = -1
+// 流控制句柄（组件卸载 / 重新发送时中止上一条）。
+let handle: ChatStreamHandle | null = null
 
 // paper 来自 RuoYi 真库（结构宽松），容错取标题 / 题目列表。
 const paperTitle = computed(() => {
@@ -74,82 +89,145 @@ async function scrollToBottom() {
   if (el) el.scrollTop = el.scrollHeight
 }
 
-function applyResult(res: ChatResponse) {
-  // 兜底澄清：左栏渲染反问，不动右栏画布。
-  if (res.needAsk) {
-    messages.value.push({
-      role: 'ai',
-      kind: 'ask',
-      text: res.ask || '我没太懂你的意思，能说得更具体些吗？',
-    })
-    return
+/** 把一段 token 逐字追加到"当前 AI 思路气泡"；没有则先开一个 echo 气泡。 */
+function appendDelta(delta: string) {
+  if (!delta) return
+  if (echoIdx < 0) {
+    messages.value.push({ role: 'ai', kind: 'echo', text: '' })
+    echoIdx = messages.value.length - 1
   }
-
-  // 异常：左栏报错（不崩页面）。
-  if (!res.ok) {
-    messages.value.push({
-      role: 'ai',
-      kind: 'error',
-      text: res.error || '抱歉，处理时出了点问题，请稍后再试。',
-    })
-    return
+  const m = messages.value[echoIdx]
+  if (m && m.role === 'ai') {
+    m.text += delta
   }
+  scrollToBottom()
+}
 
-  // 组卷命中：左栏出思路回显，右栏出卷。
-  if (res.intentEcho) {
-    messages.value.push({ role: 'ai', kind: 'echo', text: res.intentEcho })
-  }
-  if (res.notes) {
-    messages.value.push({ role: 'ai', kind: 'info', text: res.notes })
-  }
+/** 重置一次会话的渲染态（新发送前清空，单轮即走不留历史）。 */
+function resetStream() {
+  messages.value = []
+  stages.value = []
+  paper.value = null
+  outline.value = []
+  paperUrl.value = ''
+  echoIdx = -1
+}
 
-  if (res.paper) paper.value = res.paper
-  outline.value = Array.isArray(res.outline)
-    ? (res.outline as Array<Record<string, unknown>>)
-    : []
-  paperUrl.value = res.paperUrl || ''
+/** 按事件 type 渲染（协议见 @/api/chat / T1 后端）。 */
+function handleEvent(ev: ChatEvent) {
+  switch (ev.type) {
+    // WF3 阶段灯：逐条出现 + running/done（同 key 更新而非重复追加）
+    case 'stage': {
+      const idx = stages.value.findIndex((s) => s.key === ev.key)
+      const item: StageItem = {
+        key: ev.key,
+        label: ev.label,
+        status: ev.status,
+        detail: ev.detail,
+      }
+      if (idx >= 0) stages.value[idx] = item
+      else stages.value.push(item)
+      scrollToBottom()
+      break
+    }
 
-  if (!res.paper && outline.value.length === 0) {
-    // 路由成组卷但既无 paper 又无 outline → 给个温和提示，别让右栏空着没解释。
-    messages.value.push({
-      role: 'ai',
-      kind: 'info',
-      text: '已识别为组卷意图，但这次没拿到卷子内容，可以换个说法再试一次。',
-    })
+    // LLM① 思路 token / LLM② 大纲 token → 逐字追加当前 AI 气泡（打字机）
+    case 'intent':
+      appendDelta(ev.delta)
+      break
+    case 'outline':
+      if (ev.delta) appendDelta(ev.delta)
+      // outline.items = 结构化大纲定型 → 右栏兜底预览（出卷前先有结构感知）
+      if (Array.isArray(ev.items)) outline.value = ev.items
+      break
+
+    // 人话 notes：每句一个独立气泡（🔴 不再 JSON.stringify 裸吐）
+    case 'notes': {
+      echoIdx = -1 // notes 后若还有 token，另起新气泡
+      const list = Array.isArray(ev.notes) ? ev.notes : []
+      for (const s of list) {
+        const sentence = String(s).trim()
+        if (sentence) messages.value.push({ role: 'ai', kind: 'info', text: sentence })
+      }
+      scrollToBottom()
+      break
+    }
+
+    // 出卷完成 → 右栏填充
+    case 'paper':
+      if (ev.paper) paper.value = ev.paper
+      if (Array.isArray(ev.outline)) outline.value = ev.outline
+      paperUrl.value = ev.paperUrl || ''
+      scrollToBottom()
+      break
+
+    // 非组卷 / 范围说不清 → 反问气泡
+    case 'needAsk':
+      echoIdx = -1
+      messages.value.push({
+        role: 'ai',
+        kind: 'ask',
+        text: ev.ask || '我没太懂你的意思，能说得更具体些吗？',
+      })
+      scrollToBottom()
+      break
+
+    // 任一步失败 → 兜底提示气泡（不崩）
+    case 'error':
+      echoIdx = -1
+      messages.value.push({
+        role: 'ai',
+        kind: 'error',
+        text: ev.error || '抱歉，处理时出了点问题，请稍后再试。',
+      })
+      scrollToBottom()
+      break
+
+    case 'done':
+      // 流自然结束（onClose 里收尾 sending），此处无需额外处理
+      break
   }
 }
 
-async function send() {
+function send() {
   const text = input.value.trim()
   if (!text || sending.value) return
+
+  // 中止上一条未完流（防止并发气泡串台）
+  handle?.abort()
+  resetStream()
 
   messages.value.push({ role: 'user', text })
   input.value = ''
   sending.value = true
   scrollToBottom()
 
-  // 思考中占位（拿到结果后移除）。
-  messages.value.push({ role: 'ai', kind: 'info', text: '正在理解你的需求并组卷…' })
-  const thinkingIdx = messages.value.length - 1
-  scrollToBottom()
-
-  try {
-    const res = await postChat({ message: text, teacherId: teacherId.value })
-    messages.value.splice(thinkingIdx, 1) // 去掉思考占位
-    applyResult(res)
-  } catch (e) {
-    messages.value.splice(thinkingIdx, 1)
-    console.error('[vibe-chat] /chat 调用失败:', e)
-    messages.value.push({
-      role: 'ai',
-      kind: 'error',
-      text: '网络或服务异常，未能完成本次请求，请确认 AI 服务已启动后重试。',
-    })
-  } finally {
-    sending.value = false
-    scrollToBottom()
-  }
+  handle = streamChat(
+    { message: text, teacherId: teacherId.value },
+    {
+      onEvent: handleEvent,
+      onError: (err) => {
+        console.error('[vibe-chat] /chat 流异常:', err)
+        echoIdx = -1
+        messages.value.push({
+          role: 'ai',
+          kind: 'error',
+          text: '网络或服务异常，未能完成本次请求，请确认 AI 服务已启动后重试。',
+        })
+        sending.value = false
+        scrollToBottom()
+      },
+      onClose: () => {
+        // 流正常结束：解除接收态
+        sending.value = false
+        scrollToBottom()
+      },
+    }
+  )
 }
+
+// 组件卸载中止在途流，避免回调访问已卸载组件。
+onBeforeUnmount(() => handle?.abort())
 </script>
 
 <template>
@@ -183,6 +261,28 @@ async function send() {
             <span v-else-if="m.role === 'ai' && m.kind === 'ask'" class="bubble-tag ask">反问</span>
             <span v-else-if="m.role === 'ai' && m.kind === 'error'" class="bubble-tag err">提示</span>
             <span class="bubble-text">{{ m.text }}</span>
+            <!-- 接收中 + 正在逐字追加的当前气泡 → 打字机光标 -->
+            <span
+              v-if="sending && m.role === 'ai' && m.kind === 'echo' && i === messages.length - 1"
+              class="type-caret"
+            />
+          </div>
+        </div>
+
+        <!-- WF3 阶段步骤灯：逐条出现 + running(转圈) / done(✓) -->
+        <div v-if="stages.length" class="stage-panel">
+          <div
+            v-for="s in stages"
+            :key="s.key"
+            class="stage-item"
+            :class="s.status === 'done' ? 'is-done' : 'is-running'"
+          >
+            <span class="stage-icon">
+              <span v-if="s.status === 'done'">✓</span>
+              <span v-else class="stage-spin" />
+            </span>
+            <span class="stage-label">{{ s.label }}</span>
+            <span v-if="s.detail" class="stage-detail">{{ s.detail }}</span>
           </div>
         </div>
       </div>
@@ -397,6 +497,76 @@ async function send() {
 }
 .bubble-tag.err {
   color: #cf1322;
+}
+
+/* 打字机光标（接收中的当前思路气泡末尾闪烁竖线） */
+.type-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: #4080ff;
+  animation: caret-blink 1s steps(1) infinite;
+}
+@keyframes caret-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* ===== WF3 阶段步骤灯 ===== */
+.stage-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  background: #f7f9fc;
+  border: 1px solid #eef1f6;
+  border-radius: 10px;
+}
+.stage-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.stage-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+.stage-item.is-done .stage-icon {
+  color: #22c55e;
+  font-weight: 700;
+}
+.stage-spin {
+  width: 12px;
+  height: 12px;
+  border: 2px solid #c9d6ee;
+  border-top-color: #4080ff;
+  border-radius: 50%;
+  animation: stage-rotate 0.7s linear infinite;
+}
+@keyframes stage-rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.stage-item.is-running .stage-label {
+  color: #4080ff;
+  font-weight: 600;
+}
+.stage-item.is-done .stage-label {
+  color: #4e5969;
+}
+.stage-detail {
+  color: #a0a8b3;
+  font-size: 12px;
 }
 
 .chat-input {
