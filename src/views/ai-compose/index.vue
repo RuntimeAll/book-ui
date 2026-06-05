@@ -41,7 +41,9 @@ onMounted(async () => {
 // ask   = 反问气泡；error = 兜底提示；info = 人话 notes 句子
 type Msg =
   | { role: 'user'; text: string }
-  | { role: 'ai'; kind: 'echo' | 'ask' | 'error' | 'info'; text: string }
+  // echo 气泡：raw = 逐 token 累积的原文（可能混入 LLM① 参数解析器吐的裸 JSON），
+  //   text = 经 stripJsonSegments 剥离 JSON 段后的人话（template 只渲染 text）。
+  | { role: 'ai'; kind: 'echo' | 'ask' | 'error' | 'info'; text: string; raw?: string }
 
 const messages = ref<Msg[]>([])
 const input = ref('')
@@ -89,16 +91,70 @@ async function scrollToBottom() {
   if (el) el.scrollTop = el.scrollHeight
 }
 
+// ---------------------------------------------------------------------------
+// 🔴 PRD-C-005 G5 根因修复 —— intent 气泡剥离裸 JSON 段
+//
+// 后端 `type:intent` 事件被两类来源复用：①router 的 intentEcho（人话思路，该渲染）
+// ②LLM① 参数解析器（system prompt 要求只输出纯 JSON 对象 {knowledgePoints,typeDist,
+// _completeness...}，本质是给后端用的结构化参数，不是给老师看的话）。二者逐 token
+// 落进同一 echo 气泡 → 人话后跟一坨 `{ " : }` JSON 残迹（G5 截图症状）。
+//
+// 治本（非删字符绕断言）：echo 气泡累积原文 raw，渲染前用括号配平**结构感知**地
+// 整段剥离 JSON 对象/数组（{...} / [...]，含字符串内引号转义处理），只留人话。
+// 人话 intentEcho 不含独立 `{`，故不误伤；LLM① 必以 `{` 起头的对象，整段被剔除。
+// 流式下 raw 每次 append 后重新剥离（半截 JSON 也按"未配平=暂不显示"吞掉，配平后整段去除）。
+// ---------------------------------------------------------------------------
+
+/**
+ * 结构感知剥离字符串中的 JSON 对象/数组段，返回剩余人话（已 trim 收尾空白）。
+ * - 用栈做 {}/[] 配平；跳过 JSON 字符串字面量内的括号与转义引号，避免误判。
+ * - 顶层一旦遇到 `{` 或 `[` 进入 JSON 段，配平到对应闭合即整段丢弃。
+ * - 未配平（流式半截 JSON）的尾段也丢弃，等后续 token 补齐再显示。
+ */
+function stripJsonSegments(src: string): string {
+  let out = ''
+  let i = 0
+  const n = src.length
+  while (i < n) {
+    const ch = src[i]
+    if (ch === '{' || ch === '[') {
+      // 进入 JSON 段，配平到闭合（或字符串结束=半截，整段吞掉）
+      const stack: string[] = [ch]
+      let j = i + 1
+      let inStr = false
+      while (j < n && stack.length > 0) {
+        const c = src[j]
+        if (inStr) {
+          if (c === '\\') j++ // 跳过转义字符（含 \" \\ ）
+          else if (c === '"') inStr = false
+        } else if (c === '"') inStr = true
+        else if (c === '{' || c === '[') stack.push(c)
+        else if (c === '}' || c === ']') stack.pop()
+        j++
+      }
+      // stack 清空=配平整段丢弃；未清空=半截 JSON 同样丢弃（到 src 末尾）
+      i = j
+    } else {
+      out += ch
+      i++
+    }
+  }
+  // 收尾：删 JSON 段剥离后残留的孤立标点/空白（如人话与 JSON 间的换行、引导冒号）
+  return out.replace(/[ \t]*[:：]?\s*$/g, '').trim()
+}
+
 /** 把一段 token 逐字追加到"当前 AI 思路气泡"；没有则先开一个 echo 气泡。 */
 function appendDelta(delta: string) {
   if (!delta) return
   if (echoIdx < 0) {
-    messages.value.push({ role: 'ai', kind: 'echo', text: '' })
+    messages.value.push({ role: 'ai', kind: 'echo', text: '', raw: '' })
     echoIdx = messages.value.length - 1
   }
   const m = messages.value[echoIdx]
   if (m && m.role === 'ai') {
-    m.text += delta
+    // raw 累积原文（含可能的 JSON）；text 只放剥离 JSON 后的人话供 template 渲染。
+    m.raw = (m.raw ?? '') + delta
+    m.text = stripJsonSegments(m.raw)
   }
   scrollToBottom()
 }
@@ -249,6 +305,7 @@ onBeforeUnmount(() => handle?.abort())
 
         <div
           v-for="(m, i) in messages"
+          v-show="!(m.role === 'ai' && m.kind === 'echo' && !m.text)"
           :key="i"
           class="msg-row"
           :class="m.role === 'user' ? 'is-user' : 'is-ai'"
