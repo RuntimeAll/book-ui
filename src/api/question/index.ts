@@ -304,7 +304,7 @@ export const getQuestionDetail = (questionId: number) =>
   request.post<QuestionDetail, QuestionDetail>(`/teacher/question/select/${questionId}`)
 
 
-// Q' 卡 段① BE 新端点 — 按 ids 批查完整字段（含 answer / explain / optionsJson / freeTags / questionStdKnowledges）。
+// Q' 卡 段① BE 新端点 — 按 ids 批查完整字段（含 answer / explain / freeTags / questionStdKnowledges）。
 // query string = ?ids=1,2,3 逗号分隔（axios params 对 string 不会重复 key）；上限 100（BE 端约束）；
 // 软删自动过滤（BE WHERE status<>'2'）；顺序按 FIND_IN_SET 保入参顺序（FE 仍需 reorder 兜底）。
 export const questionListByIds = (ids: number[]) =>

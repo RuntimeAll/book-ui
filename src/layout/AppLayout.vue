@@ -55,13 +55,13 @@ interface MenuItem {
 
 const allMenuItems: MenuItem[] = [
   { label: '首页', path: '/home' },
+  { label: 'AI 助手', path: '/ai-assistant' },                  // 🔴 PRD-C-004/005 老师 vibe 聊天入口（2026-06-05 让位真首页后从 /home 下移至此）
   { label: '我的工作台', path: '/workspace' },                  // U-3 教师工作台聚合页
   { label: '卷库', path: '/papers/index' },
   { label: '题库', path: '/question/index' },
-  { label: '资料库', path: '/materials/index' },
-  // 示范受限入口：仅 superadmin 可见，与路由 /admin/console 的 meta.roles 对齐。
-  // A 线主体是 teacher，此项验证"菜单按角色显隐"机制；teacher 登录看不到它。
-  { label: '管理控制台', path: '/admin/console', roles: ['superadmin'] },
+  // 资料库：用户 2026-06-04 拍板「暂时隐藏不做开发」→ 菜单隐藏，路由 /materials/index 保留备用。
+  // { label: '资料库', path: '/materials/index' },
+  // 管理控制台：纯占位无业务（原 PRD-A-005「按角色显隐」示范页），用户 2026-06-04 拍板移除（菜单+路由一并清）。
 ]
 
 // PRD-A-005 T2 — 菜单按 userStore.roles 过滤显隐（单一事实源 = store roles）。

@@ -5,6 +5,7 @@ import { ElMessage } from 'element-plus'
 import { ArrowLeft, Check, ShoppingCart, Edit, Star, InfoFilled, Download, Top, Bottom, Delete, Plus, DocumentChecked, Close } from '@element-plus/icons-vue'
 import {
   getPaperDetail,
+  removeFavorite,
   type PaperDetailVo,
   type PaperSectionVo,
   type PaperSourceQuestion,
@@ -14,6 +15,8 @@ import { updateExamPaper, type UpdatePaperQuestion } from '@/api/paper/index'
 import FreeTagList from '@/components/business/FreeTagList/index.vue'
 import PaperPreview from '@/components/business/PaperPreview/index.vue'
 import QuestionCard from '@/components/business/QuestionCard/index.vue'
+import SketchPad from '@/components/business/SketchPad/index.vue'
+import FavoriteFolderDrawer from '@/components/FavoriteFolderDrawer/index.vue'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
 import { useUserStore } from '@/store/user'
 import { getCurrentUser } from '@/api/user'
@@ -140,12 +143,46 @@ async function handleBasketToggle(q: PaperSourceQuestion) {
   }
 }
 
-// ── 草稿 / 收藏 placeholder（misikt 风格题块顶部右侧）──
+// ── 草稿纸 ──────────────────────────────────────────────────
+const sketchVisible = ref(false)
 function handleDraft() {
-  ElMessage.info('草稿功能开发中')
+  sketchVisible.value = true
 }
-function handleFavorite() {
-  ElMessage.info('收藏功能开发中')
+
+// ── 收藏（用户 2026-06-05 重修：对齐题库范式，走收藏目录抽屉 + 真态 isFavorite）──
+// source 页题目现已带后端 isFavorite（PaperDetailServiceImpl LEFT JOIN biz_question_favorite），
+// 故与题库一致：未收藏→弹收藏目录抽屉(addFavorite 选夹)，已收藏→直接 removeFavorite。星标反映真态、可持久。
+const favDrawerVisible = ref(false)
+const favDrawerQuestionId = ref<number>(0)
+
+// 在 detail.sections[].questions[] 里按 id 定位题对象并 patch isFavorite（Vue3 深响应，直接改触发重渲染）
+function patchFavorite(id: number, val: boolean) {
+  for (const sec of detail.value?.sections ?? []) {
+    const q = (sec.questions || []).find((x) => x.id === id)
+    if (q) {
+      q.isFavorite = val
+      return
+    }
+  }
+}
+
+function handleFavorite(q: PaperSourceQuestion) {
+  if (q.isFavorite) {
+    // 已收藏 → 直接取消（乐观更新 + 异步调 API）
+    patchFavorite(q.id, false)
+    ElMessage.success('已取消收藏')
+    removeFavorite(q.id).catch((e) => {
+      console.warn('[source] removeFavorite failed (local state already updated)', e)
+    })
+  } else {
+    // 未收藏 → 弹收藏目录抽屉（与题库一致）
+    favDrawerQuestionId.value = q.id
+    favDrawerVisible.value = true
+  }
+}
+
+function handleFavDrawerSuccess(_folderId: number | string | undefined) {
+  if (favDrawerQuestionId.value) patchFavorite(favDrawerQuestionId.value, true)
 }
 
 function goBack() {
@@ -454,8 +491,14 @@ watch(paperId, async () => {
                 <el-button size="small" link class="action-icon-btn" @click="handleDraft">
                   <el-icon><Edit /></el-icon>草稿
                 </el-button>
-                <el-button size="small" link class="action-icon-btn" @click="handleFavorite">
-                  <el-icon><Star /></el-icon>
+                <el-button
+                  size="small"
+                  link
+                  class="action-icon-btn"
+                  :class="{ 'is-fav': q.isFavorite }"
+                  @click="handleFavorite(q)"
+                >
+                  <el-icon><Star /></el-icon>{{ q.isFavorite ? '已收藏' : '收藏' }}
                 </el-button>
                 <el-button
                   size="small"
@@ -661,6 +704,16 @@ watch(paperId, async () => {
         <el-button @click="addDialogVisible = false">关闭</el-button>
       </template>
     </el-dialog>
+
+    <!-- 收藏目录抽屉（与题库一致：未收藏题点收藏 → 选目录）-->
+    <FavoriteFolderDrawer
+      v-model="favDrawerVisible"
+      :question-id="favDrawerQuestionId"
+      @success="handleFavDrawerSuccess"
+    />
+
+    <!-- 草稿纸（覆盖式涂画）-->
+    <SketchPad v-model:visible="sketchVisible" />
   </div>
 </template>
 
@@ -883,6 +936,10 @@ watch(paperId, async () => {
 
 .action-icon-btn:hover {
   color: #4080ff;
+}
+
+.action-icon-btn.is-fav {
+  color: #f7ba1e;
 }
 
 .action-basket-btn {

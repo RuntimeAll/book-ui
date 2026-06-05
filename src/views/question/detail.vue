@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
@@ -7,7 +7,6 @@ import {
   Star,
   Edit,
   ShoppingCart,
-  Warning,
   ChatDotRound,
   Plus,
 } from '@element-plus/icons-vue'
@@ -25,6 +24,7 @@ import {
   type SimilarQuestion,
 } from '@/api/question/index'
 import FreeTagList from '@/components/business/FreeTagList/index.vue'
+import SketchPad from '@/components/business/SketchPad/index.vue'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
 
 // ── 路由 ────────────────────────────────────────────────────
@@ -35,6 +35,9 @@ const router = useRouter()
 // 精度丢失 → BE 查 DB 没这个 id → "题目详情加载失败"。改全程 string，BE @PathVariable
 // Long 收 numeric string 自动 parse 不丢精度。
 const questionId = computed(() => String(route.params.id))
+
+// ── 草稿纸 ──────────────────────────────────────────────────
+const sketchVisible = ref(false)
 
 // ── 试题栏（全局 singleton composable） ──────────────────────
 const basket = useQuestionBasket()
@@ -206,11 +209,6 @@ async function loadSimilar() {
   }
 }
 
-// ── 题目报错（V1：功能开发中，本卡 PRD F-5 删 API 函数 + view 改 noop） ─────
-function handleReport() {
-  ElMessage.info('题目报错功能开发中，敬请期待')
-}
-
 // ── 工具 ─────────────────────────────────────────────────────
 function getDifficultyStars(difficult: number | null) {
   const val = difficult ?? 0
@@ -220,6 +218,12 @@ function getDifficultyStars(difficult: number | null) {
 function getQuestionTypeLabel(type: number): string {
   const map: Record<number, string> = { 1: '选择题', 4: '填空题', 5: '简答题' }
   return map[type] ?? `题型${type}`
+}
+
+// 题型彩色标签类型（选择=蓝 / 填空=绿 / 简答=橙），右栏「题目信息」用
+function getQuestionTypeTagType(type: number): 'primary' | 'success' | 'warning' | 'info' {
+  const map: Record<number, 'primary' | 'success' | 'warning'> = { 1: 'primary', 4: 'success', 5: 'warning' }
+  return map[type] ?? 'info'
 }
 
 function getKnowledgeTagType(idx: number): 'success' | 'primary' | 'warning' | 'danger' | 'info' {
@@ -241,6 +245,19 @@ function goToPaperSource(paperId: number) {
 onMounted(async () => {
   await loadQuestion()
   // 并行加载侧边栏数据
+  Promise.allSettled([loadNotes(), loadSources()])
+})
+
+// SPA 内 route.params.id 变化（如点「相似题推荐」跳另一题）时重载——
+// 否则 vue-router 复用本组件、onMounted 不重跑，题干/备注/收录/相似题全停在旧题
+// （与 source.vue PRD-A-005 G6 同类坑）。换题时先重置展开/输入态，再重新拉数据。
+watch(questionId, async () => {
+  answerExpanded.value = false
+  explainExpanded.value = false
+  similarExpanded.value = false
+  similarQuestions.value = []
+  noteInput.value = ''
+  await loadQuestion()
   Promise.allSettled([loadNotes(), loadSources()])
 })
 </script>
@@ -296,7 +313,7 @@ onMounted(async () => {
           </div>
           <div class="meta-right">
             <!-- 草稿 -->
-            <el-button size="small" class="action-btn" @click="ElMessage.info('草稿功能开发中')">
+            <el-button size="small" class="action-btn" @click="sketchVisible = true">
               <el-icon><Edit /></el-icon>草稿
             </el-button>
             <!-- 收藏 -->
@@ -508,38 +525,33 @@ onMounted(async () => {
           </div>
         </div>
 
-        <!-- 题目报错 按钮 -->
-        <div class="sidebar-card sidebar-card--report">
-          <el-button
-            type="warning"
-            plain
-            size="default"
-            class="report-btn"
-            @click="handleReport"
-          >
-            <el-icon><Warning /></el-icon>
-            题目报错
-          </el-button>
-        </div>
-
-        <!-- 题型信息 -->
-        <div class="sidebar-card sidebar-card--info">
-          <div class="info-item">
-            <span class="info-label">题型</span>
-            <span class="info-value">{{ getQuestionTypeLabel(question.questionType) }}</span>
+        <!-- 题目信息（用户 2026-06-05 重整：加标题不再裸，题型用彩色 tag，移除题目ID）-->
+        <div class="sidebar-card">
+          <div class="sidebar-card-header">
+            <span class="sidebar-card-title">题目信息</span>
           </div>
-          <div class="info-item">
-            <span class="info-label">题目ID</span>
-            <span class="info-value">{{ question.id }}</span>
+          <div class="sidebar-card-body">
+            <div class="info-row">
+              <span class="info-label">题型</span>
+              <el-tag
+                :type="getQuestionTypeTagType(question.questionType)"
+                size="small"
+                effect="light"
+                round
+              >
+                {{ getQuestionTypeLabel(question.questionType) }}
+              </el-tag>
+            </div>
           </div>
-          <div class="info-item">
-            <span class="info-label">创建时间</span>
-            <span class="info-value">{{ question.createTime || '—' }}</span>
-          </div>
+          <!-- 题目ID 已移除（对老师无意义，用户 2026-06-05 拍板）；
+               创建时间已隐藏(2026-06-04): BE createTime 是 misikt 导入占位戳，非真实时间，待录题功能落地再恢复。 -->
         </div>
       </div>
     </div>
   </div>
+
+  <!-- 草稿纸 -->
+  <SketchPad v-model:visible="sketchVisible" />
 </template>
 
 <style scoped>
@@ -948,31 +960,16 @@ onMounted(async () => {
   width: 100%;
 }
 
-/* 题型信息 card */
-.sidebar-card--info .sidebar-card-body {
-  padding: 10px 14px;
-}
-
-.info-item {
+/* 题目信息 card —— 单行：左 label / 右彩色 tag */
+.info-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 5px 0;
-  border-bottom: 1px solid #f7f8fa;
-}
-
-.info-item:last-child {
-  border-bottom: none;
+  gap: 8px;
 }
 
 .info-label {
-  font-size: 12px;
+  font-size: 13px;
   color: #86909c;
-}
-
-.info-value {
-  font-size: 12px;
-  color: #4e5969;
-  font-weight: 500;
 }
 </style>

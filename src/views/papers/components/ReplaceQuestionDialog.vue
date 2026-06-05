@@ -40,20 +40,6 @@ const filterType = ref<number | ''>('')     // '' = 全部
 const filterDiff = ref<number | ''>('')     // '' = 全部
 const filterKeyword = ref('')
 
-// visible 打开时用 props.question 预填并发起首次检索
-watch(
-  () => props.visible,
-  (v) => {
-    if (v) {
-      filterType.value = props.question.questionType ?? ''
-      filterDiff.value = props.question.difficult ?? ''
-      filterKeyword.value = ''
-      currentPage.value = 1
-      doSearch()
-    }
-  },
-)
-
 // ── 分页 / 列表 ───────────────────────────────────────────────
 const loading = ref(false)
 const list = ref<QuestionItem[]>([])
@@ -92,6 +78,27 @@ async function doSearch() {
     loading.value = false
   }
 }
+
+// visible 打开时用 props.question 预填并发起首次检索。
+// 🔴 immediate 必须开：workbench 用 v-if="replaceTargetRow" 控制本组件挂载，首次点「换一题」时
+// 组件刚挂载、props.visible 初值已是 true（同 tick 设置），非 immediate watch 监听不到「变化」→
+// doSearch 永不触发 → 首次打开恒「暂无匹配题目」。immediate 让挂载即跑一次（回调内 if(v) 守卫，
+// 常驻 visible=false 态不会误搜）。
+// ⚠️ 本块必须放在 doSearch 及其依赖的 ref（currentPage/loading/list）之后 —— immediate 会在 setup
+// 期间同步执行 doSearch，提前定义会撞 const TDZ（Cannot access 'currentPage' before initialization）。
+watch(
+  () => props.visible,
+  (v) => {
+    if (v) {
+      filterType.value = props.question.questionType ?? ''
+      filterDiff.value = props.question.difficult ?? ''
+      filterKeyword.value = ''
+      currentPage.value = 1
+      doSearch()
+    }
+  },
+  { immediate: true },
+)
 
 function handleSearch() {
   currentPage.value = 1
