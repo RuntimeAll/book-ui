@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
@@ -245,6 +245,19 @@ function goToPaperSource(paperId: number) {
 onMounted(async () => {
   await loadQuestion()
   // 并行加载侧边栏数据
+  Promise.allSettled([loadNotes(), loadSources()])
+})
+
+// SPA 内 route.params.id 变化（如点「相似题推荐」跳另一题）时重载——
+// 否则 vue-router 复用本组件、onMounted 不重跑，题干/备注/收录/相似题全停在旧题
+// （与 source.vue PRD-A-005 G6 同类坑）。换题时先重置展开/输入态，再重新拉数据。
+watch(questionId, async () => {
+  answerExpanded.value = false
+  explainExpanded.value = false
+  similarExpanded.value = false
+  similarQuestions.value = []
+  noteInput.value = ''
+  await loadQuestion()
   Promise.allSettled([loadNotes(), loadSources()])
 })
 </script>
