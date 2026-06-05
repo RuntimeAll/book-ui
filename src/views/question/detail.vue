@@ -220,6 +220,12 @@ function getQuestionTypeLabel(type: number): string {
   return map[type] ?? `题型${type}`
 }
 
+// 题型彩色标签类型（选择=蓝 / 填空=绿 / 简答=橙），右栏「题目信息」用
+function getQuestionTypeTagType(type: number): 'primary' | 'success' | 'warning' | 'info' {
+  const map: Record<number, 'primary' | 'success' | 'warning'> = { 1: 'primary', 4: 'success', 5: 'warning' }
+  return map[type] ?? 'info'
+}
+
 function getKnowledgeTagType(idx: number): 'success' | 'primary' | 'warning' | 'danger' | 'info' {
   const types: Array<'success' | 'primary' | 'warning' | 'danger' | 'info'> = [
     'success', 'primary', 'warning', 'danger', 'info'
@@ -506,18 +512,26 @@ onMounted(async () => {
           </div>
         </div>
 
-        <!-- 题型信息 -->
-        <div class="sidebar-card sidebar-card--info">
-          <div class="info-item">
-            <span class="info-label">题型</span>
-            <span class="info-value">{{ getQuestionTypeLabel(question.questionType) }}</span>
+        <!-- 题目信息（用户 2026-06-05 重整：加标题不再裸，题型用彩色 tag，移除题目ID）-->
+        <div class="sidebar-card">
+          <div class="sidebar-card-header">
+            <span class="sidebar-card-title">题目信息</span>
           </div>
-          <div class="info-item">
-            <span class="info-label">题目ID</span>
-            <span class="info-value">{{ question.id }}</span>
+          <div class="sidebar-card-body">
+            <div class="info-row">
+              <span class="info-label">题型</span>
+              <el-tag
+                :type="getQuestionTypeTagType(question.questionType)"
+                size="small"
+                effect="light"
+                round
+              >
+                {{ getQuestionTypeLabel(question.questionType) }}
+              </el-tag>
+            </div>
           </div>
-          <!-- 创建时间已隐藏(用户 2026-06-04 拍板): BE createTime 是 misikt 导入占位时间戳(1764000000000),
-               非真实创建时间, 对老师无意义; 待录题功能落地后题目有真实 createTime 再恢复。 -->
+          <!-- 题目ID 已移除（对老师无意义，用户 2026-06-05 拍板）；
+               创建时间已隐藏(2026-06-04): BE createTime 是 misikt 导入占位戳，非真实时间，待录题功能落地再恢复。 -->
         </div>
       </div>
     </div>
@@ -933,31 +947,16 @@ onMounted(async () => {
   width: 100%;
 }
 
-/* 题型信息 card */
-.sidebar-card--info .sidebar-card-body {
-  padding: 10px 14px;
-}
-
-.info-item {
+/* 题目信息 card —— 单行：左 label / 右彩色 tag */
+.info-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 5px 0;
-  border-bottom: 1px solid #f7f8fa;
-}
-
-.info-item:last-child {
-  border-bottom: none;
+  gap: 8px;
 }
 
 .info-label {
-  font-size: 12px;
+  font-size: 13px;
   color: #86909c;
-}
-
-.info-value {
-  font-size: 12px;
-  color: #4e5969;
-  font-weight: 500;
 }
 </style>
