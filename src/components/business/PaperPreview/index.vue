@@ -311,47 +311,6 @@ async function handleExportPdf() {
               </div>
             </template>
 
-            <!-- ── 富文本模式（V2 待启用 — TODO）─────────────────────────────── -->
-            <!-- 触发条件：image_asset OCR 文字源完整 / 用户切到富文本视图 / admin 后台编辑场景 -->
-            <!-- 启用方式：把上面 RENDER_MODE 改为 'rich-text' 即可 -->
-            <template v-else-if="RENDER_MODE === 'rich-text'">
-              <!-- 题干：stemText v-html + stemImg 兜底 -->
-              <div class="pp-q-stem">
-                <div v-if="q.stemText" class="stem-text" v-html="q.stemText"></div>
-                <img v-if="q.stemImg" :src="q.stemImg" alt="题干图" class="stem-img" />
-              </div>
-
-              <!-- 选项区（仅 optionsJson 解析成功时渲染） -->
-              <ol
-                v-if="parseOptions(q.optionsJson)"
-                class="pp-q-options"
-              >
-                <li
-                  v-for="opt in parseOptions(q.optionsJson)!"
-                  :key="opt.key"
-                  class="pp-q-option"
-                >
-                  <span class="opt-key">{{ opt.key }}.</span>
-                  <span class="opt-text" v-html="opt.text"></span>
-                </li>
-              </ol>
-
-              <!-- 答案：v-html answer + answerImg 兜底 -->
-              <div v-show="showAnswer" class="pp-q-answer">
-                <span class="label">【答案】</span>
-                <span v-if="q.answer" v-html="q.answer"></span>
-                <img v-if="q.answerImg" :src="q.answerImg" alt="答案图" class="ans-img" />
-                <span v-if="!q.answer && !q.answerImg" class="placeholder">（无答案数据）</span>
-              </div>
-
-              <!-- 解析：v-html explain + explainImg 兜底 -->
-              <div v-show="showExplain" class="pp-q-explain">
-                <span class="label">【解析】</span>
-                <span v-if="q.explain" v-html="q.explain"></span>
-                <img v-if="q.explainImg" :src="q.explainImg" alt="解析图" class="exp-img" />
-                <span v-if="!q.explain && !q.explainImg" class="placeholder">（无解析数据）</span>
-              </div>
-            </template>
             </div>
           </div>
         </section>

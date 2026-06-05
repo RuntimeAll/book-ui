@@ -141,12 +141,9 @@ const _items = computed<PaperListItem[]>(() => {
         suggestTime: null,
         createTime: '',
         finishTime: null,
-        hgScore: null,
         createUser: 0,
-        directoryName: null,
         subjectId: '',
         paperType: 1,
-        frameTextContentId: null,
         status: 1,
         sort: id,
       })
