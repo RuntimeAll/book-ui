@@ -1,6 +1,20 @@
 /**
  * usePaperBasket — 试卷篮全局共享状态 composable (R 卡段②)
  *
+ * ╔══ PRD-A-010 T3 合并审查标记（🔴 本卡仅标记重叠、不真合）═══════════════════╗
+ * ║ 本文件与 useQuestionBasket（题级 / 试题栏）是【高度重叠】的镜像复刻         ║
+ * ║（见本文件下方原注释「镜像复刻 useQuestionBasket.ts」）。完整重叠边界、可抽   ║
+ * ║ createBasket<T> 泛型工厂的对称清单、以及【为什么本卡不合】的论证，统一记在   ║
+ * ║ useQuestionBasket.ts 文件头标记框，避免两处漂移。                          ║
+ * ║                                                                            ║
+ * ║ 本文件相对 useQuestionBasket【独有】：BASKET_MAX=20 上限自查、跨 tab        ║
+ * ║   storage 事件同步(_onStorageEvent)、refreshFromServer(BE 为准刷新)、       ║
+ * ║   apiEmpty/apiCancel 端点。合并时这些差异需作为「注入项」保留。            ║
+ * ║                                                                            ║
+ * ║ 注：useBasketWorkbench 不是合并对象 —— 它是本 composable 的【消费者】       ║
+ * ║   (const basket = usePaperBasket())，把卷头打散成题级聚合，职责正交。       ║
+ * ╚════════════════════════════════════════════════════════════════════════════╝
+ *
  * 设计：module-scoped singleton（state 在模块顶层声明，多组件调 usePaperBasket()
  * 返回同一份 reactive 引用）→ 卷库列表页 / FAB / dialog 实时联动。
  *

@@ -1,6 +1,31 @@
 /**
  * useQuestionBasket — 试题栏全局共享状态 composable
  *
+ * ╔══ PRD-A-010 T3 合并审查标记（🔴 本卡仅标记重叠、不真合）═══════════════════╗
+ * ║ basket 三件套职责与重叠边界：                                              ║
+ * ║  • useQuestionBasket（本文件，题级 / 试题栏）                              ║
+ * ║  • usePaperBasket（卷级 / 试卷篮）  ← 与本文件【高度重叠】                  ║
+ * ║  • useBasketWorkbench（工作台数据层）← usePaperBasket 的【消费者】，职责正交 ║
+ * ║                                                                            ║
+ * ║ 【重叠边界】本文件 与 usePaperBasket 是同一套 module-singleton + LS 双 key  ║
+ * ║   + 乐观更新模式的镜像复刻。逐一对称的部分（合并时可抽 createBasket<T> 泛型   ║
+ * ║   工厂消重）：                                                              ║
+ * ║     readBasketIdsFromStorage / writeBasketIdsToStorage                      ║
+ * ║     readBasketCacheFromStorage / writeBasketCacheToStorage                  ║
+ * ║     _basketIds / _cache / _togglingIds / _dialogVisible / _count / _items   ║
+ * ║     syncToStorage / syncFromServer / add / remove / clear / isLoading       ║
+ * ║     openDialog / closeDialog（签名仅实体泛型 QuestionItem↔PaperListItem 不同）║
+ * ║   本文件【独有】：addMany（批量加入）、composeAndDownload（一键组卷跳转）。  ║
+ * ║   usePaperBasket【独有】：BASKET_MAX=20 上限自查、跨 tab storage 事件同步、   ║
+ * ║     refreshFromServer（BE 为准刷新）、apiEmpty/cancel。                      ║
+ * ║                                                                            ║
+ * ║ 【为什么本卡不合】二者都在生产路径使用（题库/详情/FAB ↔ 卷库/FAB/dialog），  ║
+ * ║   非死代码。贸然抽泛型工厂会触动两条独立业务流的回归面（PRD-A-001 删旧组件   ║
+ * ║   漏隐性职责返工的同类风险）。真合需单独立卡：先抽 createBasket<T,EmptyItem> ║
+ * ║   工厂收敛 LS/state/CRUD，再让两 composable 各自注入差异（上限/跨tab/端点/   ║
+ * ║   addMany/compose），配 book-test 双篮回归绿后切换。                        ║
+ * ╚════════════════════════════════════════════════════════════════════════════╝
+ *
  * 设计：module-scoped singleton（state 在模块顶层声明，多页面调 useQuestionBasket()
  * 返回同一份 reactive 引用）→ 题库列表页 / 详情页 / 全局 FAB 实时联动。
  *
