@@ -1614,6 +1614,12 @@ watch(paperId, async (newId) => {
   font-size: 14px;
 }
 
+/* 竖向堆叠的全宽按钮：清掉 EP 对相邻 el-button 注入的 margin-left:12px，
+   否则下面的按钮被右推 12px，与上面的左边对不齐（scoped 选择器带 [data-v] 提权，盖过 EP）。 */
+.action-btn + .action-btn {
+  margin-left: 0;
+}
+
 .primary-btn {
   background: #1E8A8A;
   border-color: #1E8A8A;
