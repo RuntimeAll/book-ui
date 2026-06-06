@@ -363,7 +363,8 @@ onBeforeUnmount(() => {
 }
 
 .color-dot.active {
-  border-color: #409eff;
-  box-shadow: 0 0 0 2px rgba(64, 158, 255, 0.3);
+  /* DESIGN §3.2 青系选中态：teal-600 边 + 青光晕（替换 EP 默认蓝） */
+  border-color: #1E8A8A;
+  box-shadow: 0 0 0 2px rgba(30, 138, 138, 0.3);
 }
 </style>

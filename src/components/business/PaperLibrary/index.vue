@@ -411,14 +411,17 @@ onMounted(async () => {
 }
 
 :deep(.el-tree-node.is-current > .el-tree-node__content) {
-  background-color: #ecf5ff;
-  color: #409eff;
+  /* DESIGN §3.2 青系：teal-50 底 + teal-600 字（替换 EP 默认蓝 #ecf5ff/#409eff） */
+  background-color: #E6F2F2;
+  color: #1E8A8A;
 }
 
 /* ── 中间主区 ─────────────────────────────── */
 .paper-main {
   flex: 1;
-  padding: 16px 20px;
+  /* 底部 100px 安全区：右下 FAB(试题栏 bottom:40 + 64px 高)会压住列表末几行的
+     「加入试卷篮/查看」链接 + 分页器，留出 padding-bottom 让其能滚到 FAB 上方。 */
+  padding: 16px 20px 100px;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -487,13 +490,13 @@ onMounted(async () => {
 }
 
 .paper-star:hover {
-  color: #409eff;
+  color: #1E8A8A;
 }
 
 .paper-name {
   font-size: 14px;
   font-weight: 600;
-  color: #409eff;
+  color: #1E8A8A;
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;

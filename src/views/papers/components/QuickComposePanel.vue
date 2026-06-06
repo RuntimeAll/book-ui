@@ -276,6 +276,9 @@ async function handleAddToBasket(): Promise<void> {
   flex-shrink: 0;
   margin-top: 12px;
   padding-top: 12px;
+  /* 底部 88px 安全区：右下 FAB(试题栏 bottom:40 + 64px)会压住本面板底部
+     「已选/加入试题篮/清除选择」按钮区，抬高让其露在 FAB 之上可点。 */
+  padding-bottom: 88px;
   border-top: 1px solid #f2f3f5;
   display: flex;
   flex-direction: column;
