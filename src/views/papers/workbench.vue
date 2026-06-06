@@ -21,15 +21,9 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import {
-  ArrowLeft,
-  Top,
-  Bottom,
-  Delete,
-  InfoFilled,
-  Refresh,
-  Edit,
-} from '@element-plus/icons-vue'
+// PRD-A-010 T3：题卡内的 Top/Bottom/Delete/InfoFilled/Refresh 图标随 WorkbenchCard
+// 子组件迁出，父组件仅保留顶栏 ArrowLeft + 大题重命名 Edit。
+import { ArrowLeft, Edit } from '@element-plus/icons-vue'
 import Sortable from 'sortablejs'
 import {
   getPaperDetail,
@@ -45,6 +39,7 @@ import {
 } from '@/api/paper/index'
 import PaperPreview from '@/components/business/PaperPreview/index.vue'
 import ReplaceQuestionDialog from './components/ReplaceQuestionDialog.vue'
+import WorkbenchCard from './components/WorkbenchCard.vue'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
 import { useUserStore } from '@/store/user'
 import { getCurrentUser } from '@/api/user'
@@ -198,10 +193,15 @@ function getQuestionTypeLabel(type: number): string {
   return map[type] ?? `题型${type}`
 }
 
+// PRD-A-010 T3：题卡题型彩标已随 WorkbenchCard 迁出（子组件内有同名实现）。
+// 父组件题号网格/分组标题不需要彩标色，故此函数父组件已不再引用。
+// 保留（轻量纯函数、零副作用）以备右栏后续若加题型色块复用，未真删避免误伤。
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function getQuestionTypeTag(type: number): string {
   const map: Record<number, string> = { 1: 'primary', 4: 'success', 5: 'warning', 2: 'info', 3: 'danger' }
   return map[type] ?? 'info'
 }
+void getQuestionTypeTag
 
 // 按题型分组，全局序号按 editRows 原始顺序（第i题 = 序号i+1，跨分组连续）
 const sectionGroups = computed<SectionGroup[]>(() => {
@@ -726,156 +726,22 @@ watch(paperId, async (newId) => {
               <span class="section-count">（共 {{ group.rows.length }} 题）</span>
             </div>
 
-            <!-- 题卡（复用 .source-question-card 骨架 — 视觉铁则）-->
-            <div
+            <!-- 题卡（PRD-A-010 T3：抽 WorkbenchCard 子组件，行为不变；
+                 根节点保留 wb-q-N id 供 scrollToQuestion 定位）-->
+            <WorkbenchCard
               v-for="{ row, globalIndex, editRowIndex } in group.rows"
               :key="row.id"
-              :id="'wb-q-' + globalIndex"
-              class="source-question-card workbench-card"
-            >
-              <!-- 顶部 meta：左(题型标签/难度/考点/来源) / 右(连续序号圆圈) -->
-              <div class="q-meta-top">
-                <div class="q-meta-top-left">
-                  <span
-                    class="q-type-tag"
-                    :class="`q-type--${getQuestionTypeTag(row.questionType)}`"
-                  >
-                    {{ getQuestionTypeLabel(row.questionType) }}
-                  </span>
-                  <span class="meta-label">难度:</span>
-                  <el-rate
-                    :model-value="row.difficult ?? 0"
-                    :max="4"
-                    disabled
-                    class="meta-rate"
-                  />
-                  <template v-if="row.questionKnowledges && row.questionKnowledges.length > 0">
-                    <span class="meta-label">考点:</span>
-                    <el-tag type="primary" size="small" class="primary-knowledge-tag">
-                      {{ row.questionKnowledges[0].knowledgeName || row.questionKnowledges[0].knowledgeId }}
-                    </el-tag>
-                  </template>
-                  <span v-if="row.examPaperName" class="source-text">
-                    来源: {{ row.examPaperName }}{{ row.examYear ? ` · ${row.examYear}年` : '' }}
-                  </span>
-                </div>
-                <!-- 全卷连续序号 -->
-                <div class="q-global-num">{{ globalIndex }}</div>
-              </div>
-
-              <!-- 题干区 -->
-              <div class="q-stem-area">
-                <img
-                  v-if="row.stemImg"
-                  :src="row.stemImg"
-                  class="q-stem-img"
-                  alt="题干"
-                  referrerpolicy="no-referrer"
-                  loading="lazy"
-                  @error="(e: Event) => ((e.target as HTMLImageElement).style.display = 'none')"
-                />
-                <p v-else-if="row.stemText" class="q-stem-text">{{ row.stemText }}</p>
-                <p v-else class="q-stem-placeholder">（题目 ID: {{ row.id }}）</p>
-              </div>
-
-              <!-- 解析区（toggle 显示，图模式 — 与 PaperPreview 一致）-->
-              <div v-if="row._showExplain" class="q-explain-area">
-                <div class="explain-label">解析：</div>
-                <img
-                  v-if="row.explainImg"
-                  :src="row.explainImg"
-                  class="q-explain-img"
-                  alt="解析"
-                  referrerpolicy="no-referrer"
-                  loading="lazy"
-                />
-                <p v-else class="q-stem-placeholder">暂无解析图</p>
-              </div>
-
-              <!-- 底部工具栏（misikt 风格：分值 | 解析 | 上移 | 下移 | 删除 | 换一题 | 详情）-->
-              <div class="q-toolbar">
-                <!-- 分值 -->
-                <div class="toolbar-score">
-                  <span class="toolbar-label">分值</span>
-                  <el-input-number
-                    v-model="row._score"
-                    :min="0"
-                    :max="100"
-                    :step="1"
-                    size="small"
-                    controls-position="right"
-                    style="width: 100px;"
-                  />
-                </div>
-                <div class="toolbar-divider" />
-                <!-- 解析 toggle -->
-                <el-button
-                  size="small"
-                  link
-                  :type="row._showExplain ? 'primary' : 'default'"
-                  class="toolbar-btn"
-                  @click="toggleExplain(row)"
-                >
-                  解析
-                </el-button>
-                <div class="toolbar-divider" />
-                <!-- 上移 -->
-                <el-button
-                  size="small"
-                  link
-                  class="toolbar-btn"
-                  :disabled="editRowIndex === 0"
-                  @click="moveUp(editRowIndex)"
-                >
-                  <el-icon><Top /></el-icon>
-                  上移
-                </el-button>
-                <!-- 下移 -->
-                <el-button
-                  size="small"
-                  link
-                  class="toolbar-btn"
-                  :disabled="editRowIndex === editRows.length - 1"
-                  @click="moveDown(editRowIndex)"
-                >
-                  <el-icon><Bottom /></el-icon>
-                  下移
-                </el-button>
-                <!-- 删除 -->
-                <el-button
-                  size="small"
-                  link
-                  type="danger"
-                  class="toolbar-btn"
-                  @click="deleteRow(editRowIndex)"
-                >
-                  <el-icon><Delete /></el-icon>
-                  删除
-                </el-button>
-                <div class="toolbar-divider" />
-                <!-- 换一题 -->
-                <el-button
-                  size="small"
-                  link
-                  class="toolbar-btn"
-                  @click="handleReplace(row, editRowIndex)"
-                >
-                  <el-icon><Refresh /></el-icon>
-                  换一题
-                </el-button>
-                <!-- 详情 -->
-                <el-button
-                  size="small"
-                  link
-                  type="primary"
-                  class="toolbar-btn"
-                  @click="handleDetail(row)"
-                >
-                  <el-icon><InfoFilled /></el-icon>
-                  详情
-                </el-button>
-              </div>
-            </div>
+              :row="row"
+              :global-index="globalIndex"
+              :edit-row-index="editRowIndex"
+              :total="editRows.length"
+              @toggle-explain="toggleExplain"
+              @move-up="moveUp"
+              @move-down="moveDown"
+              @delete="deleteRow"
+              @replace="handleReplace"
+              @detail="handleDetail"
+            />
           </section>
           </template>
 
@@ -891,143 +757,21 @@ watch(paperId, async (newId) => {
               <span class="section-count">（共 {{ group.rows.length }} 题）</span>
             </div>
 
-            <div
+            <!-- 题卡（同上抽 WorkbenchCard，按知识点分组复用同一子组件）-->
+            <WorkbenchCard
               v-for="{ row, globalIndex, editRowIndex } in group.rows"
               :key="row.id"
-              :id="'wb-q-' + globalIndex"
-              class="source-question-card workbench-card"
-            >
-              <div class="q-meta-top">
-                <div class="q-meta-top-left">
-                  <span
-                    class="q-type-tag"
-                    :class="`q-type--${getQuestionTypeTag(row.questionType)}`"
-                  >
-                    {{ getQuestionTypeLabel(row.questionType) }}
-                  </span>
-                  <span class="meta-label">难度:</span>
-                  <el-rate
-                    :model-value="row.difficult ?? 0"
-                    :max="4"
-                    disabled
-                    class="meta-rate"
-                  />
-                  <template v-if="row.questionKnowledges && row.questionKnowledges.length > 0">
-                    <span class="meta-label">考点:</span>
-                    <el-tag type="primary" size="small" class="primary-knowledge-tag">
-                      {{ row.questionKnowledges[0].knowledgeName || row.questionKnowledges[0].knowledgeId }}
-                    </el-tag>
-                  </template>
-                  <span v-if="row.examPaperName" class="source-text">
-                    来源: {{ row.examPaperName }}{{ row.examYear ? ` · ${row.examYear}年` : '' }}
-                  </span>
-                </div>
-                <div class="q-global-num">{{ globalIndex }}</div>
-              </div>
-
-              <div class="q-stem-area">
-                <img
-                  v-if="row.stemImg"
-                  :src="row.stemImg"
-                  class="q-stem-img"
-                  alt="题干"
-                  referrerpolicy="no-referrer"
-                  loading="lazy"
-                  @error="(e: Event) => ((e.target as HTMLImageElement).style.display = 'none')"
-                />
-                <p v-else-if="row.stemText" class="q-stem-text">{{ row.stemText }}</p>
-                <p v-else class="q-stem-placeholder">（题目 ID: {{ row.id }}）</p>
-              </div>
-
-              <div v-if="row._showExplain" class="q-explain-area">
-                <div class="explain-label">解析：</div>
-                <img
-                  v-if="row.explainImg"
-                  :src="row.explainImg"
-                  class="q-explain-img"
-                  alt="解析"
-                  referrerpolicy="no-referrer"
-                  loading="lazy"
-                />
-                <p v-else class="q-stem-placeholder">暂无解析图</p>
-              </div>
-
-              <div class="q-toolbar">
-                <div class="toolbar-score">
-                  <span class="toolbar-label">分值</span>
-                  <el-input-number
-                    v-model="row._score"
-                    :min="0"
-                    :max="100"
-                    :step="1"
-                    size="small"
-                    controls-position="right"
-                    style="width: 100px;"
-                  />
-                </div>
-                <div class="toolbar-divider" />
-                <el-button
-                  size="small"
-                  link
-                  :type="row._showExplain ? 'primary' : 'default'"
-                  class="toolbar-btn"
-                  @click="toggleExplain(row)"
-                >
-                  解析
-                </el-button>
-                <div class="toolbar-divider" />
-                <el-button
-                  size="small"
-                  link
-                  class="toolbar-btn"
-                  :disabled="editRowIndex === 0"
-                  @click="moveUp(editRowIndex)"
-                >
-                  <el-icon><Top /></el-icon>
-                  上移
-                </el-button>
-                <el-button
-                  size="small"
-                  link
-                  class="toolbar-btn"
-                  :disabled="editRowIndex === editRows.length - 1"
-                  @click="moveDown(editRowIndex)"
-                >
-                  <el-icon><Bottom /></el-icon>
-                  下移
-                </el-button>
-                <el-button
-                  size="small"
-                  link
-                  type="danger"
-                  class="toolbar-btn"
-                  @click="deleteRow(editRowIndex)"
-                >
-                  <el-icon><Delete /></el-icon>
-                  删除
-                </el-button>
-                <div class="toolbar-divider" />
-                <el-button
-                  size="small"
-                  link
-                  class="toolbar-btn"
-                  @click="handleReplace(row, editRowIndex)"
-                >
-                  <el-icon><Refresh /></el-icon>
-                  换一题
-                </el-button>
-                <el-button
-                  size="small"
-                  link
-                  type="primary"
-                  class="toolbar-btn"
-                  @click="handleDetail(row)"
-                >
-                  <el-icon><InfoFilled /></el-icon>
-                  详情
-                </el-button>
-              </div>
-            </div>
+              :row="row"
+              :global-index="globalIndex"
+              :edit-row-index="editRowIndex"
+              :total="editRows.length"
+              @toggle-explain="toggleExplain"
+              @move-up="moveUp"
+              @move-down="moveDown"
+              @delete="deleteRow"
+              @replace="handleReplace"
+              @detail="handleDetail"
+            />
           </section>
           </template>
         </template>
