@@ -88,7 +88,8 @@ function isActive(path: string): boolean {
 // U 卡顺手实装 P-2 — 试题栏 FAB 路由白名单（仅题库 / 卷库 / 工作台显示）。
 // Q 卡正式排除 /question/compose（工作台自身已展示题目列表，FAB 嵌套冗余）。
 const showQuestionBasket = computed(() => {
-  if (route.path === '/question/compose') {
+  // 组卷工作台自身已是组题上下文，FAB 浮在「创建试卷」CTA 上属冗余遮挡 → 与 /question/compose 同理排除
+  if (route.path === '/question/compose' || route.path.startsWith('/papers/workbench')) {
     return false
   }
   return route.path.startsWith('/question/')
@@ -101,7 +102,8 @@ const showQuestionBasket = computed(() => {
 // PRD-001 回归补丁 — 新增轻量绿色试卷篮 FAB(仅入口+角标，点击跳工作台，不复活旧 dialog)。
 //   白名单同试题栏(题库/卷库/工作台)，但在工作台本页隐藏(避免"点了进当前页")。
 const showPaperBasketFab = computed(() => {
-  if (route.path === '/papers/basket') {
+  // /papers/basket 三栏工作台 + /papers/workbench 组卷台：已在组卷上下文，FAB 冗余且压 CTA → 隐藏
+  if (route.path === '/papers/basket' || route.path.startsWith('/papers/workbench')) {
     return false
   }
   return route.path.startsWith('/question/')

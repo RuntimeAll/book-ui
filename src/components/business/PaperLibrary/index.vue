@@ -366,15 +366,18 @@ onMounted(async () => {
 <style scoped>
 .papers-page {
   display: flex;
-  min-height: calc(100vh - 60px);
+  /* 固定满高、自身不滚 —— 左侧目录与顶部搜索锁死，只让 table 列表内部滚（对齐题库交互） */
+  height: 100%;
   background: #f0f2f5;
   position: relative;
+  overflow: hidden;
 }
 
 /* ── 左侧目录 ─────────────────────────────── */
 .paper-sidebar {
   width: 300px;
   flex-shrink: 0;
+  height: 100%;
   background: #ffffff;
   padding: 16px 12px;
   border-right: 1px solid #ebeef5;
@@ -419,19 +422,20 @@ onMounted(async () => {
 /* ── 中间主区 ─────────────────────────────── */
 .paper-main {
   flex: 1;
-  /* 底部 100px 安全区：右下 FAB(试题栏 bottom:40 + 64px 高)会压住列表末几行的
-     「加入试卷篮/查看」链接 + 分页器，留出 padding-bottom 让其能滚到 FAB 上方。 */
-  padding: 16px 20px 100px;
+  height: 100%;
+  padding: 16px 20px;
   display: flex;
   flex-direction: column;
   gap: 12px;
   min-width: 0;
+  overflow: hidden; /* 自身不滚，滚动交给内部 .paper-list */
 }
 
 .search-bar {
   display: flex;
   gap: 10px;
   align-items: center;
+  flex-shrink: 0; /* 顶部搜索固定，不随列表滚走 */
 }
 
 .search-input {
@@ -442,12 +446,13 @@ onMounted(async () => {
   padding: 0 18px;
 }
 
-/* ── 卷列表 ───────────────────────────────── */
+/* ── 卷列表（唯一滚动区，对齐题库：左侧/搜索固定，只有列表滚） ── */
 .paper-list {
   flex: 1;
   background: #ffffff;
   border-radius: 4px;
-  min-height: 200px;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .paper-card {
@@ -542,6 +547,7 @@ onMounted(async () => {
 
 /* ── 分页器 ───────────────────────────────── */
 .pagination-wrap {
+  flex-shrink: 0; /* 分页固定底部，不随列表滚 */
   display: flex;
   justify-content: flex-start;
   padding: 12px 0;

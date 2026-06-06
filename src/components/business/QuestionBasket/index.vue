@@ -137,7 +137,7 @@ async function openPreview(item: QuestionItem) {
   <!-- ── 试题栏 dialog ── -->
   <el-dialog
     v-model="basket.dialogVisible.value"
-    width="560px"
+    width="720px"
     style="max-width: 92vw"
     :close-on-click-modal="false"
     class="basket-dialog"
@@ -440,7 +440,7 @@ async function openPreview(item: QuestionItem) {
 
 .stem-img-small {
   max-width: 100%;
-  max-height: 80px;
+  max-height: 112px;
   display: block;
   border-radius: 4px;
   cursor: zoom-in;
