@@ -22,7 +22,7 @@ const basket = useQuestionBasket()
 
 // ── 题型 label / 圆点颜色（沿用项目既有映射 {1选择 4填空 5简答}）──
 const TYPE_LABEL: Record<number, string> = { 1: '选择题', 4: '填空题', 5: '简答题' }
-const TYPE_DOT: Record<number, string> = { 1: '#4080ff', 4: '#2bb673', 5: '#f5a623' }
+const TYPE_DOT: Record<number, string> = { 1: '#1E8A8A', 4: '#2bb673', 5: '#f5a623' }
 function typeLabel(t: number): string {
   return TYPE_LABEL[t] ?? `题型${t}`
 }
@@ -235,13 +235,13 @@ async function handleAddToBasket(): Promise<void> {
 }
 
 .qc-cell:hover:not(:disabled) {
-  border-color: #4080ff;
-  color: #4080ff;
+  border-color: #1E8A8A;
+  color: #1E8A8A;
 }
 
 .qc-cell--active {
-  background: #4080ff;
-  border-color: #4080ff;
+  background: #1E8A8A;
+  border-color: #1E8A8A;
   color: #fff;
 }
 

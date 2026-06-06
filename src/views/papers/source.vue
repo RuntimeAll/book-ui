@@ -746,7 +746,7 @@ watch(paperId, async () => {
 }
 
 .back-btn:hover {
-  color: #4080ff;
+  color: #1E8A8A;
 }
 
 .topbar-info {
@@ -845,7 +845,7 @@ watch(paperId, async () => {
   margin: 0 0 10px;
   padding: 10px 14px;
   background: #fff;
-  border-left: 4px solid #4080ff;
+  border-left: 4px solid #1E8A8A;
   border-radius: 4px;
   border: 1px solid #f2f3f5;
   border-left-width: 4px;
@@ -869,7 +869,7 @@ watch(paperId, async () => {
 }
 
 .source-question-card:hover {
-  box-shadow: 0 4px 16px rgba(64, 128, 255, 0.1);
+  box-shadow: 0 4px 16px rgba(30, 138, 138, 0.1);
   border-color: #d0e2ff;
 }
 
@@ -935,7 +935,7 @@ watch(paperId, async () => {
 }
 
 .action-icon-btn:hover {
-  color: #4080ff;
+  color: #1E8A8A;
 }
 
 .action-icon-btn.is-fav {
@@ -1125,7 +1125,7 @@ watch(paperId, async () => {
 }
 
 .stat-num.total {
-  color: #4080ff;
+  color: #1E8A8A;
 }
 
 .stat-unit {
@@ -1146,7 +1146,7 @@ watch(paperId, async () => {
 .edit-row-index {
   width: 24px;
   height: 24px;
-  background: linear-gradient(135deg, #4080ff, #3370e8);
+  background: linear-gradient(135deg, #1E8A8A, #176E6E);
   color: #fff;
   font-size: 12px;
   font-weight: 700;

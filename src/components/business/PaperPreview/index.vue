@@ -382,7 +382,7 @@ async function handleExportPdf() {
   font-weight: 600;
   color: #1d2129;
   padding-bottom: 8px;
-  border-bottom: 2px solid #4080ff;
+  border-bottom: 2px solid #1E8A8A;
   margin: 0 0 16px;
 }
 
@@ -465,7 +465,7 @@ async function handleExportPdf() {
   margin-top: 10px;
   padding: 8px 12px;
   background: #f7f8fa;
-  border-left: 3px solid #4080ff;
+  border-left: 3px solid #1E8A8A;
   font-size: 14px;
   line-height: 1.8;
   color: #4e5969;
@@ -517,7 +517,7 @@ async function handleExportPdf() {
 
 .pp-export-progress {
   font-size: 12px;
-  color: #4080ff;
+  color: #1E8A8A;
   margin-right: auto;
 }
 </style>

@@ -122,11 +122,10 @@ function handleUpgrade() {
         <!-- Logo 区 -->
         <div class="logo-area">
           <div class="logo-icon">
-            <el-icon :size="22" color="#4080ff"><Collection /></el-icon>
+            <img src="/icon.png" alt="AI·备课助手" class="logo-img" />
           </div>
           <div class="logo-text-group">
-            <span class="logo-title">misikt 题库系统</span>
-            <span class="logo-subtitle">Teacher Workspace</span>
+            <span class="logo-title"><span class="logo-ai">AI</span>·备课助手</span>
           </div>
         </div>
 
@@ -198,7 +197,7 @@ function handleUpgrade() {
 
 <style scoped>
 .app-container {
-  background: #f0f2f5;
+  background: #f5f8f8;
 }
 
 /* ── 顶栏 ── */
@@ -233,12 +232,19 @@ function handleUpgrade() {
 .logo-icon {
   width: 36px;
   height: 36px;
-  background: linear-gradient(135deg, #e8f0ff, #d0e2ff);
   border-radius: 8px;
+  overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+}
+
+.logo-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .logo-text-group {
@@ -248,18 +254,16 @@ function handleUpgrade() {
 }
 
 .logo-title {
-  font-size: 15px;
-  font-weight: 700;
-  color: #1d2129;
+  font-size: 16px;
+  font-weight: 600;
+  color: #1d2a2e;
   letter-spacing: -0.2px;
 }
 
-.logo-subtitle {
-  font-size: 10px;
-  color: #86909c;
-  font-weight: 400;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
+/* "AI" 二字 violet-600 点睛（AI 在场，DESIGN §2.2） */
+.logo-ai {
+  color: #7b6cf0;
+  font-weight: 600;
 }
 
 /* ── 导航菜单 ── */
@@ -287,15 +291,15 @@ function handleUpgrade() {
 }
 
 .nav-item:hover {
-  color: #4080ff;
-  background: rgba(64, 128, 255, 0.04);
+  color: #1E8A8A;
+  background: rgba(30, 138, 138, 0.04);
 }
 
 .nav-item.active {
-  color: #4080ff;
+  color: #1E8A8A;
   font-weight: 600;
-  border-bottom-color: #4080ff;
-  background: rgba(64, 128, 255, 0.04);
+  border-bottom-color: #1E8A8A;
+  background: rgba(30, 138, 138, 0.04);
 }
 
 /* ── 右侧操作区 ── */
@@ -307,14 +311,14 @@ function handleUpgrade() {
 }
 
 .upgrade-btn {
-  background: linear-gradient(135deg, #4080ff, #3370e8);
+  background: linear-gradient(135deg, #1E8A8A, #176E6E);
   border: none;
   color: #fff;
   font-size: 13px;
   border-radius: 6px;
   padding: 0 14px;
   height: 32px;
-  box-shadow: 0 2px 6px rgba(64, 128, 255, 0.28);
+  box-shadow: 0 2px 6px rgba(30, 138, 138, 0.28);
   transition: all 0.2s ease;
   display: flex;
   align-items: center;
@@ -322,8 +326,8 @@ function handleUpgrade() {
 
 .upgrade-btn:hover {
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(64, 128, 255, 0.4);
-  background: linear-gradient(135deg, #5090ff, #4080ee) !important;
+  box-shadow: 0 4px 12px rgba(30, 138, 138, 0.4);
+  background: linear-gradient(135deg, #2BA3A3, #176E6E) !important;
   border: none !important;
   color: #fff !important;
 }
@@ -334,7 +338,7 @@ function handleUpgrade() {
 }
 
 .user-avatar {
-  background: linear-gradient(135deg, #4080ff, #3370e8);
+  background: linear-gradient(135deg, #1E8A8A, #176E6E);
   color: #fff;
   font-size: 13px;
   font-weight: 600;
@@ -343,7 +347,7 @@ function handleUpgrade() {
 }
 
 .avatar-wrap:hover .user-avatar {
-  box-shadow: 0 0 0 3px rgba(64, 128, 255, 0.2);
+  box-shadow: 0 0 0 3px rgba(30, 138, 138, 0.2);
 }
 
 /* ── 主内容区 ── */

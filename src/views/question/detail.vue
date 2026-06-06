@@ -583,7 +583,7 @@ watch(questionId, async () => {
 }
 
 .back-btn:hover {
-  color: #4080ff;
+  color: #1E8A8A;
 }
 
 .topbar-title {

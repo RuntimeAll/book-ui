@@ -111,7 +111,7 @@ async function toggleExplain(item: QuestionItem) {
     <template #header>
       <div class="basket-dialog-header">
         <div class="basket-dialog-title-area">
-          <el-icon color="#4080ff" :size="18"><ShoppingCart /></el-icon>
+          <el-icon color="#1E8A8A" :size="18"><ShoppingCart /></el-icon>
           <span class="basket-dialog-title">试题栏</span>
           <el-tag type="primary" size="small" round>{{ basket.items.value.length }} 题</el-tag>
         </div>
@@ -253,19 +253,19 @@ async function toggleExplain(item: QuestionItem) {
   width: 64px;
   height: 64px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #4080ff, #3370e8);
+  background: linear-gradient(135deg, #1E8A8A, #176E6E);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 3px;
-  box-shadow: 0 8px 24px rgba(64, 128, 255, 0.4);
+  box-shadow: 0 8px 24px rgba(30, 138, 138, 0.4);
   transition: all 0.25s ease;
 }
 
 .basket-fab:hover .fab-inner {
   transform: translateY(-3px);
-  box-shadow: 0 12px 32px rgba(64, 128, 255, 0.5);
+  box-shadow: 0 12px 32px rgba(30, 138, 138, 0.5);
 }
 
 .fab-label {
@@ -280,8 +280,8 @@ async function toggleExplain(item: QuestionItem) {
 }
 
 @keyframes fab-pulse {
-  0%, 100% { box-shadow: 0 8px 24px rgba(64, 128, 255, 0.4); }
-  50% { box-shadow: 0 8px 30px rgba(64, 128, 255, 0.6); }
+  0%, 100% { box-shadow: 0 8px 24px rgba(30, 138, 138, 0.4); }
+  50% { box-shadow: 0 8px 30px rgba(30, 138, 138, 0.6); }
 }
 
 /* ── 试题栏 dialog ── */
@@ -310,9 +310,9 @@ async function toggleExplain(item: QuestionItem) {
 }
 
 .compose-btn {
-  background: linear-gradient(135deg, #4080ff, #3370e8);
+  background: linear-gradient(135deg, #1E8A8A, #176E6E);
   border: none;
-  box-shadow: 0 2px 6px rgba(64, 128, 255, 0.3);
+  box-shadow: 0 2px 6px rgba(30, 138, 138, 0.3);
 }
 
 .basket-dialog-body {
@@ -392,15 +392,15 @@ async function toggleExplain(item: QuestionItem) {
 }
 
 .compose-btn-footer {
-  background: linear-gradient(135deg, #4080ff, #3370e8);
+  background: linear-gradient(135deg, #1E8A8A, #176E6E);
   border: none;
-  box-shadow: 0 2px 6px rgba(64, 128, 255, 0.3);
+  box-shadow: 0 2px 6px rgba(30, 138, 138, 0.3);
   transition: all 0.2s;
 }
 
 .compose-btn-footer:hover {
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(64, 128, 255, 0.45);
+  box-shadow: 0 4px 12px rgba(30, 138, 138, 0.45);
 }
 
 /* ── 题型 tag ── */

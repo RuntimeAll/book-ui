@@ -60,7 +60,7 @@ const emit = defineEmits<{
   border-radius: 8px;
   padding: 14px 16px;
   border: 1px solid #f2f3f5;
-  box-shadow: 0 2px 8px 0 rgba(64, 128, 255, 0.04);
+  box-shadow: 0 2px 8px 0 rgba(30, 138, 138, 0.04);
   margin-bottom: 12px;
 }
 
@@ -80,15 +80,15 @@ const emit = defineEmits<{
 }
 
 .search-btn {
-  background: linear-gradient(135deg, #4080ff, #3370e8);
+  background: linear-gradient(135deg, #1E8A8A, #176E6E);
   border: none;
-  box-shadow: 0 2px 6px rgba(64, 128, 255, 0.3);
+  box-shadow: 0 2px 6px rgba(30, 138, 138, 0.3);
   transition: all 0.2s;
 }
 
 .search-btn:hover {
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(64, 128, 255, 0.4);
+  box-shadow: 0 4px 12px rgba(30, 138, 138, 0.4);
 }
 
 .reset-btn {
@@ -98,7 +98,7 @@ const emit = defineEmits<{
 }
 
 .reset-btn:hover {
-  color: #4080ff;
-  border-color: #4080ff;
+  color: #1E8A8A;
+  border-color: #1E8A8A;
 }
 </style>

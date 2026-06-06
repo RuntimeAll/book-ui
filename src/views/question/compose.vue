@@ -244,7 +244,7 @@ function handleBack() {
 }
 
 .toolbar-right .meta b {
-  color: #4080ff;
+  color: #1E8A8A;
   font-weight: 600;
   font-size: 15px;
 }
@@ -322,7 +322,7 @@ function handleBack() {
 }
 
 .q-no {
-  background: #4080ff;
+  background: #1E8A8A;
   color: #fff;
   font-size: 12px;
   font-weight: 600;

@@ -1288,7 +1288,7 @@ watch(paperId, async (newId) => {
 }
 
 .back-btn:hover {
-  color: #4080ff;
+  color: #1E8A8A;
 }
 
 .title-input {
@@ -1320,7 +1320,7 @@ watch(paperId, async (newId) => {
 }
 
 .stat-num.total {
-  color: #4080ff;
+  color: #1E8A8A;
 }
 
 .stat-unit {
@@ -1367,7 +1367,7 @@ watch(paperId, async (newId) => {
   margin: 0 0 10px;
   padding: 10px 14px;
   background: #fff;
-  border-left: 4px solid #4080ff;
+  border-left: 4px solid #1E8A8A;
   border-radius: 4px;
   border: 1px solid #f2f3f5;
   border-left-width: 4px;
@@ -1397,7 +1397,7 @@ watch(paperId, async (newId) => {
 }
 
 .source-question-card:hover {
-  box-shadow: 0 4px 16px rgba(64, 128, 255, 0.1);
+  box-shadow: 0 4px 16px rgba(30, 138, 138, 0.1);
   border-color: #d0e2ff;
 }
 
@@ -1454,7 +1454,7 @@ watch(paperId, async (newId) => {
 .q-global-num {
   width: 28px;
   height: 28px;
-  background: linear-gradient(135deg, #4080ff, #3370e8);
+  background: linear-gradient(135deg, #1E8A8A, #176E6E);
   color: #fff;
   font-size: 13px;
   font-weight: 700;
@@ -1574,7 +1574,7 @@ watch(paperId, async (newId) => {
 
 @keyframes wbFlash {
   0%, 100% { box-shadow: none; }
-  30% { box-shadow: 0 0 0 3px #4080ff55; }
+  30% { box-shadow: 0 0 0 3px #1E8A8A55; }
 }
 
 .toolbar-score {
@@ -1607,7 +1607,7 @@ watch(paperId, async (newId) => {
 }
 
 .toolbar-btn:hover {
-  color: #4080ff;
+  color: #1E8A8A;
 }
 
 /* ── 右固定栏（改动④b）── */
@@ -1717,7 +1717,7 @@ watch(paperId, async (newId) => {
 }
 
 .rename-trigger:hover {
-  color: #4080ff;
+  color: #1E8A8A;
   background: #f0f5ff;
 }
 
@@ -1760,8 +1760,8 @@ watch(paperId, async (newId) => {
   width: 32px;
   height: 32px;
   border-radius: 6px;
-  border: 1px solid #4080ff;
-  color: #4080ff;
+  border: 1px solid #1E8A8A;
+  color: #1E8A8A;
   font-size: 13px;
   font-weight: 600;
   display: flex;
@@ -1774,7 +1774,7 @@ watch(paperId, async (newId) => {
 }
 
 .number-cell:hover {
-  background: #4080ff;
+  background: #1E8A8A;
   color: #fff;
 }
 
@@ -1791,19 +1791,19 @@ watch(paperId, async (newId) => {
 .freesort-ghost {
   opacity: 0.4;
   background: #e8f0ff !important;
-  border-color: #4080ff !important;
+  border-color: #1E8A8A !important;
   border-style: dashed !important;
 }
 
 .freesort-chosen {
-  background: #4080ff !important;
+  background: #1E8A8A !important;
   color: #fff !important;
-  box-shadow: 0 2px 8px rgba(64, 128, 255, 0.4);
+  box-shadow: 0 2px 8px rgba(30, 138, 138, 0.4);
 }
 
 .freesort-drag {
   opacity: 0.9;
-  box-shadow: 0 4px 12px rgba(64, 128, 255, 0.3);
+  box-shadow: 0 4px 12px rgba(30, 138, 138, 0.3);
 }
 
 .add-section-btn {
@@ -1871,8 +1871,8 @@ watch(paperId, async (newId) => {
 }
 
 .primary-btn {
-  background: #4080ff;
-  border-color: #4080ff;
+  background: #1E8A8A;
+  border-color: #1E8A8A;
 }
 
 .create-btn {

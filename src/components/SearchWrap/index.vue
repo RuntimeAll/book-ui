@@ -88,7 +88,7 @@ const emit = defineEmits<{
   border-radius: 8px;
   padding: 14px 16px;
   border: 1px solid var(--el-border-color-lighter, #f2f3f5);
-  box-shadow: 0 2px 8px 0 rgba(64, 128, 255, 0.04);
+  box-shadow: 0 2px 8px 0 rgba(30, 138, 138, 0.04);
   margin-bottom: 12px;
 }
 

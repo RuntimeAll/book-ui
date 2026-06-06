@@ -122,8 +122,8 @@ async function onSubmit() {
 <template>
   <div class="login-page">
     <el-card class="login-card" shadow="always">
-      <div class="login-title">misikt 教师端复刻</div>
-      <div class="login-subtitle">请登录后继续</div>
+      <div class="login-title"><span class="brand-ai">AI</span>·备课助手</div>
+      <div class="login-subtitle">教培老师的命题外脑 · 请登录后继续</div>
 
       <el-form
         ref="formRef"
@@ -208,9 +208,14 @@ async function onSubmit() {
 .login-title {
   font-size: 20px;
   font-weight: 600;
-  color: #303133;
+  color: #1d2a2e;
   text-align: center;
   margin-bottom: 4px;
+}
+
+/* "AI" 二字 violet-600 点睛（DESIGN §2.2） */
+.login-title .brand-ai {
+  color: #7b6cf0;
 }
 
 .login-subtitle {

@@ -174,13 +174,13 @@ function getQuestionTypeTag(type: number): 'success' | 'warning' | 'info' | 'pri
   border: 1px solid #f2f3f5;
   padding: 14px 16px;
   margin-bottom: 10px;
-  box-shadow: 0 2px 8px 0 rgba(64, 128, 255, 0.05);
+  box-shadow: 0 2px 8px 0 rgba(30, 138, 138, 0.05);
   transition: all 0.2s ease;
   position: relative;
 }
 
 .question-card:hover {
-  box-shadow: 0 6px 20px 0 rgba(64, 128, 255, 0.12);
+  box-shadow: 0 6px 20px 0 rgba(30, 138, 138, 0.12);
   transform: translateY(-1px);
   border-color: #d0e2ff;
 }

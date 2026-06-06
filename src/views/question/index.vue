@@ -499,12 +499,12 @@ onMounted(async () => {
 }
 
 :deep(.el-tree-node__content:hover) {
-  background: rgba(64, 128, 255, 0.06);
+  background: rgba(30, 138, 138, 0.06);
 }
 
 :deep(.el-tree-node.is-current > .el-tree-node__content) {
-  background: rgba(64, 128, 255, 0.1);
-  color: #4080ff;
+  background: rgba(30, 138, 138, 0.1);
+  color: #1E8A8A;
   font-weight: 600;
 }
 

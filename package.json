@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "lint": "eslint . --fix",
+    "lint:check": "eslint .",
+    "format": "prettier --write src/"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",
@@ -24,6 +27,12 @@
     "@iconify/vue": "^5.0.1",
     "@types/node": "^24.12.3",
     "@types/sortablejs": "^1.15.9",
+    "@vue/eslint-config-prettier": "^10.2.0",
+    "@vue/eslint-config-typescript": "^14.6.0",
+    "eslint": "^9.39.1",
+    "eslint-plugin-vue": "^9.33.0",
+    "globals": "^15.15.0",
+    "prettier": "^3.8.1",
     "@unocss/preset-attributify": "^66.6.8",
     "@unocss/preset-icons": "^66.6.8",
     "@unocss/preset-wind3": "^66.6.8",

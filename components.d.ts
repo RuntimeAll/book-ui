@@ -64,6 +64,7 @@ declare module 'vue' {
     RouterView: typeof import('vue-router')['RouterView']
     SearchBar: typeof import('./src/components/SearchWrap/SearchBar.vue')['default']
     SearchWrap: typeof import('./src/components/SearchWrap/index.vue')['default']
+    SketchPad: typeof import('./src/components/business/SketchPad/index.vue')['default']
   }
   export interface GlobalDirectives {
     vLoading: typeof import('element-plus/es')['ElLoadingDirective']

@@ -326,7 +326,7 @@ function barPercent(count: number, list: DistItem[]): number {
 .bar-fill {
   height: 100%;
   min-width: 2px;
-  background: #4080ff;
+  background: #1E8A8A;
   border-radius: 7px;
   transition: width 0.3s ease;
 }
@@ -336,7 +336,7 @@ function barPercent(count: number, list: DistItem[]): number {
 }
 
 .bar-fill--type {
-  background: #4080ff;
+  background: #1E8A8A;
 }
 
 .bar-fill--paper {

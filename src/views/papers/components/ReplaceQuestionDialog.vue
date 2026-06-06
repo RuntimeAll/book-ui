@@ -339,7 +339,7 @@ function isInPaper(id: number) {
 
 .rqd-knowledge {
   font-size: 12px;
-  color: #4080ff;
+  color: #1E8A8A;
   background: #f0f5ff;
   border-radius: 4px;
   padding: 1px 6px;
