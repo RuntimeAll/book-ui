@@ -215,16 +215,16 @@ async function handleAddToBasket(): Promise<void> {
 .qc-grid {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
-  gap: 10px;
+  gap: 8px;
 }
 
 .qc-cell {
   position: relative;
-  height: 40px;
+  height: 32px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
+  font-size: 13px;
   color: #4e5969;
   background: #fff;
   border: 1px solid #e5e6eb;
@@ -306,5 +306,11 @@ async function handleAddToBasket(): Promise<void> {
 .clear-btn {
   width: 100%;
   height: 40px;
+}
+
+/* 竖向堆叠的全宽按钮：清掉 EP 对相邻 el-button 注入的 margin-left:12px，
+   否则「清除选择」被右推 12px，与上面的「加入试题篮」左边对不齐。 */
+.add-to-basket-btn + .clear-btn {
+  margin-left: 0;
 }
 </style>
