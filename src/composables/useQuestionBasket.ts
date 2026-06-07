@@ -199,6 +199,29 @@ async function addMany(questions: QuestionItem[]): Promise<number> {
   return toAdd.length
 }
 
+/**
+ * 批量移除（PRD-001 回归补丁 — 快速组卷 / 中栏"全部移除"复用）。
+ * 只移除在篮内的，单条汇总 toast，返回实际移除数。
+ */
+async function removeMany(ids: number[]): Promise<number> {
+  const toRemove = ids.filter((id) => _basketIds.value.has(id))
+  if (toRemove.length === 0) {
+    ElMessage.info('这些题目不在试题栏中')
+    return 0
+  }
+  const newSet = new Set(_basketIds.value)
+  toRemove.forEach((id) => newSet.delete(id))
+  _basketIds.value = newSet
+  syncToStorage()
+  ElMessage.success(`已从试题栏移除 ${toRemove.length} 题`)
+  toRemove.forEach((id) =>
+    apiRemoveBasket(id).catch((e) =>
+      console.warn('[basket] removeBasket notify failed (local state OK):', e),
+    ),
+  )
+  return toRemove.length
+}
+
 async function remove(id: number): Promise<void> {
   if (_togglingIds.has(id)) return
   if (!_basketIds.value.has(id)) return
@@ -271,6 +294,8 @@ export interface UseQuestionBasket {
   add: (q: QuestionItem) => Promise<void>
   /** 批量加入（过滤已在篮 + 单条汇总 toast），返回实际新增数 */
   addMany: (questions: QuestionItem[]) => Promise<number>
+  /** 批量移除（只移在篮内 + 单条汇总 toast），返回实际移除数 */
+  removeMany: (ids: number[]) => Promise<number>
   remove: (id: number) => Promise<void>
   clear: () => Promise<void>
   togglingIds: Set<number>
@@ -299,6 +324,7 @@ export function useQuestionBasket(): UseQuestionBasket {
     items: _items,
     add,
     addMany,
+    removeMany,
     remove,
     clear,
     togglingIds: _togglingIds,

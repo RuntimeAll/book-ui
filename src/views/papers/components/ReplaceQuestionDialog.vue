@@ -39,6 +39,11 @@ const emit = defineEmits<{
 const filterType = ref<number | ''>('')     // '' = 全部
 const filterDiff = ref<number | ''>('')     // '' = 全部
 const filterKeyword = ref('')
+// 考点（knowledgeId）：换一题默认锁定被换题的考点，检索同考点候选。
+// BE questionPage 的 subjectId 走 biz_question_knowledge JOIN（= 按知识点匹配），
+// 故把被换题考点的 knowledgeId 当 subjectId 喂进去即可（题库章节过滤同此机制）。
+const filterKnowledgeId = ref('')           // '' = 不限考点
+const filterKnowledgeName = ref('')         // 展示用
 
 // ── 分页 / 列表 ───────────────────────────────────────────────
 const loading = ref(false)
@@ -50,14 +55,15 @@ const PAGE_SIZE = 6
 async function doSearch() {
   loading.value = true
   try {
-    // ⚠️ 不 seed subjectId：试卷题携带的 subjectId 是分类树前缀 id（如 3001002 公共卷库分类），
-    // 不是 questionPage 能用的章节 subjectId（章节走 biz_question_knowledge JOIN）。
-    // 实测用它过滤 questionPage 必返 0 → 用 questionType + difficult 作为"该题条件"检索种子（实测 type5+难度3 = 2924 候选）。
+    // ⚠️ 不 seed 试卷题自带的 subjectId（那是分类树前缀 id 如 3001002 公共卷库分类，过滤必返 0）。
+    // 但「换一题」要找同考点的题 → 用被换题的考点 knowledgeId 当 subjectId（BE subjectId 走
+    // biz_question_knowledge JOIN，按知识点匹配，同题库章节过滤机制）。考点 + 题型 + 难度三维检索。
     const params = {
       pageIndex: currentPage.value,
       pageSize: PAGE_SIZE,
       notTaskQuestion: 0,
       notUsedQuestion: 0,
+      ...(filterKnowledgeId.value ? { subjectId: filterKnowledgeId.value } : {}),
       ...(filterType.value !== '' ? { questionType: Number(filterType.value) } : {}),
       ...(filterDiff.value !== '' ? { difficult: Number(filterDiff.value) } : {}),
       ...(filterKeyword.value.trim() ? { keyWord: filterKeyword.value.trim() } : {}),
@@ -93,6 +99,10 @@ watch(
       filterType.value = props.question.questionType ?? ''
       filterDiff.value = props.question.difficult ?? ''
       filterKeyword.value = ''
+      // 默认锁定被换题的第一个考点（同考点换题）；老师可点标签的 × 放宽到不限考点
+      const k0 = props.question.questionKnowledges?.[0]
+      filterKnowledgeId.value = k0?.knowledgeId != null ? String(k0.knowledgeId) : ''
+      filterKnowledgeName.value = k0?.knowledgeName || ''
       currentPage.value = 1
       doSearch()
     }
@@ -101,6 +111,14 @@ watch(
 )
 
 function handleSearch() {
+  currentPage.value = 1
+  doSearch()
+}
+
+// 放宽考点限制（× 标签）→ 不限考点重搜
+function clearKnowledge() {
+  filterKnowledgeId.value = ''
+  filterKnowledgeName.value = ''
   currentPage.value = 1
   doSearch()
 }
@@ -150,6 +168,16 @@ function isInPaper(id: number) {
   >
     <!-- 筛选行 -->
     <div class="rqd-filter-row">
+      <!-- 考点锁定标签：默认锁被换题考点，× 放宽到不限考点 -->
+      <el-tag
+        v-if="filterKnowledgeName"
+        type="primary"
+        closable
+        class="rqd-knowledge-tag"
+        @close="clearKnowledge"
+      >
+        考点：{{ filterKnowledgeName }}
+      </el-tag>
       <el-select
         v-model="filterType"
         placeholder="全部题型"

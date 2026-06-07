@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 // PRD-A-010 T3：查看态题卡的 Check/ShoppingCart/Star/InfoFilled 随 PaperSourceCard
 // 子组件迁出，父组件保留顶栏/编辑态用到的图标。
-import { ArrowLeft, Edit, Download, Top, Bottom, Delete, Plus, DocumentChecked, Close } from '@element-plus/icons-vue'
+import { ArrowLeft, Edit, Download, Top, Bottom, Delete, Plus, DocumentChecked, Close, ShoppingCart } from '@element-plus/icons-vue'
 import {
   getPaperDetail,
   removeFavorite,
@@ -13,7 +13,8 @@ import {
   type PaperSourceQuestion,
   type QuestionItem,
 } from '@/api/question/index'
-import { updateExamPaper, type UpdatePaperQuestion } from '@/api/paper/index'
+import { updateExamPaper, type UpdatePaperQuestion, type PaperListItem } from '@/api/paper/index'
+import { usePaperBasket } from '@/composables/usePaperBasket'
 import PaperPreview from '@/components/business/PaperPreview/index.vue'
 import SketchPad from '@/components/business/SketchPad/index.vue'
 import FavoriteFolderDrawer from '@/components/FavoriteFolderDrawer/index.vue'
@@ -32,6 +33,35 @@ const paperId = computed(() => route.params.id as string)
 
 // ── 试题栏 composable（E 段③ — 全局 singleton，跟题库 / 全局 FAB 联动）──
 const basket = useQuestionBasket()
+
+// ── 试卷篮 composable（本卷整卷加入/移出试卷篮，复用卷库列表页同一套，禁造轮子）──
+const paperBasket = usePaperBasket()
+// 用卷详情拼一个 PaperListItem（试卷篮 add/remove/角标 都按 id）
+const asPaperItem = computed<PaperListItem>(() => ({
+  id: Number(detail.value?.paperId ?? paperId.value),
+  name: detail.value?.paperName ?? '试卷',
+  questionCount: detail.value?.questionCount ?? allQuestions.value.length,
+  score: detail.value?.score ?? 0,
+  suggestTime: detail.value?.suggestTime ?? null,
+  createTime: '',
+  finishTime: null,
+  createUser: Number(detail.value?.createBy ?? 0),
+  subjectId: detail.value?.subjectId ?? '',
+  paperType: (detail.value?.paperType as 1 | 2 | 6) ?? 1,
+  status: 1,
+  sort: Number(detail.value?.paperId ?? 0),
+}))
+const inPaperBasket = computed(() => paperBasket.basketIds.value.has(asPaperItem.value.id))
+async function handleTogglePaperBasket(): Promise<void> {
+  if (!detail.value) return
+  const id = asPaperItem.value.id
+  if (paperBasket.isLoading(id)) return
+  if (paperBasket.basketIds.value.has(id)) {
+    await paperBasket.remove(id)
+  } else {
+    await paperBasket.add(asPaperItem.value)
+  }
+}
 
 // ── owner 判定（PRD-A-005 收尾 C 段）──
 // 本人卷 = detail.createBy === 当前登录用户 id（PaperDetailVo.createBy = String）→ 可编辑；
@@ -389,6 +419,15 @@ watch(paperId, async () => {
             </span>
           </el-tooltip>
           <el-button
+            :type="inPaperBasket ? 'danger' : 'default'"
+            class="topbar-basket-btn"
+            :disabled="!detail"
+            @click="handleTogglePaperBasket"
+          >
+            <el-icon><ShoppingCart /></el-icon>
+            <span>{{ inPaperBasket ? '移出试卷篮' : '加入试卷篮' }}</span>
+          </el-button>
+          <el-button
             type="primary"
             class="topbar-export-btn"
             :disabled="!detail || allQuestions.length === 0"
@@ -416,6 +455,13 @@ watch(paperId, async () => {
             <span class="stat-sep">·</span>
             <span class="stat-num total">{{ totalScore }}</span><span class="stat-unit">分</span>
           </div>
+          <el-button
+            :type="inPaperBasket ? 'danger' : 'default'"
+            :disabled="!detail"
+            @click="handleTogglePaperBasket"
+          >
+            <el-icon><ShoppingCart /></el-icon><span>{{ inPaperBasket ? '移出试卷篮' : '加入试卷篮' }}</span>
+          </el-button>
           <el-button @click="openAddDialog">
             <el-icon><Plus /></el-icon><span>增题</span>
           </el-button>
