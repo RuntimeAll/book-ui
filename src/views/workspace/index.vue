@@ -243,7 +243,7 @@ onMounted(async () => {
       <section class="section-card">
         <div class="section-header">
           <div class="section-title">
-            <el-icon class="section-icon" color="#4080ff"><Document /></el-icon>
+            <el-icon class="section-icon" color="#1E8A8A"><Document /></el-icon>
             <span>我创建的卷</span>
             <el-tag size="small" type="info">{{ myPapersTotal }} 份</el-tag>
           </div>
@@ -511,7 +511,7 @@ onMounted(async () => {
 }
 
 .folder-info.clickable:hover .folder-name {
-  color: #4080ff;
+  color: #1E8A8A;
 }
 
 .folder-name {

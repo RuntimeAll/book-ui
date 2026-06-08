@@ -1,3 +1,9 @@
+/**
+ * 全局 base 样式
+ * 设计 token 事实源 = workplace/产品规划/DESIGN.md §3/§4
+ * 方向：清新理性 · 数学底色 · AI 在场（青主色 + 紫 AI + 冷浅底）
+ * 🔴 本期（PRD-A-010 T1）字体走系统 sans fallback，不 @font-face 引思源宋/黑 woff2。
+ */
 * {
   box-sizing: border-box;
   margin: 0;
@@ -5,8 +11,66 @@
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen,
-    Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
-  background: #f5f7fa;
-  color: #333;
+  /* DESIGN §4.1 sans 主导（数学理性）：Inter / 思源黑 装了就用，没装走系统 sans fallback */
+  font-family: Inter, 'Source Han Sans SC', 'PingFang SC', 'Microsoft YaHei',
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  color: #1d2a2e; /* DESIGN §3.1 ink-900 冷墨 */
+
+  /* 极淡数学坐标纸纹理（贴 DESIGN 数学理性）：底色仍 bg-50 #F5F8F8，
+     叠 28px 冷青网格（横竖 1px，rgba(30,138,138,0.035) 若有若无）+ 一层极淡径向高光让底不死板。
+     纹理只铺页面底层；卡片/弹窗仍各自纯白 .card-base，不受影响。 */
+  background-color: #f5f8f8; /* DESIGN §3.1 bg-50 冷浅清新 */
+  background-image:
+    radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.6) 0%, rgba(255, 255, 255, 0) 55%),
+    repeating-linear-gradient(
+      to right,
+      rgba(30, 138, 138, 0.05) 0,
+      rgba(30, 138, 138, 0.05) 1px,
+      transparent 1px,
+      transparent 28px
+    ),
+    repeating-linear-gradient(
+      to bottom,
+      rgba(30, 138, 138, 0.05) 0,
+      rgba(30, 138, 138, 0.05) 1px,
+      transparent 1px,
+      transparent 28px
+    );
+  background-attachment: fixed;
+}
+
+/**
+ * Element Plus 主题变量 override → 青主色（DESIGN §3.2 / §3.5 红线1）
+ * 全站 el-button type="primary" / el-link / el-tag / 选中态走青，与默认蓝拉开。
+ * AI 触发类按钮（紫）走 .btn-ai shortcut，不在此处。
+ */
+:root {
+  --el-color-primary: #1e8a8a; /* teal-600 */
+  --el-color-primary-light-3: #4ba3a3;
+  --el-color-primary-light-5: #76bcbc;
+  --el-color-primary-light-7: #a2d4d4;
+  --el-color-primary-light-8: #b8e0e0;
+  --el-color-primary-light-9: #e6f2f2; /* teal-50 */
+  --el-color-primary-dark-2: #176e6e; /* teal-700 */
+
+  --el-color-success: #0e9f6e; /* green-600 */
+  --el-color-warning: #e0a23c; /* amber-500 */
+  --el-color-danger: #e5484d; /* red-500 */
+  --el-color-error: #e5484d;
+
+  /* 文字 / 边框冷青化（去 misikt 蓝 / 暖） */
+  --el-text-color-primary: #1d2a2e; /* ink-900 */
+  --el-text-color-regular: #536268; /* ink-500 */
+  --el-text-color-secondary: #7c8b91; /* ink-400 */
+  --el-text-color-placeholder: #a6b2b6; /* ink-300 */
+  --el-border-color: #e3e9e9;
+  --el-border-color-light: #edf2f2;
+  --el-border-color-lighter: #edf2f2;
+  --el-fill-color-light: #edf2f2; /* bg-100 hover */
+  --el-fill-color-blank: #ffffff;
+  --el-bg-color: #ffffff;
+  --el-bg-color-page: #f5f8f8; /* bg-50 */
+
+  --el-border-radius-base: 6px; /* DESIGN §5.2 input/button */
+  --el-border-radius-small: 4px;
 }

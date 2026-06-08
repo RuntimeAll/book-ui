@@ -2,7 +2,9 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { ArrowLeft, Check, ShoppingCart, Edit, Star, InfoFilled, Download, Top, Bottom, Delete, Plus, DocumentChecked, Close } from '@element-plus/icons-vue'
+// PRD-A-010 T3：查看态题卡的 Check/ShoppingCart/Star/InfoFilled 随 PaperSourceCard
+// 子组件迁出，父组件保留顶栏/编辑态用到的图标。
+import { ArrowLeft, Edit, Download, Top, Bottom, Delete, Plus, DocumentChecked, Close, ShoppingCart } from '@element-plus/icons-vue'
 import {
   getPaperDetail,
   removeFavorite,
@@ -11,12 +13,15 @@ import {
   type PaperSourceQuestion,
   type QuestionItem,
 } from '@/api/question/index'
-import { updateExamPaper, type UpdatePaperQuestion } from '@/api/paper/index'
-import FreeTagList from '@/components/business/FreeTagList/index.vue'
+import { updateExamPaper, type UpdatePaperQuestion, type PaperListItem } from '@/api/paper/index'
+import { usePaperBasket } from '@/composables/usePaperBasket'
 import PaperPreview from '@/components/business/PaperPreview/index.vue'
-import QuestionCard from '@/components/business/QuestionCard/index.vue'
 import SketchPad from '@/components/business/SketchPad/index.vue'
 import FavoriteFolderDrawer from '@/components/FavoriteFolderDrawer/index.vue'
+// PRD-A-010 T3：查看态题卡抽 PaperSourceCard、增题弹窗抽 AddFromBasketDialog
+// （FreeTagList/QuestionCard 共享组件随之迁入子组件，父组件不再直接引用）
+import PaperSourceCard from './components/PaperSourceCard.vue'
+import AddFromBasketDialog from './components/AddFromBasketDialog.vue'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
 import { useUserStore } from '@/store/user'
 import { getCurrentUser } from '@/api/user'
@@ -28,6 +33,35 @@ const paperId = computed(() => route.params.id as string)
 
 // ── 试题栏 composable（E 段③ — 全局 singleton，跟题库 / 全局 FAB 联动）──
 const basket = useQuestionBasket()
+
+// ── 试卷篮 composable（本卷整卷加入/移出试卷篮，复用卷库列表页同一套，禁造轮子）──
+const paperBasket = usePaperBasket()
+// 用卷详情拼一个 PaperListItem（试卷篮 add/remove/角标 都按 id）
+const asPaperItem = computed<PaperListItem>(() => ({
+  id: Number(detail.value?.paperId ?? paperId.value),
+  name: detail.value?.paperName ?? '试卷',
+  questionCount: detail.value?.questionCount ?? allQuestions.value.length,
+  score: detail.value?.score ?? 0,
+  suggestTime: detail.value?.suggestTime ?? null,
+  createTime: '',
+  finishTime: null,
+  createUser: Number(detail.value?.createBy ?? 0),
+  subjectId: detail.value?.subjectId ?? '',
+  paperType: (detail.value?.paperType as 1 | 2 | 6) ?? 1,
+  status: 1,
+  sort: Number(detail.value?.paperId ?? 0),
+}))
+const inPaperBasket = computed(() => paperBasket.basketIds.value.has(asPaperItem.value.id))
+async function handleTogglePaperBasket(): Promise<void> {
+  if (!detail.value) return
+  const id = asPaperItem.value.id
+  if (paperBasket.isLoading(id)) return
+  if (paperBasket.basketIds.value.has(id)) {
+    await paperBasket.remove(id)
+  } else {
+    await paperBasket.add(asPaperItem.value)
+  }
+}
 
 // ── owner 判定（PRD-A-005 收尾 C 段）──
 // 本人卷 = detail.createBy === 当前登录用户 id（PaperDetailVo.createBy = String）→ 可编辑；
@@ -103,10 +137,14 @@ function sectionTotalScore(section: PaperSectionVo): number {
 }
 
 // 题分（优先 pqScore，没有用 score）
+// PRD-A-010 T3：查看态题卡的分值展示已随 PaperSourceCard 子组件迁出（内有同名实现）；
+// 编辑态走 row._score 不用此函数。父组件保留（纯函数、零副作用），未真删避免误伤。
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function getQuestionScore(q: PaperSourceQuestion): number | null {
   const s = q.pqScore ?? q.score
   return s == null ? null : Number(s)
 }
+void getQuestionScore
 
 // ── 题型 ──
 function getQuestionTypeLabel(type: number): string {
@@ -381,6 +419,15 @@ watch(paperId, async () => {
             </span>
           </el-tooltip>
           <el-button
+            :type="inPaperBasket ? 'danger' : 'default'"
+            class="topbar-basket-btn"
+            :disabled="!detail"
+            @click="handleTogglePaperBasket"
+          >
+            <el-icon><ShoppingCart /></el-icon>
+            <span>{{ inPaperBasket ? '移出试卷篮' : '加入试卷篮' }}</span>
+          </el-button>
+          <el-button
             type="primary"
             class="topbar-export-btn"
             :disabled="!detail || allQuestions.length === 0"
@@ -408,6 +455,13 @@ watch(paperId, async () => {
             <span class="stat-sep">·</span>
             <span class="stat-num total">{{ totalScore }}</span><span class="stat-unit">分</span>
           </div>
+          <el-button
+            :type="inPaperBasket ? 'danger' : 'default'"
+            :disabled="!detail"
+            @click="handleTogglePaperBasket"
+          >
+            <el-icon><ShoppingCart /></el-icon><span>{{ inPaperBasket ? '移出试卷篮' : '加入试卷篮' }}</span>
+          </el-button>
           <el-button @click="openAddDialog">
             <el-icon><Plus /></el-icon><span>增题</span>
           </el-button>
@@ -459,116 +513,19 @@ watch(paperId, async () => {
             <span class="section-sub">（共 {{ section.questions?.length ?? 0 }} 题，共 {{ sectionTotalScore(section) }} 分）</span>
           </h3>
 
-          <!-- 题目卡片 — misikt 风格：顶 meta + 题干 + 底 meta -->
-          <div
+          <!-- 题目卡片 — misikt 风格：顶 meta + 题干 + 底 meta
+               PRD-A-010 T3：抽 PaperSourceCard 子组件，basket 状态 props 传入、动作 emit -->
+          <PaperSourceCard
             v-for="q in section.questions"
             :key="q.id"
-            class="source-question-card"
-            :class="{ 'in-basket': basket.basketIds.value.has(q.id) }"
-          >
-            <!-- ══ 顶部 meta 行：难度 + 知识点 + (右) 草稿/收藏/+试题栏 ══ -->
-            <div class="q-meta-top">
-              <div class="q-meta-top-left">
-                <span class="meta-label">难度:</span>
-                <el-rate
-                  :model-value="q.difficult ?? 0"
-                  :max="4"
-                  disabled
-                  class="meta-rate"
-                />
-                <span class="meta-label">知识点:</span>
-                <el-tag
-                  v-if="q.questionKnowledges && q.questionKnowledges.length > 0"
-                  type="primary"
-                  size="small"
-                  class="primary-knowledge-tag"
-                >
-                  {{ q.questionKnowledges[0].knowledgeName || q.questionKnowledges[0].knowledgeId }}
-                </el-tag>
-                <span v-else class="knowledge-empty">暂无</span>
-              </div>
-              <div class="q-meta-top-right">
-                <el-button size="small" link class="action-icon-btn" @click="handleDraft">
-                  <el-icon><Edit /></el-icon>草稿
-                </el-button>
-                <el-button
-                  size="small"
-                  link
-                  class="action-icon-btn"
-                  :class="{ 'is-fav': q.isFavorite }"
-                  @click="handleFavorite(q)"
-                >
-                  <el-icon><Star /></el-icon>{{ q.isFavorite ? '已收藏' : '收藏' }}
-                </el-button>
-                <el-button
-                  size="small"
-                  class="action-basket-btn"
-                  :class="{ 'action-basket-btn--added': basket.basketIds.value.has(q.id) }"
-                  :type="basket.basketIds.value.has(q.id) ? undefined : 'primary'"
-                  :plain="!basket.basketIds.value.has(q.id)"
-                  :loading="basket.isLoading(q.id)"
-                  @click="handleBasketToggle(q)"
-                >
-                  <el-icon v-if="basket.basketIds.value.has(q.id)"><Check /></el-icon>
-                  <el-icon v-else><ShoppingCart /></el-icon>
-                  {{ basket.basketIds.value.has(q.id) ? '已在试题栏' : '+ 试题栏' }}
-                </el-button>
-              </div>
-            </div>
-
-            <!-- ══ 题干区（题号 + 类型 + 分 + 题干图/文）══ -->
-            <div class="q-stem-area">
-              <div class="q-stem-header">
-                <span class="q-num">{{ q.sortNum ?? q.sort ?? '' }}.</span>
-                <span class="q-type-tag" :class="`q-type--${getQuestionTypeTag(q.questionType)}`">
-                  {{ getQuestionTypeLabel(q.questionType) }}
-                </span>
-                <span v-if="getQuestionScore(q) != null" class="q-score">
-                  {{ getQuestionScore(q) }} 分
-                </span>
-              </div>
-              <div class="q-stem-body">
-                <img
-                  v-if="q.stemImg"
-                  :src="q.stemImg"
-                  class="q-stem-img"
-                  alt="题干"
-                  referrerpolicy="no-referrer"
-                  loading="lazy"
-                  @error="(e: Event) => ((e.target as HTMLImageElement).style.display='none')"
-                />
-                <p v-else-if="q.stemText" class="q-stem-text">{{ q.stemText }}</p>
-                <p v-else class="q-stem-placeholder">（题目 ID: {{ q.id }}）</p>
-              </div>
-            </div>
-
-            <!-- ══ 底部 meta 行：来源 + freeTags + (右) 详情 link ══ -->
-            <div class="q-meta-bottom">
-              <div class="q-meta-bottom-left">
-                <span v-if="q.examPaperName" class="source-text">
-                  来源: {{ q.examPaperName }}{{ q.examYear ? ` · ${q.examYear}年` : '' }}
-                </span>
-                <FreeTagList
-                  v-if="q.freeTags && q.freeTags.length > 0"
-                  :tags="q.freeTags"
-                  mode="detail"
-                  class="bottom-freetag-list"
-                />
-              </div>
-              <div class="q-meta-bottom-right">
-                <el-button
-                  size="small"
-                  link
-                  type="primary"
-                  class="detail-link-btn"
-                  @click="handleDetail(q)"
-                >
-                  <el-icon><InfoFilled /></el-icon>
-                  详情
-                </el-button>
-              </div>
-            </div>
-          </div>
+            :q="q"
+            :in-basket="basket.basketIds.value.has(q.id)"
+            :basket-loading="basket.isLoading(q.id)"
+            @draft="handleDraft"
+            @favorite="handleFavorite"
+            @basket-toggle="handleBasketToggle"
+            @detail="handleDetail"
+          />
         </section>
         </template>
 
@@ -672,38 +629,14 @@ watch(paperId, async () => {
       @update:visible="previewVisible = $event"
     />
 
-    <!-- 增题弹窗（编辑态）：从试题栏挑（复用 useQuestionBasket + 共享 QuestionCard，禁重造）-->
-    <el-dialog
-      v-model="addDialogVisible"
-      title="从试题栏增题"
-      width="70%"
-      :close-on-click-modal="false"
-    >
-      <el-empty
-        v-if="basket.items.value.length === 0"
-        description="试题栏为空，请先在题库中加题到试题栏"
-      />
-      <el-alert
-        v-else-if="addableBasketItems.length === 0"
-        type="info"
-        :closable="false"
-        title="试题栏内题目均已在本试卷中"
-        show-icon
-      />
-      <el-scrollbar v-else max-height="500px">
-        <div v-for="q in addableBasketItems" :key="q.id" class="add-item">
-          <div class="add-item-card">
-            <QuestionCard :question="q" :actions="[]" />
-          </div>
-          <el-button type="primary" size="small" @click="addQuestionFromBasket(q)">
-            <el-icon><Plus /></el-icon>添加
-          </el-button>
-        </div>
-      </el-scrollbar>
-      <template #footer>
-        <el-button @click="addDialogVisible = false">关闭</el-button>
-      </template>
-    </el-dialog>
+    <!-- 增题弹窗（编辑态）：从试题栏挑（复用 useQuestionBasket + 共享 QuestionCard，禁重造）
+         PRD-A-010 T3：抽 AddFromBasketDialog 子组件，逻辑仍在父（basket 单例/过滤/加题）-->
+    <AddFromBasketDialog
+      v-model:visible="addDialogVisible"
+      :basket-empty="basket.items.value.length === 0"
+      :addable-items="addableBasketItems"
+      @add="addQuestionFromBasket"
+    />
 
     <!-- 收藏目录抽屉（与题库一致：未收藏题点收藏 → 选目录）-->
     <FavoriteFolderDrawer
@@ -746,7 +679,7 @@ watch(paperId, async () => {
 }
 
 .back-btn:hover {
-  color: #4080ff;
+  color: #1E8A8A;
 }
 
 .topbar-info {
@@ -845,7 +778,7 @@ watch(paperId, async () => {
   margin: 0 0 10px;
   padding: 10px 14px;
   background: #fff;
-  border-left: 4px solid #4080ff;
+  border-left: 4px solid #1E8A8A;
   border-radius: 4px;
   border: 1px solid #f2f3f5;
   border-left-width: 4px;
@@ -869,7 +802,7 @@ watch(paperId, async () => {
 }
 
 .source-question-card:hover {
-  box-shadow: 0 4px 16px rgba(64, 128, 255, 0.1);
+  box-shadow: 0 4px 16px rgba(30, 138, 138, 0.1);
   border-color: #d0e2ff;
 }
 
@@ -935,7 +868,7 @@ watch(paperId, async () => {
 }
 
 .action-icon-btn:hover {
-  color: #4080ff;
+  color: #1E8A8A;
 }
 
 .action-icon-btn.is-fav {
@@ -1125,7 +1058,7 @@ watch(paperId, async () => {
 }
 
 .stat-num.total {
-  color: #4080ff;
+  color: #1E8A8A;
 }
 
 .stat-unit {
@@ -1146,7 +1079,7 @@ watch(paperId, async () => {
 .edit-row-index {
   width: 24px;
   height: 24px;
-  background: linear-gradient(135deg, #4080ff, #3370e8);
+  background: linear-gradient(135deg, #1E8A8A, #176E6E);
   color: #fff;
   font-size: 12px;
   font-weight: 700;
@@ -1170,16 +1103,6 @@ watch(paperId, async () => {
   color: #4e5969;
 }
 
-/* 增题弹窗候选项 */
-.add-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 8px;
-}
-
-.add-item-card {
-  flex: 1;
-  min-width: 0;
-}
+/* 增题弹窗候选项样式（.add-item / .add-item-card）已随 AddFromBasketDialog
+   子组件迁出（PRD-A-010 T3）。*/
 </style>

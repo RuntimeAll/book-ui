@@ -10,9 +10,11 @@
 import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { ShoppingCart, Delete, DocumentAdd, Close } from '@element-plus/icons-vue'
+import { ShoppingCart, Delete, DocumentAdd, Close, ZoomIn } from '@element-plus/icons-vue'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
 import { getQuestionDetail, type QuestionItem } from '@/api/question/index'
+// 放大预览复用题库/组卷工作台共享题卡组件（actions=[] 关掉操作按钮，纯展示题干大图 + meta），不另造预览渲染。
+import QuestionCard from '@/components/business/QuestionCard/index.vue'
 
 const basket = useQuestionBasket()
 const router = useRouter()
@@ -76,6 +78,37 @@ async function toggleExplain(item: QuestionItem) {
     }
   }
 }
+
+// ── 放大预览（压缩题卡后的兼容入口）：点题卡/放大按钮打开 el-dialog，
+//    复用 QuestionCard 渲染完整题干大图 + meta；答案/解析图懒加载 getQuestionDetail 补取。──
+const previewVisible = ref(false)
+const previewItem = ref<QuestionItem | null>(null)
+const previewDetail = reactive<{ answerImg: string; explainImg: string; loading: boolean }>({
+  answerImg: '',
+  explainImg: '',
+  loading: false,
+})
+
+async function openPreview(item: QuestionItem) {
+  previewItem.value = item
+  previewDetail.answerImg = (item as { answerImg?: string }).answerImg ?? ''
+  previewDetail.explainImg = (item as { explainImg?: string }).explainImg ?? ''
+  previewVisible.value = true
+  // 列表来的 item 可能不含答案/解析图 → 懒加载详情补取
+  if (!previewDetail.answerImg || !previewDetail.explainImg) {
+    previewDetail.loading = true
+    try {
+      const res = await getQuestionDetail(item.id)
+      const d = res as { answerImg?: string; explainImg?: string }
+      if (!previewDetail.answerImg) previewDetail.answerImg = d?.answerImg ?? ''
+      if (!previewDetail.explainImg) previewDetail.explainImg = d?.explainImg ?? ''
+    } catch (e) {
+      console.warn('[basket] load preview detail failed', e)
+    } finally {
+      previewDetail.loading = false
+    }
+  }
+}
 </script>
 
 <template>
@@ -104,32 +137,17 @@ async function toggleExplain(item: QuestionItem) {
   <!-- ── 试题栏 dialog ── -->
   <el-dialog
     v-model="basket.dialogVisible.value"
-    width="75%"
+    width="720px"
+    style="max-width: 92vw"
     :close-on-click-modal="false"
     class="basket-dialog"
   >
     <template #header>
       <div class="basket-dialog-header">
         <div class="basket-dialog-title-area">
-          <el-icon color="#4080ff" :size="18"><ShoppingCart /></el-icon>
+          <el-icon color="#1E8A8A" :size="18"><ShoppingCart /></el-icon>
           <span class="basket-dialog-title">试题栏</span>
           <el-tag type="primary" size="small" round>{{ basket.items.value.length }} 题</el-tag>
-        </div>
-        <div class="basket-dialog-actions">
-          <el-button size="small" @click="handleClearBasket">
-            <el-icon><Delete /></el-icon>清空
-          </el-button>
-          <el-button
-            type="primary"
-            size="small"
-            :loading="composing"
-            :disabled="basket.items.value.length === 0"
-            class="compose-btn"
-            @click="handleGoCompose"
-          >
-            <el-icon><DocumentAdd /></el-icon>
-            组卷
-          </el-button>
         </div>
       </div>
     </template>
@@ -143,7 +161,7 @@ async function toggleExplain(item: QuestionItem) {
           <el-icon style="font-size: 48px; color: #c9cdd4;"><ShoppingCart /></el-icon>
         </template>
       </el-empty>
-      <el-scrollbar max-height="460px">
+      <el-scrollbar max-height="380px">
         <div
           v-for="item in basket.items.value"
           :key="item.id"
@@ -157,7 +175,8 @@ async function toggleExplain(item: QuestionItem) {
               :model-value="item.difficult ?? 0"
               :max="4"
               disabled
-              style="display:inline-flex; margin-left:8px;"
+              size="small"
+              style="display:inline-flex; margin-left:6px;"
             />
             <div class="basket-knowledge-tags" v-if="(item.questionKnowledges?.length ?? 0) > 0">
               <el-tag
@@ -173,17 +192,26 @@ async function toggleExplain(item: QuestionItem) {
             <div class="basket-item-ops">
               <el-button
                 size="small"
-                @click="toggleExplain(item)"
+                link
+                type="primary"
+                @click="openPreview(item)"
               >
-                {{ explainState[item.id]?.open ? '收起解析' : '展开解析' }}
+                <el-icon><ZoomIn /></el-icon>放大
               </el-button>
               <el-button
                 size="small"
+                link
+                @click="toggleExplain(item)"
+              >
+                {{ explainState[item.id]?.open ? '收起解析' : '解析' }}
+              </el-button>
+              <el-button
+                size="small"
+                link
                 type="danger"
-                plain
                 @click="handleRemoveBasket(item.id)"
               >
-                <el-icon><Close /></el-icon>取消
+                <el-icon><Close /></el-icon>移除
               </el-button>
             </div>
           </div>
@@ -193,10 +221,12 @@ async function toggleExplain(item: QuestionItem) {
               :src="item.stemImg"
               class="stem-img-small"
               loading="lazy"
-              alt="题干"
+              alt="题干（点击放大）"
+              title="点击放大查看完整题目"
+              @click="openPreview(item)"
               @error="(e: Event) => ((e.target as HTMLImageElement).style.display='none')"
             />
-            <span v-else-if="item.stemText" class="basket-stem-text">{{ item.stemText }}</span>
+            <span v-else-if="item.stemText" class="basket-stem-text" @click="openPreview(item)">{{ item.stemText }}</span>
             <span v-else class="stem-placeholder">题 ID: {{ item.id }}</span>
           </div>
           <!-- 展开解析区（懒加载 explainImg）-->
@@ -218,18 +248,81 @@ async function toggleExplain(item: QuestionItem) {
 
     <template #footer>
       <div class="basket-footer">
-        <el-button @click="basket.closeDialog()">关闭</el-button>
-        <el-button
-          type="primary"
-          :loading="composing"
-          :disabled="basket.items.value.length === 0"
-          class="compose-btn-footer"
-          @click="handleGoCompose"
-        >
-          <el-icon><DocumentAdd /></el-icon>
-          组卷（{{ basket.items.value.length }} 题）
-        </el-button>
+        <div class="basket-footer-left">
+          <el-button
+            :disabled="basket.items.value.length === 0"
+            @click="handleClearBasket"
+          >
+            <el-icon><Delete /></el-icon>清空
+          </el-button>
+        </div>
+        <div class="basket-footer-right">
+          <el-button @click="basket.closeDialog()">关闭</el-button>
+          <el-button
+            type="primary"
+            :loading="composing"
+            :disabled="basket.items.value.length === 0"
+            class="compose-btn-footer"
+            @click="handleGoCompose"
+          >
+            <el-icon><DocumentAdd /></el-icon>
+            组卷（{{ basket.items.value.length }} 题）
+          </el-button>
+        </div>
       </div>
+    </template>
+  </el-dialog>
+
+  <!-- ── 放大预览 dialog（复用 QuestionCard 渲染完整题目 + 懒加载答案/解析图）── -->
+  <el-dialog
+    v-model="previewVisible"
+    width="760px"
+    style="max-width: 94vw"
+    :close-on-click-modal="true"
+    class="basket-preview-dialog"
+    append-to-body
+  >
+    <template #header>
+      <div class="basket-preview-header">
+        <el-icon color="#1E8A8A" :size="18"><ZoomIn /></el-icon>
+        <span class="basket-preview-title">题目预览</span>
+      </div>
+    </template>
+    <div v-if="previewItem" class="basket-preview-body">
+      <!-- 复用共享题卡：actions=[] 关掉草稿/收藏/试题栏/详情，纯展示题干大图 + meta -->
+      <QuestionCard :question="previewItem" :actions="[]" />
+      <!-- 答案 / 解析图（懒加载补取）-->
+      <div class="basket-preview-detail">
+        <el-skeleton v-if="previewDetail.loading" :rows="3" animated />
+        <template v-else>
+          <div v-if="previewDetail.answerImg" class="basket-preview-block">
+            <span class="basket-preview-label">【答案】</span>
+            <img
+              :src="previewDetail.answerImg"
+              class="basket-preview-img"
+              referrerpolicy="no-referrer"
+              alt="答案"
+              @error="(e: Event) => ((e.target as HTMLImageElement).style.display='none')"
+            />
+          </div>
+          <div v-if="previewDetail.explainImg" class="basket-preview-block">
+            <span class="basket-preview-label">【解析】</span>
+            <img
+              :src="previewDetail.explainImg"
+              class="basket-preview-img"
+              referrerpolicy="no-referrer"
+              alt="解析"
+              @error="(e: Event) => ((e.target as HTMLImageElement).style.display='none')"
+            />
+          </div>
+          <span v-if="!previewDetail.answerImg && !previewDetail.explainImg" class="basket-preview-empty">
+            暂无答案 / 解析图
+          </span>
+        </template>
+      </div>
+    </div>
+    <template #footer>
+      <el-button @click="previewVisible = false">关闭</el-button>
     </template>
   </el-dialog>
 </template>
@@ -253,19 +346,19 @@ async function toggleExplain(item: QuestionItem) {
   width: 64px;
   height: 64px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #4080ff, #3370e8);
+  background: linear-gradient(135deg, #1E8A8A, #176E6E);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 3px;
-  box-shadow: 0 8px 24px rgba(64, 128, 255, 0.4);
+  box-shadow: 0 8px 24px rgba(30, 138, 138, 0.4);
   transition: all 0.25s ease;
 }
 
 .basket-fab:hover .fab-inner {
   transform: translateY(-3px);
-  box-shadow: 0 12px 32px rgba(64, 128, 255, 0.5);
+  box-shadow: 0 12px 32px rgba(30, 138, 138, 0.5);
 }
 
 .fab-label {
@@ -280,8 +373,8 @@ async function toggleExplain(item: QuestionItem) {
 }
 
 @keyframes fab-pulse {
-  0%, 100% { box-shadow: 0 8px 24px rgba(64, 128, 255, 0.4); }
-  50% { box-shadow: 0 8px 30px rgba(64, 128, 255, 0.6); }
+  0%, 100% { box-shadow: 0 8px 24px rgba(30, 138, 138, 0.4); }
+  50% { box-shadow: 0 8px 30px rgba(30, 138, 138, 0.6); }
 }
 
 /* ── 试题栏 dialog ── */
@@ -304,25 +397,14 @@ async function toggleExplain(item: QuestionItem) {
   color: #1d2129;
 }
 
-.basket-dialog-actions {
-  display: flex;
-  gap: 8px;
-}
-
-.compose-btn {
-  background: linear-gradient(135deg, #4080ff, #3370e8);
-  border: none;
-  box-shadow: 0 2px 6px rgba(64, 128, 255, 0.3);
-}
-
 .basket-dialog-body {
-  min-height: 100px;
+  min-height: 80px;
   padding: 0 4px;
 }
 
 .basket-item {
-  padding: 14px 0;
-  border-bottom: 1px solid #f2f3f5;
+  padding: 10px 0;
+  border-bottom: 1px solid #EDF2F2;
 }
 
 .basket-item:last-child {
@@ -334,7 +416,7 @@ async function toggleExplain(item: QuestionItem) {
   align-items: center;
   flex-wrap: wrap;
   gap: 6px;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .basket-knowledge-tags {
@@ -346,7 +428,8 @@ async function toggleExplain(item: QuestionItem) {
 .basket-item-ops {
   margin-left: auto;
   display: flex;
-  gap: 6px;
+  align-items: center;
+  gap: 8px;
 }
 
 .basket-item-stem {
@@ -357,15 +440,22 @@ async function toggleExplain(item: QuestionItem) {
 
 .stem-img-small {
   max-width: 100%;
-  max-height: 120px;
+  max-height: 112px;
   display: block;
   border-radius: 4px;
+  cursor: zoom-in;
+  transition: opacity 0.15s;
+}
+
+.stem-img-small:hover {
+  opacity: 0.85;
 }
 
 .basket-stem-text {
   font-size: 13px;
   color: #1d2129;
   line-height: 1.5;
+  cursor: zoom-in;
 }
 
 .basket-item-explain {
@@ -387,20 +477,80 @@ async function toggleExplain(item: QuestionItem) {
 
 .basket-footer {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
   gap: 8px;
 }
 
+.basket-footer-left {
+  display: flex;
+}
+
+.basket-footer-right {
+  display: flex;
+  gap: 8px;
+}
+
+/* ── 放大预览 dialog ── */
+.basket-preview-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.basket-preview-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #1D2A2E;
+}
+
+.basket-preview-body {
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.basket-preview-detail {
+  margin-top: 8px;
+}
+
+.basket-preview-block {
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: #F5F8F8;
+  border-left: 3px solid #1E8A8A;
+  border-radius: 6px;
+}
+
+.basket-preview-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1D2A2E;
+  margin-bottom: 6px;
+}
+
+.basket-preview-img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  border-radius: 4px;
+}
+
+.basket-preview-empty {
+  font-size: 13px;
+  color: #A6B2B6;
+}
+
 .compose-btn-footer {
-  background: linear-gradient(135deg, #4080ff, #3370e8);
+  background: linear-gradient(135deg, #1E8A8A, #176E6E);
   border: none;
-  box-shadow: 0 2px 6px rgba(64, 128, 255, 0.3);
+  box-shadow: 0 2px 6px rgba(30, 138, 138, 0.3);
   transition: all 0.2s;
 }
 
 .compose-btn-footer:hover {
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(64, 128, 255, 0.45);
+  box-shadow: 0 4px 12px rgba(30, 138, 138, 0.45);
 }
 
 /* ── 题型 tag ── */
@@ -416,8 +566,9 @@ async function toggleExplain(item: QuestionItem) {
 }
 
 .type-tag--primary {
-  background: #e8f0ff;
-  color: #3564d0;
+  /* DESIGN.md 青系：teal-50 底 + teal-700 字（替换原偏蓝 #e8f0ff/#3564d0） */
+  background: #E6F2F2;
+  color: #176E6E;
 }
 
 .type-tag--success {

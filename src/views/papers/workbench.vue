@@ -21,15 +21,9 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import {
-  ArrowLeft,
-  Top,
-  Bottom,
-  Delete,
-  InfoFilled,
-  Refresh,
-  Edit,
-} from '@element-plus/icons-vue'
+// PRD-A-010 T3：题卡内的 Top/Bottom/Delete/InfoFilled/Refresh 图标随 WorkbenchCard
+// 子组件迁出，父组件仅保留顶栏 ArrowLeft + 大题重命名 Edit。
+import { ArrowLeft, Edit } from '@element-plus/icons-vue'
 import Sortable from 'sortablejs'
 import {
   getPaperDetail,
@@ -45,6 +39,7 @@ import {
 } from '@/api/paper/index'
 import PaperPreview from '@/components/business/PaperPreview/index.vue'
 import ReplaceQuestionDialog from './components/ReplaceQuestionDialog.vue'
+import WorkbenchCard from './components/WorkbenchCard.vue'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
 import { useUserStore } from '@/store/user'
 import { getCurrentUser } from '@/api/user'
@@ -198,10 +193,15 @@ function getQuestionTypeLabel(type: number): string {
   return map[type] ?? `题型${type}`
 }
 
+// PRD-A-010 T3：题卡题型彩标已随 WorkbenchCard 迁出（子组件内有同名实现）。
+// 父组件题号网格/分组标题不需要彩标色，故此函数父组件已不再引用。
+// 保留（轻量纯函数、零副作用）以备右栏后续若加题型色块复用，未真删避免误伤。
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function getQuestionTypeTag(type: number): string {
   const map: Record<number, string> = { 1: 'primary', 4: 'success', 5: 'warning', 2: 'info', 3: 'danger' }
   return map[type] ?? 'info'
 }
+void getQuestionTypeTag
 
 // 按题型分组，全局序号按 editRows 原始顺序（第i题 = 序号i+1，跨分组连续）
 const sectionGroups = computed<SectionGroup[]>(() => {
@@ -726,156 +726,22 @@ watch(paperId, async (newId) => {
               <span class="section-count">（共 {{ group.rows.length }} 题）</span>
             </div>
 
-            <!-- 题卡（复用 .source-question-card 骨架 — 视觉铁则）-->
-            <div
+            <!-- 题卡（PRD-A-010 T3：抽 WorkbenchCard 子组件，行为不变；
+                 根节点保留 wb-q-N id 供 scrollToQuestion 定位）-->
+            <WorkbenchCard
               v-for="{ row, globalIndex, editRowIndex } in group.rows"
               :key="row.id"
-              :id="'wb-q-' + globalIndex"
-              class="source-question-card workbench-card"
-            >
-              <!-- 顶部 meta：左(题型标签/难度/考点/来源) / 右(连续序号圆圈) -->
-              <div class="q-meta-top">
-                <div class="q-meta-top-left">
-                  <span
-                    class="q-type-tag"
-                    :class="`q-type--${getQuestionTypeTag(row.questionType)}`"
-                  >
-                    {{ getQuestionTypeLabel(row.questionType) }}
-                  </span>
-                  <span class="meta-label">难度:</span>
-                  <el-rate
-                    :model-value="row.difficult ?? 0"
-                    :max="4"
-                    disabled
-                    class="meta-rate"
-                  />
-                  <template v-if="row.questionKnowledges && row.questionKnowledges.length > 0">
-                    <span class="meta-label">考点:</span>
-                    <el-tag type="primary" size="small" class="primary-knowledge-tag">
-                      {{ row.questionKnowledges[0].knowledgeName || row.questionKnowledges[0].knowledgeId }}
-                    </el-tag>
-                  </template>
-                  <span v-if="row.examPaperName" class="source-text">
-                    来源: {{ row.examPaperName }}{{ row.examYear ? ` · ${row.examYear}年` : '' }}
-                  </span>
-                </div>
-                <!-- 全卷连续序号 -->
-                <div class="q-global-num">{{ globalIndex }}</div>
-              </div>
-
-              <!-- 题干区 -->
-              <div class="q-stem-area">
-                <img
-                  v-if="row.stemImg"
-                  :src="row.stemImg"
-                  class="q-stem-img"
-                  alt="题干"
-                  referrerpolicy="no-referrer"
-                  loading="lazy"
-                  @error="(e: Event) => ((e.target as HTMLImageElement).style.display = 'none')"
-                />
-                <p v-else-if="row.stemText" class="q-stem-text">{{ row.stemText }}</p>
-                <p v-else class="q-stem-placeholder">（题目 ID: {{ row.id }}）</p>
-              </div>
-
-              <!-- 解析区（toggle 显示，图模式 — 与 PaperPreview 一致）-->
-              <div v-if="row._showExplain" class="q-explain-area">
-                <div class="explain-label">解析：</div>
-                <img
-                  v-if="row.explainImg"
-                  :src="row.explainImg"
-                  class="q-explain-img"
-                  alt="解析"
-                  referrerpolicy="no-referrer"
-                  loading="lazy"
-                />
-                <p v-else class="q-stem-placeholder">暂无解析图</p>
-              </div>
-
-              <!-- 底部工具栏（misikt 风格：分值 | 解析 | 上移 | 下移 | 删除 | 换一题 | 详情）-->
-              <div class="q-toolbar">
-                <!-- 分值 -->
-                <div class="toolbar-score">
-                  <span class="toolbar-label">分值</span>
-                  <el-input-number
-                    v-model="row._score"
-                    :min="0"
-                    :max="100"
-                    :step="1"
-                    size="small"
-                    controls-position="right"
-                    style="width: 100px;"
-                  />
-                </div>
-                <div class="toolbar-divider" />
-                <!-- 解析 toggle -->
-                <el-button
-                  size="small"
-                  link
-                  :type="row._showExplain ? 'primary' : 'default'"
-                  class="toolbar-btn"
-                  @click="toggleExplain(row)"
-                >
-                  解析
-                </el-button>
-                <div class="toolbar-divider" />
-                <!-- 上移 -->
-                <el-button
-                  size="small"
-                  link
-                  class="toolbar-btn"
-                  :disabled="editRowIndex === 0"
-                  @click="moveUp(editRowIndex)"
-                >
-                  <el-icon><Top /></el-icon>
-                  上移
-                </el-button>
-                <!-- 下移 -->
-                <el-button
-                  size="small"
-                  link
-                  class="toolbar-btn"
-                  :disabled="editRowIndex === editRows.length - 1"
-                  @click="moveDown(editRowIndex)"
-                >
-                  <el-icon><Bottom /></el-icon>
-                  下移
-                </el-button>
-                <!-- 删除 -->
-                <el-button
-                  size="small"
-                  link
-                  type="danger"
-                  class="toolbar-btn"
-                  @click="deleteRow(editRowIndex)"
-                >
-                  <el-icon><Delete /></el-icon>
-                  删除
-                </el-button>
-                <div class="toolbar-divider" />
-                <!-- 换一题 -->
-                <el-button
-                  size="small"
-                  link
-                  class="toolbar-btn"
-                  @click="handleReplace(row, editRowIndex)"
-                >
-                  <el-icon><Refresh /></el-icon>
-                  换一题
-                </el-button>
-                <!-- 详情 -->
-                <el-button
-                  size="small"
-                  link
-                  type="primary"
-                  class="toolbar-btn"
-                  @click="handleDetail(row)"
-                >
-                  <el-icon><InfoFilled /></el-icon>
-                  详情
-                </el-button>
-              </div>
-            </div>
+              :row="row"
+              :global-index="globalIndex"
+              :edit-row-index="editRowIndex"
+              :total="editRows.length"
+              @toggle-explain="toggleExplain"
+              @move-up="moveUp"
+              @move-down="moveDown"
+              @delete="deleteRow"
+              @replace="handleReplace"
+              @detail="handleDetail"
+            />
           </section>
           </template>
 
@@ -891,143 +757,21 @@ watch(paperId, async (newId) => {
               <span class="section-count">（共 {{ group.rows.length }} 题）</span>
             </div>
 
-            <div
+            <!-- 题卡（同上抽 WorkbenchCard，按知识点分组复用同一子组件）-->
+            <WorkbenchCard
               v-for="{ row, globalIndex, editRowIndex } in group.rows"
               :key="row.id"
-              :id="'wb-q-' + globalIndex"
-              class="source-question-card workbench-card"
-            >
-              <div class="q-meta-top">
-                <div class="q-meta-top-left">
-                  <span
-                    class="q-type-tag"
-                    :class="`q-type--${getQuestionTypeTag(row.questionType)}`"
-                  >
-                    {{ getQuestionTypeLabel(row.questionType) }}
-                  </span>
-                  <span class="meta-label">难度:</span>
-                  <el-rate
-                    :model-value="row.difficult ?? 0"
-                    :max="4"
-                    disabled
-                    class="meta-rate"
-                  />
-                  <template v-if="row.questionKnowledges && row.questionKnowledges.length > 0">
-                    <span class="meta-label">考点:</span>
-                    <el-tag type="primary" size="small" class="primary-knowledge-tag">
-                      {{ row.questionKnowledges[0].knowledgeName || row.questionKnowledges[0].knowledgeId }}
-                    </el-tag>
-                  </template>
-                  <span v-if="row.examPaperName" class="source-text">
-                    来源: {{ row.examPaperName }}{{ row.examYear ? ` · ${row.examYear}年` : '' }}
-                  </span>
-                </div>
-                <div class="q-global-num">{{ globalIndex }}</div>
-              </div>
-
-              <div class="q-stem-area">
-                <img
-                  v-if="row.stemImg"
-                  :src="row.stemImg"
-                  class="q-stem-img"
-                  alt="题干"
-                  referrerpolicy="no-referrer"
-                  loading="lazy"
-                  @error="(e: Event) => ((e.target as HTMLImageElement).style.display = 'none')"
-                />
-                <p v-else-if="row.stemText" class="q-stem-text">{{ row.stemText }}</p>
-                <p v-else class="q-stem-placeholder">（题目 ID: {{ row.id }}）</p>
-              </div>
-
-              <div v-if="row._showExplain" class="q-explain-area">
-                <div class="explain-label">解析：</div>
-                <img
-                  v-if="row.explainImg"
-                  :src="row.explainImg"
-                  class="q-explain-img"
-                  alt="解析"
-                  referrerpolicy="no-referrer"
-                  loading="lazy"
-                />
-                <p v-else class="q-stem-placeholder">暂无解析图</p>
-              </div>
-
-              <div class="q-toolbar">
-                <div class="toolbar-score">
-                  <span class="toolbar-label">分值</span>
-                  <el-input-number
-                    v-model="row._score"
-                    :min="0"
-                    :max="100"
-                    :step="1"
-                    size="small"
-                    controls-position="right"
-                    style="width: 100px;"
-                  />
-                </div>
-                <div class="toolbar-divider" />
-                <el-button
-                  size="small"
-                  link
-                  :type="row._showExplain ? 'primary' : 'default'"
-                  class="toolbar-btn"
-                  @click="toggleExplain(row)"
-                >
-                  解析
-                </el-button>
-                <div class="toolbar-divider" />
-                <el-button
-                  size="small"
-                  link
-                  class="toolbar-btn"
-                  :disabled="editRowIndex === 0"
-                  @click="moveUp(editRowIndex)"
-                >
-                  <el-icon><Top /></el-icon>
-                  上移
-                </el-button>
-                <el-button
-                  size="small"
-                  link
-                  class="toolbar-btn"
-                  :disabled="editRowIndex === editRows.length - 1"
-                  @click="moveDown(editRowIndex)"
-                >
-                  <el-icon><Bottom /></el-icon>
-                  下移
-                </el-button>
-                <el-button
-                  size="small"
-                  link
-                  type="danger"
-                  class="toolbar-btn"
-                  @click="deleteRow(editRowIndex)"
-                >
-                  <el-icon><Delete /></el-icon>
-                  删除
-                </el-button>
-                <div class="toolbar-divider" />
-                <el-button
-                  size="small"
-                  link
-                  class="toolbar-btn"
-                  @click="handleReplace(row, editRowIndex)"
-                >
-                  <el-icon><Refresh /></el-icon>
-                  换一题
-                </el-button>
-                <el-button
-                  size="small"
-                  link
-                  type="primary"
-                  class="toolbar-btn"
-                  @click="handleDetail(row)"
-                >
-                  <el-icon><InfoFilled /></el-icon>
-                  详情
-                </el-button>
-              </div>
-            </div>
+              :row="row"
+              :global-index="globalIndex"
+              :edit-row-index="editRowIndex"
+              :total="editRows.length"
+              @toggle-explain="toggleExplain"
+              @move-up="moveUp"
+              @move-down="moveDown"
+              @delete="deleteRow"
+              @replace="handleReplace"
+              @detail="handleDetail"
+            />
           </section>
           </template>
         </template>
@@ -1288,7 +1032,7 @@ watch(paperId, async (newId) => {
 }
 
 .back-btn:hover {
-  color: #4080ff;
+  color: #1E8A8A;
 }
 
 .title-input {
@@ -1320,7 +1064,7 @@ watch(paperId, async (newId) => {
 }
 
 .stat-num.total {
-  color: #4080ff;
+  color: #1E8A8A;
 }
 
 .stat-unit {
@@ -1367,7 +1111,7 @@ watch(paperId, async (newId) => {
   margin: 0 0 10px;
   padding: 10px 14px;
   background: #fff;
-  border-left: 4px solid #4080ff;
+  border-left: 4px solid #1E8A8A;
   border-radius: 4px;
   border: 1px solid #f2f3f5;
   border-left-width: 4px;
@@ -1397,7 +1141,7 @@ watch(paperId, async (newId) => {
 }
 
 .source-question-card:hover {
-  box-shadow: 0 4px 16px rgba(64, 128, 255, 0.1);
+  box-shadow: 0 4px 16px rgba(30, 138, 138, 0.1);
   border-color: #d0e2ff;
 }
 
@@ -1454,7 +1198,7 @@ watch(paperId, async (newId) => {
 .q-global-num {
   width: 28px;
   height: 28px;
-  background: linear-gradient(135deg, #4080ff, #3370e8);
+  background: linear-gradient(135deg, #1E8A8A, #176E6E);
   color: #fff;
   font-size: 13px;
   font-weight: 700;
@@ -1574,7 +1318,7 @@ watch(paperId, async (newId) => {
 
 @keyframes wbFlash {
   0%, 100% { box-shadow: none; }
-  30% { box-shadow: 0 0 0 3px #4080ff55; }
+  30% { box-shadow: 0 0 0 3px #1E8A8A55; }
 }
 
 .toolbar-score {
@@ -1607,7 +1351,7 @@ watch(paperId, async (newId) => {
 }
 
 .toolbar-btn:hover {
-  color: #4080ff;
+  color: #1E8A8A;
 }
 
 /* ── 右固定栏（改动④b）── */
@@ -1717,7 +1461,7 @@ watch(paperId, async (newId) => {
 }
 
 .rename-trigger:hover {
-  color: #4080ff;
+  color: #1E8A8A;
   background: #f0f5ff;
 }
 
@@ -1760,8 +1504,8 @@ watch(paperId, async (newId) => {
   width: 32px;
   height: 32px;
   border-radius: 6px;
-  border: 1px solid #4080ff;
-  color: #4080ff;
+  border: 1px solid #1E8A8A;
+  color: #1E8A8A;
   font-size: 13px;
   font-weight: 600;
   display: flex;
@@ -1774,7 +1518,7 @@ watch(paperId, async (newId) => {
 }
 
 .number-cell:hover {
-  background: #4080ff;
+  background: #1E8A8A;
   color: #fff;
 }
 
@@ -1791,19 +1535,19 @@ watch(paperId, async (newId) => {
 .freesort-ghost {
   opacity: 0.4;
   background: #e8f0ff !important;
-  border-color: #4080ff !important;
+  border-color: #1E8A8A !important;
   border-style: dashed !important;
 }
 
 .freesort-chosen {
-  background: #4080ff !important;
+  background: #1E8A8A !important;
   color: #fff !important;
-  box-shadow: 0 2px 8px rgba(64, 128, 255, 0.4);
+  box-shadow: 0 2px 8px rgba(30, 138, 138, 0.4);
 }
 
 .freesort-drag {
   opacity: 0.9;
-  box-shadow: 0 4px 12px rgba(64, 128, 255, 0.3);
+  box-shadow: 0 4px 12px rgba(30, 138, 138, 0.3);
 }
 
 .add-section-btn {
@@ -1870,9 +1614,15 @@ watch(paperId, async (newId) => {
   font-size: 14px;
 }
 
+/* 竖向堆叠的全宽按钮：清掉 EP 对相邻 el-button 注入的 margin-left:12px，
+   否则下面的按钮被右推 12px，与上面的左边对不齐（scoped 选择器带 [data-v] 提权，盖过 EP）。 */
+.action-btn + .action-btn {
+  margin-left: 0;
+}
+
 .primary-btn {
-  background: #4080ff;
-  border-color: #4080ff;
+  background: #1E8A8A;
+  border-color: #1E8A8A;
 }
 
 .create-btn {

@@ -167,7 +167,7 @@ async function handleCreateFolder() {
           >
             <svg viewBox="0 0 1024 1024" class="spin-icon" xmlns="http://www.w3.org/2000/svg">
               <path d="M512 64C264.6 64 64 264.6 64 512s200.6 448 448 448 448-200.6 448-448S759.4 64 512 64zm0 820c-205.4 0-372-166.6-372-372s166.6-372 372-372 372 166.6 372 372-166.6 372-372 372z" fill="#c9cdd4"/>
-              <path d="M512 140c-205.4 0-372 166.6-372 372 0 205.4 166.6 372 372 372s372-166.6 372-372c0-205.4-166.6-372-372-372zm192 458c0 3.3-2.7 6-6 6H326c-3.3 0-6-2.7-6-6V426c0-3.3 2.7-6 6-6h42c3.3 0 6 2.7 6 6v138h124V426c0-3.3 2.7-6 6-6h42c3.3 0 6 2.7 6 6v172z" fill="#4080ff" opacity="0.4"/>
+              <path d="M512 140c-205.4 0-372 166.6-372 372 0 205.4 166.6 372 372 372s372-166.6 372-372c0-205.4-166.6-372-372-372zm192 458c0 3.3-2.7 6-6 6H326c-3.3 0-6-2.7-6-6V426c0-3.3 2.7-6 6-6h42c3.3 0 6 2.7 6 6v138h124V426c0-3.3 2.7-6 6-6h42c3.3 0 6 2.7 6 6v172z" fill="#1E8A8A" opacity="0.4"/>
             </svg>
           </el-icon>
         </div>
@@ -239,14 +239,14 @@ async function handleCreateFolder() {
 }
 
 .folder-item:hover {
-  background: rgba(64, 128, 255, 0.06);
-  border-color: rgba(64, 128, 255, 0.2);
+  background: rgba(30, 138, 138, 0.06);
+  border-color: rgba(30, 138, 138, 0.2);
 }
 
 .folder-item.is-active {
-  border-color: #4080ff;
-  background: rgba(64, 128, 255, 0.08);
-  box-shadow: 0 0 0 2px rgba(64, 128, 255, 0.1);
+  border-color: #1E8A8A;
+  background: rgba(30, 138, 138, 0.08);
+  box-shadow: 0 0 0 2px rgba(30, 138, 138, 0.1);
 }
 
 .folder-item.is-confirming {

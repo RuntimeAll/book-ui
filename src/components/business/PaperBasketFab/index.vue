@@ -44,10 +44,12 @@ function handleOpenWorkbench() {
 </template>
 
 <style scoped>
-/* 锚点：fixed 定位在蓝色试题栏 FAB(bottom:40) 上方堆叠（64px 按钮 + 16 间距）*/
+/* 锚点：fixed 定位在试题栏 FAB(bottom:40) 上方堆叠。
+   两 FAB 各 64px 高 → 中心间距 = (152+32)-(72) = 不挤；试卷篮在上 bottom:152，
+   与试题栏(40)的相邻间隙 = 152-(40+64) = 48px，中心间距 112px，明显拉开不重叠。 */
 .paper-basket-fab-badge {
   position: fixed;
-  bottom: 120px;
+  bottom: 152px;
   right: 40px;
   z-index: 200;
   line-height: 0;

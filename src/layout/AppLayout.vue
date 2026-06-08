@@ -89,7 +89,8 @@ function isActive(path: string): boolean {
 // U 卡顺手实装 P-2 — 试题栏 FAB 路由白名单（仅题库 / 卷库 / 工作台显示）。
 // Q 卡正式排除 /question/compose（工作台自身已展示题目列表，FAB 嵌套冗余）。
 const showQuestionBasket = computed(() => {
-  if (route.path === '/question/compose') {
+  // 组卷工作台自身已是组题上下文，FAB 浮在「创建试卷」CTA 上属冗余遮挡 → 与 /question/compose 同理排除
+  if (route.path === '/question/compose' || route.path.startsWith('/papers/workbench')) {
     return false
   }
   return route.path.startsWith('/question/')
@@ -102,7 +103,8 @@ const showQuestionBasket = computed(() => {
 // PRD-001 回归补丁 — 新增轻量绿色试卷篮 FAB(仅入口+角标，点击跳工作台，不复活旧 dialog)。
 //   白名单同试题栏(题库/卷库/工作台)，但在工作台本页隐藏(避免"点了进当前页")。
 const showPaperBasketFab = computed(() => {
-  if (route.path === '/papers/basket') {
+  // /papers/basket 三栏工作台 + /papers/workbench 组卷台：已在组卷上下文，FAB 冗余且压 CTA → 隐藏
+  if (route.path === '/papers/basket' || route.path.startsWith('/papers/workbench')) {
     return false
   }
   return route.path.startsWith('/question/')
@@ -123,11 +125,10 @@ function handleUpgrade() {
         <!-- Logo 区 -->
         <div class="logo-area">
           <div class="logo-icon">
-            <el-icon :size="22" color="#4080ff"><Collection /></el-icon>
+            <img src="/icon.png" alt="AI·备课助手" class="logo-img" />
           </div>
           <div class="logo-text-group">
-            <span class="logo-title">misikt 题库系统</span>
-            <span class="logo-subtitle">Teacher Workspace</span>
+            <span class="logo-title"><span class="logo-ai">AI</span>·备课助手</span>
           </div>
         </div>
 
@@ -198,15 +199,18 @@ function handleUpgrade() {
 </template>
 
 <style scoped>
+/* 容器透明，让 body 的极淡网格纹理透上来铺满全站背景（DESIGN 数学坐标纸） */
 .app-container {
-  background: #f0f2f5;
+  background: transparent;
 }
 
 /* ── 顶栏 ── */
 .app-header {
   background: #ffffff;
-  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.06);
-  padding: 0 24px;
+  /* DESIGN §5.4：1px 冷边 #E3E9E9 + 极淡冷中性阴影（去原 rgba(0,0,0) 黑阴影） */
+  border-bottom: 1px solid #e3e9e9;
+  box-shadow: 0 1px 3px rgba(29, 42, 46, 0.04);
+  padding: 0 28px;
   display: flex;
   align-items: center;
   position: sticky;
@@ -218,7 +222,7 @@ function handleUpgrade() {
   display: flex;
   align-items: center;
   width: 100%;
-  gap: 16px;
+  gap: 0;
 }
 
 /* ── Logo ── */
@@ -228,18 +232,26 @@ function handleUpgrade() {
   gap: 10px;
   flex-shrink: 0;
   text-decoration: none;
-  margin-right: 8px;
+  /* 拉开 logo 与 nav，避免导航紧贴 logo（DESIGN：秩序留白） */
+  margin-right: 36px;
 }
 
 .logo-icon {
   width: 36px;
   height: 36px;
-  background: linear-gradient(135deg, #e8f0ff, #d0e2ff);
   border-radius: 8px;
+  overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+}
+
+.logo-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .logo-text-group {
@@ -249,24 +261,22 @@ function handleUpgrade() {
 }
 
 .logo-title {
-  font-size: 15px;
-  font-weight: 700;
-  color: #1d2129;
+  font-size: 16px;
+  font-weight: 600;
+  color: #1d2a2e;
   letter-spacing: -0.2px;
 }
 
-.logo-subtitle {
-  font-size: 10px;
-  color: #86909c;
-  font-weight: 400;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
+/* "AI" 二字 violet-600 点睛（AI 在场，DESIGN §2.2） */
+.logo-ai {
+  color: #7b6cf0;
+  font-weight: 600;
 }
 
 /* ── 导航菜单 ── */
 .nav-menu {
   display: flex;
-  gap: 2px;
+  gap: 4px;
   flex: 1;
   align-items: center;
   height: 60px;
@@ -274,59 +284,75 @@ function handleUpgrade() {
 
 .nav-item {
   position: relative;
-  padding: 0 14px;
+  padding: 0 16px;
   height: 60px;
   display: flex;
   align-items: center;
   cursor: pointer;
   font-size: 14px;
-  color: #4e5969;
-  font-weight: 400;
+  color: #536268; /* ink-500 */
+  font-weight: 500; /* Medium，更精致 */
+  letter-spacing: 0.2px;
   white-space: nowrap;
-  transition: all 0.2s ease;
-  border-bottom: 2px solid transparent;
+  transition: color 0.2s ease, background 0.2s ease;
 }
 
 .nav-item:hover {
-  color: #4080ff;
-  background: rgba(64, 128, 255, 0.04);
+  color: #1e8a8a; /* teal-600 */
 }
 
 .nav-item.active {
-  color: #4080ff;
+  color: #1e8a8a; /* teal-600 */
   font-weight: 600;
-  border-bottom-color: #4080ff;
-  background: rgba(64, 128, 255, 0.04);
+}
+
+/* active 指示器 = 居中收窄的细青条（替代满宽 2px 底边，更克制细腻） */
+.nav-item.active::after {
+  content: '';
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 12px;
+  height: 2px;
+  border-radius: 2px;
+  background: #1e8a8a; /* teal-600 */
 }
 
 /* ── 右侧操作区 ── */
 .header-right {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 16px;
   flex-shrink: 0;
 }
 
+/* 升级会员：描边青 + 青字（轻盈），hover 才淡填充 —— 与 avatar 实心青拉开层次，
+   不再两坨实心青撞（DESIGN §7.2 secondary 思路 + 青系克制） */
 .upgrade-btn {
-  background: linear-gradient(135deg, #4080ff, #3370e8);
-  border: none;
-  color: #fff;
+  background: #ffffff;
+  border: 1px solid #1e8a8a; /* teal-600 描边 */
+  color: #1e8a8a;
   font-size: 13px;
+  font-weight: 500;
   border-radius: 6px;
   padding: 0 14px;
   height: 32px;
-  box-shadow: 0 2px 6px rgba(64, 128, 255, 0.28);
+  box-shadow: none;
   transition: all 0.2s ease;
   display: flex;
   align-items: center;
 }
 
 .upgrade-btn:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(64, 128, 255, 0.4);
-  background: linear-gradient(135deg, #5090ff, #4080ee) !important;
-  border: none !important;
-  color: #fff !important;
+  background: #e6f2f2 !important; /* teal-50 淡填充 */
+  border-color: #176e6e !important; /* teal-700 */
+  color: #176e6e !important;
+}
+
+.upgrade-btn:focus {
+  background: #ffffff;
+  border-color: #1e8a8a;
+  color: #1e8a8a;
 }
 
 .avatar-wrap {
@@ -334,17 +360,20 @@ function handleUpgrade() {
   cursor: pointer;
 }
 
+/* avatar 实心青保留 + 细白边光圈让它精致（DESIGN §3.2 青主色） */
 .user-avatar {
-  background: linear-gradient(135deg, #4080ff, #3370e8);
+  background: linear-gradient(135deg, #2ba3a3, #1e8a8a);
   color: #fff;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 0 1px #d2dcdc, 0 1px 3px rgba(29, 42, 46, 0.08);
   transition: all 0.2s ease;
   cursor: pointer;
 }
 
 .avatar-wrap:hover .user-avatar {
-  box-shadow: 0 0 0 3px rgba(64, 128, 255, 0.2);
+  box-shadow: 0 0 0 3px rgba(30, 138, 138, 0.18), 0 1px 3px rgba(29, 42, 46, 0.08);
 }
 
 /* ── 主内容区 ── */

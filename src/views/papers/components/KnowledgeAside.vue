@@ -193,7 +193,7 @@ function clearSelected(): void {
 
 .ka-item.is-selected {
   background: #ecf2ff;
-  border-left-color: #4080ff;
+  border-left-color: #1E8A8A;
 }
 
 .ka-item-name {
@@ -207,7 +207,7 @@ function clearSelected(): void {
 }
 
 .ka-item.is-selected .ka-item-name {
-  color: #4080ff;
+  color: #1E8A8A;
   font-weight: 600;
 }
 
@@ -226,7 +226,7 @@ function clearSelected(): void {
 
 .ka-item.is-selected .ka-item-count {
   color: #fff;
-  background: #4080ff;
+  background: #1E8A8A;
 }
 
 .ka-no-match {

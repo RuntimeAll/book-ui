@@ -174,6 +174,19 @@ async function handleExportPdf() {
   exporting.value = true
   exportProgress.value = '准备中…'
   try {
+    // 🔴 2026-06-05：内容超过「一张截图带」(>28000px ≈ 多带，如 80+ 题大卷) 时，前端逐带截图+分页耗时较长，
+    //   导出期间会阻塞主线程。导出前先弹提示让用户心里有数（最优解是后端异步生成，目前未设计，后期再说）。
+    //   阈值与 pdf-export.ts 的 BAND_BUDGET_CSS(28000) 对齐 = 超过一带就提示。
+    const LARGE_CONTENT_PX = 28000
+    if (previewRoot.value.scrollHeight > LARGE_CONTENT_PX) {
+      ElMessage.warning({
+        message: '试卷内容较大，导出预计需要 1–2 分钟，请耐心等待，期间请勿关闭或刷新页面',
+        duration: 8000,
+      })
+      // 让提示先渲染出来，再开始阻塞式截图（否则提示要等首带截完才显示）
+      await nextTick()
+      await new Promise((r) => setTimeout(r, 80))
+    }
     const filename = (props.paperName || '未命名草稿').trim()
     await exportPaperToPdf({
       root: previewRoot.value,
@@ -369,7 +382,7 @@ async function handleExportPdf() {
   font-weight: 600;
   color: #1d2129;
   padding-bottom: 8px;
-  border-bottom: 2px solid #4080ff;
+  border-bottom: 2px solid #1E8A8A;
   margin: 0 0 16px;
 }
 
@@ -411,15 +424,18 @@ async function handleExportPdf() {
 }
 
 .pp-q-stem :deep(img) {
+  /* 🔴 2026-06-05 铁则：试卷图文不压缩 — 去掉 max-height 高度上限(原 280px 会等比缩图丢信息)，仅按列宽兜底防溢出 */
   max-width: 100%;
-  max-height: 280px;
+  height: auto;
   vertical-align: middle;
 }
 
 .stem-img {
   display: block;
+  /* 🔴 2026-06-05 铁则：试卷图文不压缩 — 去掉 max-height:280px(会压扁大图)。用 max-width:100%+height:auto：
+     大图填满列宽=清晰，小图保持原始尺寸=不强制放大不模糊(不上不下,均不损质)。 */
   max-width: 100%;
-  max-height: 280px;
+  height: auto;
   margin-top: 0;          /* 题号已同行左列，题干图不再下移，消除错位 */
   border-radius: 4px;
 }
@@ -449,7 +465,7 @@ async function handleExportPdf() {
   margin-top: 10px;
   padding: 8px 12px;
   background: #f7f8fa;
-  border-left: 3px solid #4080ff;
+  border-left: 3px solid #1E8A8A;
   font-size: 14px;
   line-height: 1.8;
   color: #4e5969;
@@ -469,8 +485,11 @@ async function handleExportPdf() {
 .ans-img,
 .exp-img {
   display: block;
+  /* 🔴 2026-06-05 铁则：试卷图文不压缩 — 解析/答案图是整段解答(正文+图,原始~2007×900+)，原 max-height:200px
+     先触发把整图等比缩到 200px 高 → 宽缩到~430px 挤左窄条、字小看不清。去掉高度上限，max-width:100%+height:auto：
+     大图填满列宽=清晰，小图保持原尺寸=不放大不模糊。 */
   max-width: 100%;
-  max-height: 200px;
+  height: auto;
   margin-top: 6px;
 }
 
@@ -498,7 +517,7 @@ async function handleExportPdf() {
 
 .pp-export-progress {
   font-size: 12px;
-  color: #4080ff;
+  color: #1E8A8A;
   margin-right: auto;
 }
 </style>

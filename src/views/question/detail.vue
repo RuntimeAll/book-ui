@@ -2,13 +2,13 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+// PRD-A-010 T3：备注卡的 Plus 图标随 DetailSidebar 子组件迁出。
 import {
   ArrowLeft,
   Star,
   Edit,
   ShoppingCart,
   ChatDotRound,
-  Plus,
 } from '@element-plus/icons-vue'
 import {
   getQuestionDetail,
@@ -25,6 +25,7 @@ import {
 } from '@/api/question/index'
 import FreeTagList from '@/components/business/FreeTagList/index.vue'
 import SketchPad from '@/components/business/SketchPad/index.vue'
+import DetailSidebar from './components/DetailSidebar.vue'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
 
 // ── 路由 ────────────────────────────────────────────────────
@@ -215,17 +216,24 @@ function getDifficultyStars(difficult: number | null) {
   return Array.from({ length: 4 }, (_, i) => i < val)
 }
 
+// PRD-A-010 T3：题型 label/彩标已随 DetailSidebar 子组件迁出（右栏「题目信息」用）；
+// 父组件已不再引用，保留（纯函数、零副作用）未真删避免误伤。
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function getQuestionTypeLabel(type: number): string {
   const map: Record<number, string> = { 1: '选择题', 4: '填空题', 5: '简答题' }
   return map[type] ?? `题型${type}`
 }
+void getQuestionTypeLabel
 
-// 题型彩色标签类型（选择=蓝 / 填空=绿 / 简答=橙），右栏「题目信息」用
+// 题型彩色标签类型（选择=蓝 / 填空=绿 / 简答=橙），右栏「题目信息」用（已迁 DetailSidebar）
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function getQuestionTypeTagType(type: number): 'primary' | 'success' | 'warning' | 'info' {
   const map: Record<number, 'primary' | 'success' | 'warning'> = { 1: 'primary', 4: 'success', 5: 'warning' }
   return map[type] ?? 'info'
 }
+void getQuestionTypeTagType
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function getKnowledgeTagType(idx: number): 'success' | 'primary' | 'warning' | 'danger' | 'info' {
   const types: Array<'success' | 'primary' | 'warning' | 'danger' | 'info'> = [
     'success', 'primary', 'warning', 'danger', 'info'
@@ -460,93 +468,20 @@ watch(questionId, async () => {
         </div>
       </div>
 
-      <!-- ══ 右侧 sidebar（30%）══ -->
-      <div class="detail-sidebar">
-        <!-- 我的备注 card -->
-        <div class="sidebar-card">
-          <div class="sidebar-card-header">
-            <span class="sidebar-card-title">我的备注</span>
-          </div>
-          <div class="sidebar-card-body" v-loading="notesLoading">
-            <div v-if="!note && !notesLoading" class="no-notes">
-              还没有备注
-            </div>
-            <div
-              v-else-if="note"
-              class="note-item"
-            >
-              <span class="note-content">{{ note.content }}</span>
-              <span class="note-time">{{ note.updateTime }}</span>
-            </div>
-            <!-- 添加备注 -->
-            <div class="note-add">
-              <el-input
-                v-model="noteInput"
-                type="textarea"
-                :rows="2"
-                placeholder="输入备注内容..."
-                size="small"
-              />
-              <el-button
-                type="primary"
-                size="small"
-                :loading="noteSaving"
-                :disabled="!noteInput.trim()"
-                class="note-save-btn"
-                @click="saveNote"
-              >
-                <el-icon><Plus /></el-icon>添加
-              </el-button>
-            </div>
-          </div>
-        </div>
-
-        <!-- 收录情况 card -->
-        <div class="sidebar-card">
-          <div class="sidebar-card-header">
-            <span class="sidebar-card-title">收录情况</span>
-            <el-tag type="info" size="small" round>{{ sources.length }}</el-tag>
-          </div>
-          <div class="sidebar-card-body" v-loading="sourcesLoading">
-            <div v-if="sources.length === 0 && !sourcesLoading" class="no-content">
-              暂无收录信息
-            </div>
-            <div
-              v-else
-              v-for="src in sources"
-              :key="src.examPaperId"
-              class="source-item-card"
-              @click="goToPaperSource(src.examPaperId)"
-            >
-              <span class="source-paper-name">{{ src.examPaperName }}</span>
-              <el-tag type="warning" size="small" class="source-tag">来源</el-tag>
-              <span v-if="src.examYear" class="source-year">{{ src.examYear }}</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- 题目信息（用户 2026-06-05 重整：加标题不再裸，题型用彩色 tag，移除题目ID）-->
-        <div class="sidebar-card">
-          <div class="sidebar-card-header">
-            <span class="sidebar-card-title">题目信息</span>
-          </div>
-          <div class="sidebar-card-body">
-            <div class="info-row">
-              <span class="info-label">题型</span>
-              <el-tag
-                :type="getQuestionTypeTagType(question.questionType)"
-                size="small"
-                effect="light"
-                round
-              >
-                {{ getQuestionTypeLabel(question.questionType) }}
-              </el-tag>
-            </div>
-          </div>
-          <!-- 题目ID 已移除（对老师无意义，用户 2026-06-05 拍板）；
-               创建时间已隐藏(2026-06-04): BE createTime 是 misikt 导入占位戳，非真实时间，待录题功能落地再恢复。 -->
-        </div>
-      </div>
+      <!-- ══ 右侧 sidebar（30%）══
+           PRD-A-010 T3：抽 DetailSidebar 子组件（备注/收录/题目信息三卡）。
+           备注输入 v-model:note-input 双向，保存/跳收录卷 emit 给父级原函数。-->
+      <DetailSidebar
+        v-model:note-input="noteInput"
+        :note="note"
+        :notes-loading="notesLoading"
+        :note-saving="noteSaving"
+        :sources="sources"
+        :sources-loading="sourcesLoading"
+        :question-type="question.questionType"
+        @save-note="saveNote"
+        @go-to-source="goToPaperSource"
+      />
     </div>
   </div>
 
@@ -583,7 +518,7 @@ watch(questionId, async () => {
 }
 
 .back-btn:hover {
-  color: #4080ff;
+  color: #1E8A8A;
 }
 
 .topbar-title {
@@ -834,142 +769,7 @@ watch(questionId, async () => {
   color: #4e5969;
 }
 
-/* ── 右侧 sidebar ── */
-.detail-sidebar {
-  flex: 3;
-  min-width: 240px;
-  max-width: 360px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.sidebar-card {
-  background: #fff;
-  border-radius: 10px;
-  border: 1px solid #f2f3f5;
-  overflow: hidden;
-}
-
-.sidebar-card-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 14px 10px;
-  border-bottom: 1px solid #f2f3f5;
-}
-
-.sidebar-card-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: #1d2129;
-}
-
-.sidebar-card-body {
-  padding: 12px 14px;
-}
-
-.no-notes {
-  font-size: 13px;
-  color: #c9cdd4;
-  text-align: center;
-  padding: 8px 0;
-}
-
-.note-item {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin-bottom: 8px;
-  padding-bottom: 8px;
-  border-bottom: 1px dashed #f2f3f5;
-}
-
-.note-content {
-  font-size: 13px;
-  color: #1d2129;
-  line-height: 1.5;
-}
-
-.note-time {
-  font-size: 11px;
-  color: #c9cdd4;
-}
-
-.note-add {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-top: 8px;
-}
-
-.note-save-btn {
-  align-self: flex-end;
-}
-
-/* 收录情况 card */
-.source-item-card {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 0;
-  border-bottom: 1px solid #f7f8fa;
-  cursor: pointer;
-  border-radius: 6px;
-  transition: background 0.15s;
-  flex-wrap: wrap;
-}
-
-.source-item-card:hover {
-  background: #f0f6ff;
-  padding-left: 4px;
-}
-
-.source-item-card:last-child {
-  border-bottom: none;
-}
-
-.source-paper-name {
-  font-size: 13px;
-  color: #1d2129;
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.source-tag {
-  flex-shrink: 0;
-}
-
-.source-year {
-  font-size: 12px;
-  color: #86909c;
-  flex-shrink: 0;
-}
-
-/* 报错 card */
-.sidebar-card--report {
-  padding: 12px 14px;
-  background: transparent;
-  border: none;
-}
-
-.report-btn {
-  width: 100%;
-}
-
-/* 题目信息 card —— 单行：左 label / 右彩色 tag */
-.info-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.info-label {
-  font-size: 13px;
-  color: #86909c;
-}
+/* ── 右侧 sidebar 样式（.detail-sidebar / .sidebar-card* / .note-* / 收录卡 /
+   题目信息 .info-*）已随 DetailSidebar 子组件迁出（PRD-A-010 T3）。
+   原「报错 card」.sidebar-card--report/.report-btn 为既有未使用样式，一并清除。*/
 </style>

@@ -62,8 +62,16 @@ async function handleBasketToggle(q: PaperSourceQuestion): Promise<void> {
 }
 
 async function handleAddAll(): Promise<void> {
-  // addMany 内部已过滤已在篮 + 单条汇总 toast（含"均已在篮"提示）
-  await questionBasket.addMany(filteredQuestions.value)
+  // 全部加入 / 全部移除 toggle：当前列表全在篮 → 全部移除；否则全部加入。
+  const qs = filteredQuestions.value
+  if (qs.length === 0) return
+  const allIn = qs.every((q) => questionBasket.basketIds.value.has(q.id))
+  if (allIn) {
+    await questionBasket.removeMany(qs.map((q) => q.id))
+  } else {
+    // addMany 内部已过滤已在篮 + 单条汇总 toast
+    await questionBasket.addMany(qs)
+  }
 }
 
 function handleDetail(q: PaperSourceQuestion): void {

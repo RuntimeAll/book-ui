@@ -22,7 +22,7 @@ const basket = useQuestionBasket()
 
 // ── 题型 label / 圆点颜色（沿用项目既有映射 {1选择 4填空 5简答}）──
 const TYPE_LABEL: Record<number, string> = { 1: '选择题', 4: '填空题', 5: '简答题' }
-const TYPE_DOT: Record<number, string> = { 1: '#4080ff', 4: '#2bb673', 5: '#f5a623' }
+const TYPE_DOT: Record<number, string> = { 1: '#1E8A8A', 4: '#2bb673', 5: '#f5a623' }
 function typeLabel(t: number): string {
   return TYPE_LABEL[t] ?? `题型${t}`
 }
@@ -215,16 +215,16 @@ async function handleAddToBasket(): Promise<void> {
 .qc-grid {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
-  gap: 10px;
+  gap: 8px;
 }
 
 .qc-cell {
   position: relative;
-  height: 40px;
+  height: 32px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
+  font-size: 13px;
   color: #4e5969;
   background: #fff;
   border: 1px solid #e5e6eb;
@@ -235,13 +235,13 @@ async function handleAddToBasket(): Promise<void> {
 }
 
 .qc-cell:hover:not(:disabled) {
-  border-color: #4080ff;
-  color: #4080ff;
+  border-color: #1E8A8A;
+  color: #1E8A8A;
 }
 
 .qc-cell--active {
-  background: #4080ff;
-  border-color: #4080ff;
+  background: #1E8A8A;
+  border-color: #1E8A8A;
   color: #fff;
 }
 
@@ -276,6 +276,8 @@ async function handleAddToBasket(): Promise<void> {
   flex-shrink: 0;
   margin-top: 12px;
   padding-top: 12px;
+  /* 不加纵向安全区：纵向 padding 会撑高列致 app-main 出滚动条（已踩坑）。
+     FAB 浮在右下角属正常，不为它切内容空间。 */
   border-top: 1px solid #f2f3f5;
   display: flex;
   flex-direction: column;
@@ -304,5 +306,11 @@ async function handleAddToBasket(): Promise<void> {
 .clear-btn {
   width: 100%;
   height: 40px;
+}
+
+/* 竖向堆叠的全宽按钮：清掉 EP 对相邻 el-button 注入的 margin-left:12px，
+   否则「清除选择」被右推 12px，与上面的「加入试题篮」左边对不齐。 */
+.add-to-basket-btn + .clear-btn {
+  margin-left: 0;
 }
 </style>

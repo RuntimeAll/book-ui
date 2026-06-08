@@ -1,6 +1,31 @@
 /**
  * useQuestionBasket — 试题栏全局共享状态 composable
  *
+ * ╔══ PRD-A-010 T3 合并审查标记（🔴 本卡仅标记重叠、不真合）═══════════════════╗
+ * ║ basket 三件套职责与重叠边界：                                              ║
+ * ║  • useQuestionBasket（本文件，题级 / 试题栏）                              ║
+ * ║  • usePaperBasket（卷级 / 试卷篮）  ← 与本文件【高度重叠】                  ║
+ * ║  • useBasketWorkbench（工作台数据层）← usePaperBasket 的【消费者】，职责正交 ║
+ * ║                                                                            ║
+ * ║ 【重叠边界】本文件 与 usePaperBasket 是同一套 module-singleton + LS 双 key  ║
+ * ║   + 乐观更新模式的镜像复刻。逐一对称的部分（合并时可抽 createBasket<T> 泛型   ║
+ * ║   工厂消重）：                                                              ║
+ * ║     readBasketIdsFromStorage / writeBasketIdsToStorage                      ║
+ * ║     readBasketCacheFromStorage / writeBasketCacheToStorage                  ║
+ * ║     _basketIds / _cache / _togglingIds / _dialogVisible / _count / _items   ║
+ * ║     syncToStorage / syncFromServer / add / remove / clear / isLoading       ║
+ * ║     openDialog / closeDialog（签名仅实体泛型 QuestionItem↔PaperListItem 不同）║
+ * ║   本文件【独有】：addMany（批量加入）、composeAndDownload（一键组卷跳转）。  ║
+ * ║   usePaperBasket【独有】：BASKET_MAX=20 上限自查、跨 tab storage 事件同步、   ║
+ * ║     refreshFromServer（BE 为准刷新）、apiEmpty/cancel。                      ║
+ * ║                                                                            ║
+ * ║ 【为什么本卡不合】二者都在生产路径使用（题库/详情/FAB ↔ 卷库/FAB/dialog），  ║
+ * ║   非死代码。贸然抽泛型工厂会触动两条独立业务流的回归面（PRD-A-001 删旧组件   ║
+ * ║   漏隐性职责返工的同类风险）。真合需单独立卡：先抽 createBasket<T,EmptyItem> ║
+ * ║   工厂收敛 LS/state/CRUD，再让两 composable 各自注入差异（上限/跨tab/端点/   ║
+ * ║   addMany/compose），配 book-test 双篮回归绿后切换。                        ║
+ * ╚════════════════════════════════════════════════════════════════════════════╝
+ *
  * 设计：module-scoped singleton（state 在模块顶层声明，多页面调 useQuestionBasket()
  * 返回同一份 reactive 引用）→ 题库列表页 / 详情页 / 全局 FAB 实时联动。
  *
@@ -174,6 +199,29 @@ async function addMany(questions: QuestionItem[]): Promise<number> {
   return toAdd.length
 }
 
+/**
+ * 批量移除（PRD-001 回归补丁 — 快速组卷 / 中栏"全部移除"复用）。
+ * 只移除在篮内的，单条汇总 toast，返回实际移除数。
+ */
+async function removeMany(ids: number[]): Promise<number> {
+  const toRemove = ids.filter((id) => _basketIds.value.has(id))
+  if (toRemove.length === 0) {
+    ElMessage.info('这些题目不在试题栏中')
+    return 0
+  }
+  const newSet = new Set(_basketIds.value)
+  toRemove.forEach((id) => newSet.delete(id))
+  _basketIds.value = newSet
+  syncToStorage()
+  ElMessage.success(`已从试题栏移除 ${toRemove.length} 题`)
+  toRemove.forEach((id) =>
+    apiRemoveBasket(id).catch((e) =>
+      console.warn('[basket] removeBasket notify failed (local state OK):', e),
+    ),
+  )
+  return toRemove.length
+}
+
 async function remove(id: number): Promise<void> {
   if (_togglingIds.has(id)) return
   if (!_basketIds.value.has(id)) return
@@ -246,6 +294,8 @@ export interface UseQuestionBasket {
   add: (q: QuestionItem) => Promise<void>
   /** 批量加入（过滤已在篮 + 单条汇总 toast），返回实际新增数 */
   addMany: (questions: QuestionItem[]) => Promise<number>
+  /** 批量移除（只移在篮内 + 单条汇总 toast），返回实际移除数 */
+  removeMany: (ids: number[]) => Promise<number>
   remove: (id: number) => Promise<void>
   clear: () => Promise<void>
   togglingIds: Set<number>
@@ -274,6 +324,7 @@ export function useQuestionBasket(): UseQuestionBasket {
     items: _items,
     add,
     addMany,
+    removeMany,
     remove,
     clear,
     togglingIds: _togglingIds,

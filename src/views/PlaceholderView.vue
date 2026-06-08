@@ -54,7 +54,7 @@ const router = useRouter()
   border: 1px solid #f2f3f5;
   padding: 56px 48px 48px;
   text-align: center;
-  box-shadow: 0 4px 24px rgba(64, 128, 255, 0.08);
+  box-shadow: 0 4px 24px rgba(30, 138, 138, 0.08);
   max-width: 440px;
   width: 100%;
   position: relative;
@@ -68,7 +68,7 @@ const router = useRouter()
   left: 0;
   right: 0;
   height: 3px;
-  background: linear-gradient(90deg, #4080ff, #34c38f);
+  background: linear-gradient(90deg, #1E8A8A, #0E9F6E);
   border-radius: 16px 16px 0 0;
 }
 
@@ -85,7 +85,7 @@ const router = useRouter()
 
 .placeholder-icon {
   font-size: 44px;
-  color: #4080ff;
+  color: #1E8A8A;
   position: relative;
   z-index: 3;
 }
@@ -93,7 +93,7 @@ const router = useRouter()
 .icon-ring {
   position: absolute;
   border-radius: 50%;
-  border: 1px solid rgba(64, 128, 255, 0.15);
+  border: 1px solid rgba(30, 138, 138, 0.15);
   animation: pulse-ring 2.5s ease-in-out infinite;
 }
 
@@ -125,7 +125,7 @@ const router = useRouter()
 
 .placeholder-subtitle {
   font-size: 15px;
-  color: #4080ff;
+  color: #1E8A8A;
   font-weight: 500;
   margin: 0 0 8px;
 }
@@ -139,14 +139,14 @@ const router = useRouter()
 
 /* ── CTA 按钮 ── */
 .placeholder-cta {
-  background: linear-gradient(135deg, #4080ff, #3370e8);
+  background: linear-gradient(135deg, #1E8A8A, #176E6E);
   border: none;
   border-radius: 8px;
   height: 40px;
   padding: 0 24px;
   font-weight: 600;
   font-size: 14px;
-  box-shadow: 0 3px 10px rgba(64, 128, 255, 0.3);
+  box-shadow: 0 3px 10px rgba(30, 138, 138, 0.3);
   transition: all 0.2s ease;
   display: inline-flex;
   align-items: center;
@@ -155,8 +155,8 @@ const router = useRouter()
 
 .placeholder-cta:hover {
   transform: translateY(-2px);
-  box-shadow: 0 6px 18px rgba(64, 128, 255, 0.45);
-  background: linear-gradient(135deg, #5090ff, #4080ee) !important;
+  box-shadow: 0 6px 18px rgba(30, 138, 138, 0.45);
+  background: linear-gradient(135deg, #2BA3A3, #176E6E) !important;
   border: none !important;
 }
 </style>

@@ -366,15 +366,18 @@ onMounted(async () => {
 <style scoped>
 .papers-page {
   display: flex;
-  min-height: calc(100vh - 60px);
+  /* 固定满高、自身不滚 —— 左侧目录与顶部搜索锁死，只让 table 列表内部滚（对齐题库交互） */
+  height: 100%;
   background: #f0f2f5;
   position: relative;
+  overflow: hidden;
 }
 
 /* ── 左侧目录 ─────────────────────────────── */
 .paper-sidebar {
   width: 300px;
   flex-shrink: 0;
+  height: 100%;
   background: #ffffff;
   padding: 16px 12px;
   border-right: 1px solid #ebeef5;
@@ -411,24 +414,28 @@ onMounted(async () => {
 }
 
 :deep(.el-tree-node.is-current > .el-tree-node__content) {
-  background-color: #ecf5ff;
-  color: #409eff;
+  /* DESIGN §3.2 青系：teal-50 底 + teal-600 字（替换 EP 默认蓝 #ecf5ff/#409eff） */
+  background-color: #E6F2F2;
+  color: #1E8A8A;
 }
 
 /* ── 中间主区 ─────────────────────────────── */
 .paper-main {
   flex: 1;
+  height: 100%;
   padding: 16px 20px;
   display: flex;
   flex-direction: column;
   gap: 12px;
   min-width: 0;
+  overflow: hidden; /* 自身不滚，滚动交给内部 .paper-list */
 }
 
 .search-bar {
   display: flex;
   gap: 10px;
   align-items: center;
+  flex-shrink: 0; /* 顶部搜索固定，不随列表滚走 */
 }
 
 .search-input {
@@ -439,12 +446,13 @@ onMounted(async () => {
   padding: 0 18px;
 }
 
-/* ── 卷列表 ───────────────────────────────── */
+/* ── 卷列表（唯一滚动区，对齐题库：左侧/搜索固定，只有列表滚） ── */
 .paper-list {
   flex: 1;
   background: #ffffff;
   border-radius: 4px;
-  min-height: 200px;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .paper-card {
@@ -487,13 +495,13 @@ onMounted(async () => {
 }
 
 .paper-star:hover {
-  color: #409eff;
+  color: #1E8A8A;
 }
 
 .paper-name {
   font-size: 14px;
   font-weight: 600;
-  color: #409eff;
+  color: #1E8A8A;
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
@@ -539,6 +547,7 @@ onMounted(async () => {
 
 /* ── 分页器 ───────────────────────────────── */
 .pagination-wrap {
+  flex-shrink: 0; /* 分页固定底部，不随列表滚 */
   display: flex;
   justify-content: flex-start;
   padding: 12px 0;

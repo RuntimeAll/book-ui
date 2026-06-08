@@ -8,6 +8,7 @@
  *   - 题卡复用共享组件 QuestionCard（禁自绘）；中栏只用 ['basket','detail'] 两个操作。
  *   - 「全部加入试题篮」一键把当前列表全部加入蓝色 QuestionBasket。
  */
+import { computed } from 'vue'
 import QuestionCard from '@/components/business/QuestionCard/index.vue'
 import type { PaperSourceQuestion } from '@/api/question/index'
 
@@ -62,6 +63,13 @@ function onDetail(q: PaperSourceQuestion): void {
   emit('detail', q)
 }
 
+// 当前列表是否全部已在试题栏 → 决定「全部加入」按钮翻转成「全部移除」
+const allInBasket = computed(
+  () =>
+    props.questions.length > 0
+    && props.questions.every((q) => props.basketIds.has(q.id)),
+)
+
 function onAddAll(): void {
   emit('add-all')
 }
@@ -97,13 +105,13 @@ function onAddAll(): void {
       </div>
       <div class="domain-toolbar-right">
         <el-button
-          type="primary"
+          :type="allInBasket ? 'danger' : 'primary'"
           size="default"
           class="add-all-btn"
           :disabled="props.questions.length === 0"
           @click="onAddAll"
         >
-          全部加入试题篮
+          {{ allInBasket ? '全部移除' : '全部加入试题篮' }}
         </el-button>
       </div>
     </div>

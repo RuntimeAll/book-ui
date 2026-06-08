@@ -45,7 +45,7 @@ function go(path: string) {
 
 // 快捷入口卡片（指向地基功能：找题 → 组卷 → 导出 闭环 + 收藏）
 const quickCards = [
-  { key: 'question', title: '题库', desc: '多维筛选找题，加入试题栏', icon: Notebook, path: '/question/index', accent: '#4080ff' },
+  { key: 'question', title: '题库', desc: '多维筛选找题，加入试题栏', icon: Notebook, path: '/question/index', accent: '#1E8A8A' },
   { key: 'papers', title: '卷库', desc: '公共试卷 · 专题卷库 · 我的卷库', icon: Files, path: '/papers/index', accent: '#16a34a' },
   { key: 'workbench', title: '组卷工作台', desc: '拖拽排序 · 分值 · 导出 PDF', icon: EditPen, path: '/papers/workbench', accent: '#f59e0b' },
   { key: 'favorites', title: '我的收藏', desc: '收藏的题目，随时取用', icon: Star, path: '/favorites/index', accent: '#e0529c' },
@@ -123,11 +123,11 @@ const quickCards = [
 
 /* ── Hero ── */
 .hero {
-  background: linear-gradient(135deg, #4080ff 0%, #5b8def 50%, #6d6df5 100%);
+  background: linear-gradient(135deg, #1E8A8A 0%, #176E6E 100%);
   border-radius: 18px;
   padding: 48px 44px;
   color: #fff;
-  box-shadow: 0 12px 32px rgba(64, 128, 255, 0.25);
+  box-shadow: 0 12px 32px rgba(30, 138, 138, 0.25);
   position: relative;
   overflow: hidden;
 }
@@ -192,7 +192,7 @@ const quickCards = [
 /* 主按钮：白底蓝字（在蓝色 hero 上更突出） */
 .hero-btn.el-button--primary {
   background: #fff;
-  color: #3370e8;
+  color: #176E6E;
   border-color: #fff;
 }
 
@@ -287,7 +287,7 @@ const quickCards = [
 }
 
 .quick-card:hover .quick-arrow {
-  color: #4080ff;
+  color: #1E8A8A;
   transform: translateX(3px);
 }
 
