@@ -162,8 +162,8 @@ function handleBack() {
             </div>
           </div>
           <div class="q-stem">
-            <!-- 题干 HTML（含 LaTeX 原文，Q' 卡再上 MathJax 渲染） — v-html 不 stripHtml，避免内容被剥光 -->
-            <div v-if="q.stemText" class="stem-text" v-html="q.stemText"></div>
+            <!-- 题干 HTML（含 LaTeX 原文，Q' 卡再上 MathJax 渲染）—— PRD-A-013 H-3: v-html → v-safe-html, 走 DOMPurify 白名单防 XSS, 不剥光原内容 -->
+            <div v-if="q.stemText" class="stem-text" v-safe-html="q.stemText"></div>
             <img v-if="q.stemImg" :src="q.stemImg" alt="题图" class="stem-img" />
             <span v-if="!q.stemText && !q.stemImg" class="q-stem-placeholder">
               题干数据缺失（LS 缓存未含完整字段）
