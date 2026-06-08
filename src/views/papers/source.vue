@@ -15,6 +15,7 @@ import {
 } from '@/api/question/index'
 import { updateExamPaper, type UpdatePaperQuestion, type PaperListItem } from '@/api/paper/index'
 import { usePaperBasket } from '@/composables/usePaperBasket'
+import { useAbortableRequest } from '@/composables/useAbortableRequest'
 import PaperPreview from '@/components/business/PaperPreview/index.vue'
 import SketchPad from '@/components/business/SketchPad/index.vue'
 import FavoriteFolderDrawer from '@/components/FavoriteFolderDrawer/index.vue'
@@ -78,6 +79,11 @@ const isOwner = computed(() => {
 const detail = ref<PaperDetailVo | null>(null)
 const loading = ref(false)
 
+// PRD-A-013 T5 M-10 — 切卷竞态防护
+// 用户从一个卷详情快速跳另一个卷（watch paperId 触发）时, 旧请求自动 abort,
+// 防止旧卷的 response 覆盖新卷的 UI。
+const { run: runAbortable } = useAbortableRequest<PaperDetailVo>()
+
 // 所有题（flatten — 空状态判断 + basket 操作遍历用）
 const allQuestions = computed<PaperSourceQuestion[]>(() => {
   if (!detail.value || !Array.isArray(detail.value.sections)) return []
@@ -102,7 +108,15 @@ async function loadPaperDetail() {
   loading.value = true
   detail.value = null
   try {
-    const res = await getPaperDetail(paperId.value)
+    // PRD-A-013 T5 M-10 — 走 useAbortableRequest 包装, signal 透传到 axios。
+    // 切卷时上一个请求自动 abort, 返回 null 表示被取消（不更新 UI）。
+    const res = await runAbortable((signal) =>
+      getPaperDetail(paperId.value, { signal }),
+    )
+    if (res === null) {
+      // 被新一次请求取消, 保持当前 UI（loading 由更新的请求结束时关闭）
+      return
+    }
     // BE 真响应：response 内层 = PaperDetailVo（advice 解包后 request.post 拿到的）
     if (res && (res as { paperId?: unknown }).paperId) {
       detail.value = res as PaperDetailVo

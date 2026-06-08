@@ -1,4 +1,5 @@
 import request from '@/http/request'
+import type { AxiosRequestConfig } from 'axios'
 import type { PaperDetailVo } from '@/api/question/index'
 
 // ── 类型定义（misikt 真响应字节级对齐，证据：smoke/02-lazyTree-resp.json + 03-page-3001-resp.json）
@@ -96,10 +97,17 @@ export const getPaperLazyTree = (params: PaperLazyTreeParams = { type: 2, versio
  * 试卷分页列表 — name LIKE / subjectId prefix-match / sort DESC
  * POST /teacher/exam/paper/page
  */
-export const getPaperPage = (params: PaperPageParams) =>
+/**
+ * PRD-A-013 T5 M-10：可选 config 透传 axios 选项（主要为 signal —— 列表竞态防护）。
+ */
+export const getPaperPage = (
+  params: PaperPageParams,
+  config?: AxiosRequestConfig,
+) =>
   request.post<MisiktPageVo<PaperListItem>, MisiktPageVo<PaperListItem>>(
     '/teacher/exam/paper/page',
     params,
+    config,
   )
 
 // ── Q 卡段① 创建试卷 ────────────────────────────────────────────────────

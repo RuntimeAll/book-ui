@@ -1,4 +1,5 @@
 import request from '@/http/request'
+import type { AxiosRequestConfig } from 'axios'
 
 // ── 类型定义 ────────────────────────────────────────────────
 // lazyTree 节点（misikt 返整棵树，children 嵌套）
@@ -126,9 +127,18 @@ export const lazyTree = (parentId: string | number = 0) =>
 
 /**
  * 分页拉题列表（⚠️ 入参 pageIndex 不是 pageNum）
+ *
+ * PRD-A-013 T5 M-10：可选 config 透传 axios 选项（主要为 signal —— 列表竞态防护）。
  */
-export const questionPage = (params: QuestionPageParams) =>
-  request.post<QuestionPageResult, QuestionPageResult>('/teacher/question/page', params)
+export const questionPage = (
+  params: QuestionPageParams,
+  config?: AxiosRequestConfig,
+) =>
+  request.post<QuestionPageResult, QuestionPageResult>(
+    '/teacher/question/page',
+    params,
+    config,
+  )
 
 /**
  * 拉试题栏角标数量
@@ -354,8 +364,18 @@ export const getPaperSource = (paperId: number | string) =>
  * POST /teacher/exam/paper/detail body={paperId}
  * BE envelope `{code, message, response}` 已被 advice 解包，拿到的是 response 内层
  */
-export const getPaperDetail = (paperId: number | string) =>
-  request.post<PaperDetailVo, PaperDetailVo>('/teacher/exam/paper/detail', { paperId })
+/**
+ * PRD-A-013 T5 M-10：可选 config 透传 axios 选项（主要为 signal —— 快速切卷竞态防护）。
+ */
+export const getPaperDetail = (
+  paperId: number | string,
+  config?: AxiosRequestConfig,
+) =>
+  request.post<PaperDetailVo, PaperDetailVo>(
+    '/teacher/exam/paper/detail',
+    { paperId },
+    config,
+  )
 
 // V1 删除：addErrorBasket / removeErrorBasket / reportQuestion 三个 API 函数
 // 原因：错题栏 + 题目报错本卡范围不实现，view 改为 noop + ElMessage warning "功能开发中"。

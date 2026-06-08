@@ -1,4 +1,5 @@
 import axios from 'axios'
+import JSONbig from 'json-bigint'
 import { ElMessage } from 'element-plus'
 import router from '@/router'
 import { useUserStore } from '@/store/user'
@@ -31,12 +32,30 @@ interface RuoYiEnvelope<T = unknown> {
   data: T
 }
 
+// PRD-A-013 T2 — json-bigint 解析器（storeAsString: true 模式只把超 MAX_SAFE_INTEGER
+// 的数值字段转 string，小整数 / 浮点 / BigDecimal 保留 number 语义不动），用在
+// axios transformResponse 上拦截 19 位雪花 ID 的 JSON 精度截断。
+const jsonBigParser = JSONbig({ storeAsString: true })
+
 const instance = axios.create({
   baseURL: '/api',
   timeout: 15000,
   headers: {
     'Content-Type': 'application/json',
   },
+  // PRD-A-013 T2 — 用 json-bigint 替代默认 JSON.parse，避免 BE 切真雪花后
+  // 19 位 ID（>2^53）末位精度被截。非 string 响应（blob/arraybuffer）原样返。
+  // 解析失败 catch 兜底返原数据（防极端 BE 非 JSON 响应把整个拦截器炸掉）。
+  transformResponse: [
+    (data) => {
+      if (typeof data !== 'string') return data
+      try {
+        return jsonBigParser.parse(data)
+      } catch {
+        return data
+      }
+    },
+  ],
 })
 
 // ---------------------------------------------------------------------------
@@ -76,7 +95,9 @@ instance.interceptors.response.use(
     if (url.startsWith('/auth/')) {
       const data = response.data as RuoYiEnvelope
       if (data.code === 200) {
-        return data.data as any
+        // PRD-A-013 T3 — 拦截器自身没泛型上下文（axios v1 fulfill 不暴露 T），
+        // 用 `as unknown` 解耦：调用方 request.post<T, R> 自行声明的 R 通过推断生效。
+        return data.data as unknown
       }
       ElMessage.error(data.msg || `登录接口异常 (code=${data.code})`)
       return Promise.reject(new Error(data.msg || `登录接口异常 (code=${data.code})`))
@@ -85,7 +106,8 @@ instance.interceptors.response.use(
     // 分支 2：misikt envelope（book-server /teacher/* 被 advice 包装）
     const data = response.data as MisiktEnvelope
     if (data.code === 1) {
-      return data.response as any
+      // PRD-A-013 T3 — 同上，as unknown 解耦
+      return data.response as unknown
     }
     if (data.code === 401) {
       redirectToLogin()
@@ -96,6 +118,13 @@ instance.interceptors.response.use(
     return Promise.reject(new Error(data.message || '系统内部错误'))
   },
   (error) => {
+    // PRD-A-013 T5 M-10 — 列表竞态防护：上一个请求被 AbortController 主动 cancel，
+    // 不弹 toast、不打 error 日志（用户切章节是正常行为不该报错）。
+    // useAbortableRequest.run() 已在业务侧把该错吞掉返 null，此处只做拦截器级静默兜底。
+    if (axios.isCancel(error) || error?.code === 'ERR_CANCELED') {
+      return Promise.reject(error)
+    }
+
     const status: number | undefined = error?.response?.status
 
     // HTTP 401（Sa-Token 拦下未经 advice 包装）

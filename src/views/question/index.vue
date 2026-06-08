@@ -9,9 +9,11 @@ import {
   type SubjectNode,
   type QuestionItem,
   type QuestionPageParams,
+  type QuestionPageResult,
 } from '@/api/question/index'
 import { useRouter } from 'vue-router'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
+import { useAbortableRequest } from '@/composables/useAbortableRequest'
 import FavoriteFolderDrawer from '@/components/FavoriteFolderDrawer/index.vue'
 import ContentWrap from '@/components/ContentWrap/index.vue'
 import SearchWrap from '@/components/SearchWrap/index.vue'
@@ -136,6 +138,10 @@ const pageParams = reactive<QuestionPageParams>({
   notUsedQuestion: 0,
 })
 
+// PRD-A-013 T5 M-10 — 列表请求竞态防护
+// 快速切章节 / 改筛选时, 旧请求被自动 abort, 防止旧 response 覆盖新数据。
+const { run: runAbortable } = useAbortableRequest<QuestionPageResult>()
+
 // 空态文案动态切换（BUG-2 真修后，章节走 biz_question_knowledge JOIN 大多数节点有题；
 // 仅极少叶子节点确实 0 题时显示这条）
 const emptyDescription = computed(() => {
@@ -146,7 +152,13 @@ const emptyDescription = computed(() => {
 async function fetchQuestions() {
   listLoading.value = true
   try {
-    const result = await questionPage(pageParams)
+    // PRD-A-013 T5 M-10 — 走 useAbortableRequest 包装, signal 透传到 axios。
+    // 切章节 / 改筛选时上一个请求自动 abort, 返回 null 表示被取消（不更新 UI）。
+    const result = await runAbortable((signal) => questionPage(pageParams, { signal }))
+    if (result === null) {
+      // 被新一次请求取消, 保持当前 UI（loading 由更新的请求结束时关闭）
+      return
+    }
     const res = result as unknown as Record<string, unknown>
     if (res && Array.isArray(res['list'])) {
       questions.value = res['list'] as QuestionItem[]
