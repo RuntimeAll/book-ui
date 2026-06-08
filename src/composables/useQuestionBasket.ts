@@ -54,18 +54,20 @@ import {
 const LS_BASKET_IDS = 'book-ui:basket-ids'
 const LS_BASKET_CACHE = 'book-ui:basket-cache'
 
-function readBasketIdsFromStorage(): Set<number> {
+// PRD-A-013 T2 — id 雪花全工程 string；LS 旧数据可能是 number 数组，
+// 解析时统一 String(...) 规范化保兼容（用户旧版升新版不丢篮）。
+function readBasketIdsFromStorage(): Set<string> {
   try {
     const raw = localStorage.getItem(LS_BASKET_IDS)
     if (!raw) return new Set()
-    const arr: number[] = JSON.parse(raw)
-    return new Set(Array.isArray(arr) ? arr : [])
+    const arr: unknown[] = JSON.parse(raw)
+    return new Set(Array.isArray(arr) ? arr.map((x) => String(x)) : [])
   } catch {
     return new Set()
   }
 }
 
-function writeBasketIdsToStorage(ids: Set<number>) {
+function writeBasketIdsToStorage(ids: Set<string>) {
   try {
     localStorage.setItem(LS_BASKET_IDS, JSON.stringify([...ids]))
   } catch (e) {
@@ -73,18 +75,20 @@ function writeBasketIdsToStorage(ids: Set<number>) {
   }
 }
 
-function readBasketCacheFromStorage(): Map<number, QuestionItem> {
+function readBasketCacheFromStorage(): Map<string, QuestionItem> {
   try {
     const raw = localStorage.getItem(LS_BASKET_CACHE)
     if (!raw) return new Map()
-    const arr: [number, QuestionItem][] = JSON.parse(raw)
-    return new Map(Array.isArray(arr) ? arr : [])
+    const arr: [unknown, QuestionItem][] = JSON.parse(raw)
+    if (!Array.isArray(arr)) return new Map()
+    // 旧 LS key 可能是 number，统一 String 规范化
+    return new Map(arr.map(([k, v]) => [String(k), { ...v, id: String(v.id) }]))
   } catch {
     return new Map()
   }
 }
 
-function writeBasketCacheToStorage(cache: Map<number, QuestionItem>) {
+function writeBasketCacheToStorage(cache: Map<string, QuestionItem>) {
   try {
     localStorage.setItem(LS_BASKET_CACHE, JSON.stringify([...cache.entries()]))
   } catch (e) {
@@ -93,9 +97,10 @@ function writeBasketCacheToStorage(cache: Map<number, QuestionItem>) {
 }
 
 // ── module-scoped singleton state ───────────────────────────
-const _basketIds = ref<Set<number>>(readBasketIdsFromStorage())
-const _cache = new Map<number, QuestionItem>(readBasketCacheFromStorage())
-const _togglingIds: Set<number> = new Set()
+// PRD-A-013 T2 — Set/Map key 改 string（雪花 ID）
+const _basketIds = ref<Set<string>>(readBasketIdsFromStorage())
+const _cache = new Map<string, QuestionItem>(readBasketCacheFromStorage())
+const _togglingIds: Set<string> = new Set()
 const _dialogVisible = ref(false)
 let _initialized = false
 
@@ -124,7 +129,8 @@ const _items = computed<QuestionItem[]>(() => {
 function syncToStorage() {
   writeBasketIdsToStorage(_basketIds.value)
   // 只保留 basket 内的题目 cache（避免无限增长）
-  const filtered = new Map<number, QuestionItem>()
+  // PRD-A-013 T2 — Map key string（雪花）
+  const filtered = new Map<string, QuestionItem>()
   _basketIds.value.forEach((id) => {
     const q = _cache.get(id)
     if (q) filtered.set(id, q)
@@ -203,7 +209,8 @@ async function addMany(questions: QuestionItem[]): Promise<number> {
  * 批量移除（PRD-001 回归补丁 — 快速组卷 / 中栏"全部移除"复用）。
  * 只移除在篮内的，单条汇总 toast，返回实际移除数。
  */
-async function removeMany(ids: number[]): Promise<number> {
+// PRD-A-013 T2 — ids 雪花 string[]
+async function removeMany(ids: string[]): Promise<number> {
   const toRemove = ids.filter((id) => _basketIds.value.has(id))
   if (toRemove.length === 0) {
     ElMessage.info('这些题目不在试题栏中')
@@ -222,7 +229,8 @@ async function removeMany(ids: number[]): Promise<number> {
   return toRemove.length
 }
 
-async function remove(id: number): Promise<void> {
+// PRD-A-013 T2 — id 雪花 string
+async function remove(id: string): Promise<void> {
   if (_togglingIds.has(id)) return
   if (!_basketIds.value.has(id)) return
   _togglingIds.add(id)
@@ -248,7 +256,8 @@ async function clear(): Promise<void> {
   ElMessage.success('已清空试题栏')
 }
 
-function isLoading(id: number): boolean {
+// PRD-A-013 T2 — id 雪花 string
+function isLoading(id: string): boolean {
   return _togglingIds.has(id)
 }
 
@@ -287,19 +296,20 @@ async function composeAndDownload(): Promise<void> {
 }
 
 // ── 暴露接口 ────────────────────────────────────────────────
+// PRD-A-013 T2 — 雪花 ID 全工程 string；Set / Map key + 函数签名联动改 string。
 export interface UseQuestionBasket {
-  basketIds: Readonly<Ref<Set<number>>>
+  basketIds: Readonly<Ref<Set<string>>>
   count: ComputedRef<number>
   items: ComputedRef<QuestionItem[]>
   add: (q: QuestionItem) => Promise<void>
   /** 批量加入（过滤已在篮 + 单条汇总 toast），返回实际新增数 */
   addMany: (questions: QuestionItem[]) => Promise<number>
   /** 批量移除（只移在篮内 + 单条汇总 toast），返回实际移除数 */
-  removeMany: (ids: number[]) => Promise<number>
-  remove: (id: number) => Promise<void>
+  removeMany: (ids: string[]) => Promise<number>
+  remove: (id: string) => Promise<void>
   clear: () => Promise<void>
-  togglingIds: Set<number>
-  isLoading: (id: number) => boolean
+  togglingIds: Set<string>
+  isLoading: (id: string) => boolean
   dialogVisible: Ref<boolean>
   openDialog: () => void
   closeDialog: () => void
@@ -319,7 +329,7 @@ export function useQuestionBasket(): UseQuestionBasket {
     _initialized = true
   }
   return {
-    basketIds: _basketIds as Readonly<Ref<Set<number>>>,
+    basketIds: _basketIds as Readonly<Ref<Set<string>>>,
     count: _count,
     items: _items,
     add,

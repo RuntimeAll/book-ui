@@ -1,7 +1,9 @@
 import request from '@/http/request'
 
 export interface CurrentUserVO {
-  id: number
+  // PRD-A-013 T2 — 雪花 ID 19 位超 JS Number.MAX_SAFE_INTEGER，必 string；
+  // axios transformResponse 用 json-bigint storeAsString:true 保精度。
+  id: string
   userUuid: string
   userName: string
   realName: string
@@ -63,7 +65,8 @@ export interface RegisterTeacherPayload {
 
 /** U 卡 段⑧ — 注册响应（BE R<Map> 返） */
 export interface RegisterTeacherResult {
-  userId: number
+  // PRD-A-013 T2 — 雪花 ID 必 string
+  userId: string
   userName: string
 }
 

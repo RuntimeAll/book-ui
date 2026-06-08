@@ -69,11 +69,13 @@ function apiBasketNum() {
   )
 }
 
-function apiAdd(paperId: number) {
+// PRD-A-013 T2 — paperId 雪花 string
+function apiAdd(paperId: string) {
   return request.post<unknown, unknown>(`/teacher/exam/paper/addBasket/${paperId}`)
 }
 
-function apiCancel(paperId: number) {
+// PRD-A-013 T2 — paperId 雪花 string
+function apiCancel(paperId: string) {
   return request.post<unknown, unknown>(`/teacher/exam/paper/cancel/${paperId}`)
 }
 
@@ -88,18 +90,19 @@ function apiEmpty() {
 }
 
 // ── localStorage 读写 ───────────────────────────────────────
-function readBasketIdsFromStorage(): Set<number> {
+// PRD-A-013 T2 — id 雪花 string；LS 旧数据若为 number 数组，解析时 String() 规范化保兼容。
+function readBasketIdsFromStorage(): Set<string> {
   try {
     const raw = localStorage.getItem(LS_PAPER_BASKET_IDS)
     if (!raw) return new Set()
-    const arr: number[] = JSON.parse(raw)
-    return new Set(Array.isArray(arr) ? arr : [])
+    const arr: unknown[] = JSON.parse(raw)
+    return new Set(Array.isArray(arr) ? arr.map((x) => String(x)) : [])
   } catch {
     return new Set()
   }
 }
 
-function writeBasketIdsToStorage(ids: Set<number>) {
+function writeBasketIdsToStorage(ids: Set<string>) {
   try {
     localStorage.setItem(LS_PAPER_BASKET_IDS, JSON.stringify([...ids]))
   } catch (e) {
@@ -107,18 +110,19 @@ function writeBasketIdsToStorage(ids: Set<number>) {
   }
 }
 
-function readBasketCacheFromStorage(): Map<number, PaperListItem> {
+function readBasketCacheFromStorage(): Map<string, PaperListItem> {
   try {
     const raw = localStorage.getItem(LS_PAPER_BASKET_CACHE)
     if (!raw) return new Map()
-    const arr: [number, PaperListItem][] = JSON.parse(raw)
-    return new Map(Array.isArray(arr) ? arr : [])
+    const arr: [unknown, PaperListItem][] = JSON.parse(raw)
+    if (!Array.isArray(arr)) return new Map()
+    return new Map(arr.map(([k, v]) => [String(k), { ...v, id: String(v.id) }]))
   } catch {
     return new Map()
   }
 }
 
-function writeBasketCacheToStorage(cache: Map<number, PaperListItem>) {
+function writeBasketCacheToStorage(cache: Map<string, PaperListItem>) {
   try {
     localStorage.setItem(
       LS_PAPER_BASKET_CACHE,
@@ -130,9 +134,10 @@ function writeBasketCacheToStorage(cache: Map<number, PaperListItem>) {
 }
 
 // ── module-scoped singleton state ───────────────────────────
-const _basketIds = ref<Set<number>>(readBasketIdsFromStorage())
-const _cache = new Map<number, PaperListItem>(readBasketCacheFromStorage())
-const _togglingIds: Set<number> = new Set()
+// PRD-A-013 T2 — Set/Map key 雪花 string
+const _basketIds = ref<Set<string>>(readBasketIdsFromStorage())
+const _cache = new Map<string, PaperListItem>(readBasketCacheFromStorage())
+const _togglingIds: Set<string> = new Set()
 const _dialogVisible = ref(false)
 let _initialized = false
 
@@ -147,6 +152,7 @@ const _items = computed<PaperListItem[]>(() => {
       items.push(p)
     } else {
       // BE 回包前的占位（id-only），dialog 渲染显示"加载中"
+      // PRD-A-013 T2 — createUser 雪花 string；sort 业务字段 number（用 id 数字部分兜底）
       items.push({
         id,
         name: `试卷 ID: ${id}（卷头加载中）`,
@@ -155,11 +161,11 @@ const _items = computed<PaperListItem[]>(() => {
         suggestTime: null,
         createTime: '',
         finishTime: null,
-        createUser: 0,
+        createUser: '0',
         subjectId: '',
         paperType: 1,
         status: 1,
-        sort: id,
+        sort: Number(id) || 0,
       })
     }
   })
@@ -170,7 +176,8 @@ const _items = computed<PaperListItem[]>(() => {
 function syncToStorage() {
   writeBasketIdsToStorage(_basketIds.value)
   // 只保留 basket 内的卷头 cache（避免无限增长）
-  const filtered = new Map<number, PaperListItem>()
+  // PRD-A-013 T2 — Map key 雪花 string
+  const filtered = new Map<string, PaperListItem>()
   _basketIds.value.forEach((id) => {
     const p = _cache.get(id)
     if (p) filtered.set(id, p)
@@ -221,7 +228,8 @@ async function refreshFromServer(): Promise<void> {
   try {
     const list = await apiQueryBasket()
     if (Array.isArray(list)) {
-      const newIds = new Set<number>()
+      // PRD-A-013 T2 — id 雪花 string
+      const newIds = new Set<string>()
       list.forEach((p) => {
         newIds.add(p.id)
         _cache.set(p.id, p)
@@ -263,7 +271,8 @@ async function add(paper: PaperListItem): Promise<void> {
   }
 }
 
-async function remove(paperId: number): Promise<void> {
+// PRD-A-013 T2 — paperId 雪花 string
+async function remove(paperId: string): Promise<void> {
   if (_togglingIds.has(paperId)) return
   if (!_basketIds.value.has(paperId)) return
   _togglingIds.add(paperId)
@@ -286,17 +295,19 @@ async function remove(paperId: number): Promise<void> {
 }
 
 async function clear(): Promise<void> {
-  _basketIds.value = new Set()
+  // PRD-A-013 T2 — Set/Map 雪花 string key
+  _basketIds.value = new Set<string>()
   _cache.clear()
-  writeBasketIdsToStorage(new Set())
-  writeBasketCacheToStorage(new Map())
+  writeBasketIdsToStorage(new Set<string>())
+  writeBasketCacheToStorage(new Map<string, PaperListItem>())
   ElMessage.success('已清空试卷篮')
   apiEmpty().catch((e) =>
     console.warn('[paper-basket] empty notify failed (local state OK):', e),
   )
 }
 
-function isLoading(paperId: number): boolean {
+// PRD-A-013 T2 — paperId 雪花 string
+function isLoading(paperId: string): boolean {
   return _togglingIds.has(paperId)
 }
 
@@ -309,9 +320,10 @@ function closeDialog() {
 }
 
 // ── 暴露接口 ────────────────────────────────────────────────
+// PRD-A-013 T2 — 雪花 ID 全工程 string
 export interface UsePaperBasket {
   /** 篮内 paper id 集合（reactive，只读引用，写走 add/remove/clear）*/
-  basketIds: Readonly<Ref<Set<number>>>
+  basketIds: Readonly<Ref<Set<string>>>
   /** 篮内卷数 = basketIds.size */
   count: ComputedRef<number>
   /** 篮内卷头列表（按 _basketIds 顺序，未命中 cache 时返占位）*/
@@ -319,13 +331,13 @@ export interface UsePaperBasket {
   /** 加入试卷篮（乐观更新 + 上限 20 自查 + BE 通知）*/
   add: (paper: PaperListItem) => Promise<void>
   /** 移除单卷（乐观更新 + BE 通知）*/
-  remove: (paperId: number) => Promise<void>
+  remove: (paperId: string) => Promise<void>
   /** 清空全篮（乐观更新 + BE 通知）*/
   clear: () => Promise<void>
   /** 正在 toggle 中的 paperId（防连点用，外部读取做按钮 disable）*/
-  togglingIds: Set<number>
+  togglingIds: Set<string>
   /** 某 paperId 是否正在 toggle */
-  isLoading: (paperId: number) => boolean
+  isLoading: (paperId: string) => boolean
   /** dialog 显隐 reactive */
   dialogVisible: Ref<boolean>
   openDialog: () => void
@@ -353,7 +365,7 @@ export function usePaperBasket(): UsePaperBasket {
     //   - syncFromServer / refreshFromServer 保留供 caller 手动 explicit 触发
   }
   return {
-    basketIds: _basketIds as Readonly<Ref<Set<number>>>,
+    basketIds: _basketIds as Readonly<Ref<Set<string>>>,
     count: _count,
     items: _items,
     add,

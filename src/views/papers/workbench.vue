@@ -88,8 +88,9 @@ async function loadPaperDetail() {
 }
 
 // ── EditRow（统一编辑行，同时承载新建/编辑两态）────────────────────────────
+// PRD-A-013 T2 — _sectionId 雪花 string；空态用 '' 不用 0。
 interface EditRow extends PaperSourceQuestion {
-  _sectionId: number
+  _sectionId: string
   _score: number
   _showExplain: boolean // 解析 toggle（本地视图态）
   _replacing: boolean   // 换一题 loading
@@ -97,18 +98,19 @@ interface EditRow extends PaperSourceQuestion {
 
 const editRows = ref<EditRow[]>([])
 const paperName = ref('未命名草稿')
-const defaultSectionId = ref<number>(0)
+const defaultSectionId = ref<string>('')
 const saving = ref(false)
 
 // ── 大题分组的 section 信息（重命名用）──────────────────────────────────────
 // key = sectionId，value = 当前显示名称（初始从 paperDetail sections 读入）
-const sectionNameMap = ref<Map<number, string>>(new Map())
+// PRD-A-013 T2 — sectionId 雪花 string
+const sectionNameMap = ref<Map<string, string>>(new Map())
 // 当前处于内联编辑的 sectionId（null = 不在编辑）
-const editingSectionId = ref<number | null>(null)
+const editingSectionId = ref<string | null>(null)
 // 内联编辑中的临时值
 const editingSectionName = ref('')
 
-function startRenameSection(sectionId: number) {
+function startRenameSection(sectionId: string) {
   editingSectionId.value = sectionId
   editingSectionName.value = sectionNameMap.value.get(sectionId) ?? ''
   nextTick(() => {
@@ -118,7 +120,7 @@ function startRenameSection(sectionId: number) {
   })
 }
 
-function commitRenameSection(sectionId: number) {
+function commitRenameSection(sectionId: string) {
   const trimmed = editingSectionName.value.trim()
   if (trimmed) {
     sectionNameMap.value.set(sectionId, trimmed)
@@ -131,7 +133,8 @@ function cancelRenameSection() {
 }
 
 // 全卷已有题 ids（换一题 excludeIds 用）
-const paperQuestionIds = computed<number[]>(() => editRows.value.map((r) => r.id))
+// PRD-A-013 T2 — 雪花 string[]
+const paperQuestionIds = computed<string[]>(() => editRows.value.map((r) => r.id))
 
 const totalScore = computed<number>(() =>
   editRows.value.reduce((sum, r) => sum + (Number(r._score) || 0), 0),
@@ -141,7 +144,8 @@ const totalScore = computed<number>(() =>
 function buildEditRowsFromBasket() {
   editRows.value = basket.items.value.map((q) => ({
     ...(q as PaperSourceQuestion),
-    _sectionId: 0,
+    // PRD-A-013 T2 — 雪花空态 ''
+    _sectionId: '',
     _score: Number(q.score ?? 0),
     _showExplain: false,
     _replacing: false,
@@ -154,7 +158,8 @@ function buildEditRows() {
   if (sections.length > 0) defaultSectionId.value = sections[0].sectionId
 
   // 初始化大题名称 map（PaperSectionVo 字段名 = title）
-  const nameMap = new Map<number, string>()
+  // PRD-A-013 T2 — sectionId 雪花 string
+  const nameMap = new Map<string, string>()
   sections.forEach((sec) => {
     nameMap.set(sec.sectionId, sec.title || `大题${sec.sectionId}`)
   })
@@ -225,9 +230,10 @@ const sectionGroups = computed<SectionGroup[]>(() => {
 })
 
 // 右栏题号网格（按题型分组）
+// PRD-A-013 T2 — sectionId 雪花 string
 interface NumberGroup {
   title: string
-  sectionId?: number // 编辑态下关联 sectionId，重命名用
+  sectionId?: string // 编辑态下关联 sectionId，重命名用
   nums: number[]
 }
 
@@ -285,35 +291,37 @@ const knowledgeNumberGroups = computed<NumberGroup[]>(() => {
 // 自由排序使用平铺结构（misikt 视觉：全部题号块在同一网格内）
 // 每个 freesort item 持 editRowIndex，拖拽后重排 editRows
 
+// PRD-A-013 T2 — id / sectionId 雪花 string
 interface FreesortItem {
-  id: number            // 题目稳定身份键（用于 v-for :key，避免拖拽后 key 乱序）
+  id: string            // 题目稳定身份键（用于 v-for :key，避免拖拽后 key 乱序）
   globalIndex: number   // 拖前序号（仅展示，拖后由位置决定）
   editRowIndex: number  // 在 editRows 中的位置
-  sectionId: number     // 所属 sectionId（对应 sectionNameMap）
+  sectionId: string     // 所属 sectionId（对应 sectionNameMap）
 }
 
-// 编辑态按 section 分组平铺；新建态全在 sectionId=0 的默认组
+// 编辑态按 section 分组平铺；新建态全在 sectionId='' 的默认组
 const freesortGroups = computed(() => {
   if (!isEditMode.value || sectionNameMap.value.size === 0) {
     // 新建态 or 无 section map：全部归一组
     const defaultName = '试题'
     return [
       {
-        sectionId: 0,
+        sectionId: '',
         sectionName: defaultName,
         items: editRows.value.map((r, i) => ({
           id: r.id,
           globalIndex: i + 1,
           editRowIndex: i,
-          sectionId: 0,
+          sectionId: '',
         })) as FreesortItem[],
       },
     ]
   }
 
   // 编辑态：按 sectionId 分组（保持 editRows 出现顺序）
-  const groupOrder: number[] = []
-  const groupMap = new Map<number, FreesortItem[]>()
+  // PRD-A-013 T2 — 雪花 string
+  const groupOrder: string[] = []
+  const groupMap = new Map<string, FreesortItem[]>()
 
   editRows.value.forEach((r, i) => {
     const sid = r._sectionId || defaultSectionId.value
@@ -563,7 +571,8 @@ function handleExportPdf() {
   previewVisible.value = true
 }
 
-const exportQuestionIds = computed<number[]>(() => editRows.value.map((r) => r.id))
+// PRD-A-013 T2 — 雪花 string[]
+const exportQuestionIds = computed<string[]>(() => editRows.value.map((r) => r.id))
 const exportPaperName = computed(() => paperName.value.trim() || '未命名试卷')
 
 // ── 保存 / 创建 ──────────────────────────────────────────────────────────────
@@ -596,7 +605,9 @@ async function handleSave() {
       })
 
       await updateExamPaper({
-        paperId: Number(paperId.value),
+        // PRD-A-013 T2 — paperId 雪花 string，禁 Number() 截尾；
+        // 编辑态由 isEditMode 守护 paperId 必存在，`!` 安全。
+        paperId: paperId.value!,
         name: paperName.value.trim(),
         questions,
         suggestTime: suggestTime.value,
@@ -844,7 +855,8 @@ watch(paperId, async (newId) => {
                 <!-- 大题分组头 + ✏️ 重命名（仅编辑态且有 sectionId 时可改）-->
                 <div class="number-group-title freesort-group-title">
                   <!-- 内联编辑态 -->
-                  <template v-if="editingSectionId === group.sectionId && group.sectionId !== 0">
+                  <!-- PRD-A-013 T2 — sectionId 雪花 string，新建态用 '' 空串判 -->
+                  <template v-if="editingSectionId === group.sectionId && group.sectionId !== ''">
                     <el-input
                       v-model="editingSectionName"
                       class="rename-input"
@@ -862,7 +874,7 @@ watch(paperId, async (newId) => {
                     </span>
                     <!-- ✏️ 仅编辑态可改，新建态无 sectionId -->
                     <el-tooltip
-                      v-if="isEditMode && group.sectionId !== 0"
+                      v-if="isEditMode && group.sectionId !== ''"
                       content="重命名大题标题"
                       placement="top"
                     >

@@ -188,7 +188,8 @@ function handlePageChange(page: number) {
 // J 卡段③：原 favoriteMap + loadFavoriteStatus N+1 删除。
 // 收藏态由 BE /page 响应里 q.isFavorite 字段直接带（段② BE 加字段）。
 // 收藏 / 取消时直接 patch q.isFavorite（reactive array 元素 property 改动 Vue 3 响应）。
-function setQuestionFavorite(qid: number, fav: boolean) {
+// PRD-A-013 T2 — qid 雪花 string
+function setQuestionFavorite(qid: string, fav: boolean) {
   const q = questions.value.find((it) => it.id === qid)
   if (q) q.isFavorite = fav
 }
@@ -212,13 +213,15 @@ function handleDraft(_q: QuestionItem) {
   sketchVisible.value = true
 }
 
-const favoriteLoading = reactive<Set<number>>(new Set())
+// PRD-A-013 T2 — Set 雪花 string
+const favoriteLoading = reactive<Set<string>>(new Set())
 
 // ── 收藏抽屉（子任务 D）──────────────────────────────────────
 // 未收藏 → 打开 FavoriteFolderDrawer 选择收藏目录
 // 已收藏 → 直接调 removeFavorite（不弹抽屉）
 const favDrawerVisible = ref(false)
-const favDrawerQuestionId = ref<number>(0)
+// PRD-A-013 T2 — 雪花 ID 空态 ''
+const favDrawerQuestionId = ref<string>('')
 
 function handleFavorite(q: QuestionItem) {
   if (favoriteLoading.has(q.id)) return
@@ -245,7 +248,7 @@ function handleRemoveFavorite(q: QuestionItem) {
     })
 }
 
-function handleFavDrawerSuccess(_folderId: number | string | undefined) {
+function handleFavDrawerSuccess(_folderId: string | undefined) {
   // 收藏抽屉内成功收藏 → patch q.isFavorite
   if (favDrawerQuestionId.value) {
     setQuestionFavorite(favDrawerQuestionId.value, true)

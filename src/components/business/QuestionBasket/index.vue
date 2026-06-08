@@ -40,7 +40,8 @@ function handleClearBasket() {
   basket.clear()
 }
 
-function handleRemoveBasket(id: number) {
+// PRD-A-013 T2 — id 雪花 string
+function handleRemoveBasket(id: string) {
   basket.remove(id)
 }
 
@@ -56,7 +57,8 @@ function getQuestionTypeTag(type: number): 'success' | 'warning' | 'info' | 'pri
 
 // ── 展开解析（用户 2026-06-04 拍板实现）：toggle 显示该题解析图；item 自带 explainImg 优先，
 //    无则懒加载 getQuestionDetail 补取（试题栏 item 来自列表，可能不含解析图）──
-const explainState = reactive<Record<number, { open: boolean; img: string; loading: boolean }>>({})
+// PRD-A-013 T2 — key 雪花 string
+const explainState = reactive<Record<string, { open: boolean; img: string; loading: boolean }>>({})
 
 async function toggleExplain(item: QuestionItem) {
   const id = item.id

@@ -18,14 +18,15 @@ const props = withDefaults(
     questions: PaperSourceQuestion[]
     /** 列表加载中 */
     loading?: boolean
+    // PRD-A-013 T2 — 雪花 ID Set<string>
     /** 已在蓝色试题篮里的题 id 集合 */
-    basketIds: Set<number>
+    basketIds: Set<string>
     /** 正在 toggle 的题 id 集合 */
-    basketLoadingIds?: Set<number>
+    basketLoadingIds?: Set<string>
   }>(),
   {
     loading: false,
-    basketLoadingIds: () => new Set<number>(),
+    basketLoadingIds: () => new Set<string>(),
   },
 )
 

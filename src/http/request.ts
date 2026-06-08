@@ -1,4 +1,4 @@
-import axios from 'axios'
+import axios, { type AxiosResponse } from 'axios'
 import JSONbig from 'json-bigint'
 import { ElMessage } from 'element-plus'
 import router from '@/router'
@@ -95,9 +95,11 @@ instance.interceptors.response.use(
     if (url.startsWith('/auth/')) {
       const data = response.data as RuoYiEnvelope
       if (data.code === 200) {
-        // PRD-A-013 T3 — 拦截器自身没泛型上下文（axios v1 fulfill 不暴露 T），
-        // 用 `as unknown` 解耦：调用方 request.post<T, R> 自行声明的 R 通过推断生效。
-        return data.data as unknown
+        // PRD-A-013 T3 — 拦截器自身没泛型上下文（axios v1 fulfill 类型签名要求返
+        // AxiosResponse），业务约定让拦截器返"解包后的 T"而不是 response 全体 —
+        // 这是 axios v1 类型的已知 hack：`as unknown as AxiosResponse` 强转配
+        // request.post<T, R> 调用方泛型推断，把 R 当真返回类型用。
+        return data.data as unknown as AxiosResponse
       }
       ElMessage.error(data.msg || `登录接口异常 (code=${data.code})`)
       return Promise.reject(new Error(data.msg || `登录接口异常 (code=${data.code})`))
@@ -106,8 +108,8 @@ instance.interceptors.response.use(
     // 分支 2：misikt envelope（book-server /teacher/* 被 advice 包装）
     const data = response.data as MisiktEnvelope
     if (data.code === 1) {
-      // PRD-A-013 T3 — 同上，as unknown 解耦
-      return data.response as unknown
+      // PRD-A-013 T3 — 同上，axios v1 fulfill 类型 hack
+      return data.response as unknown as AxiosResponse
     }
     if (data.code === 401) {
       redirectToLogin()

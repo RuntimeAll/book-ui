@@ -25,7 +25,8 @@ defineProps<{
 const emit = defineEmits<{
   (e: 'update:noteInput', v: string): void
   (e: 'save-note'): void
-  (e: 'go-to-source', paperId: number): void
+  // PRD-A-013 T2 — paperId 雪花 string
+  (e: 'go-to-source', paperId: string): void
 }>()
 
 // 题型彩色标签（逐字搬自 detail.vue）

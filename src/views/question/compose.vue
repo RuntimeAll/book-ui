@@ -29,7 +29,8 @@ function questionTypeLabel(type: number): string {
   return `类型${type}`
 }
 
-async function handleRemove(id: number) {
+// PRD-A-013 T2 — id 雪花 string
+async function handleRemove(id: string) {
   await basket.remove(id)
 }
 
