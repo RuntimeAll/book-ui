@@ -86,7 +86,8 @@ function clearCanvas() {
 }
 
 // ── 坐标（固定全屏 canvas，clientX/Y 即视口坐标）──────────────
-function getPos(e: MouseEvent): { x: number; y: number } {
+// PointerEvent 继承 MouseEvent，clientX/Y 通用 —— 鼠标 / 触摸 / 触控笔同一套坐标。
+function getPos(e: PointerEvent): { x: number; y: number } {
   return { x: e.clientX, y: e.clientY }
 }
 
@@ -111,9 +112,19 @@ function applyStrokeStyle() {
   }
 }
 
-function onMouseDown(e: MouseEvent) {
+// 🔴 Pointer Events 统一鼠标 / 触摸 / 触控笔 —— 平板（手指/Apple Pencil）也能画。
+//   旧实现只绑 mouse* 事件，触摸设备完全不触发 → 画笔在平板失效。
+function onPointerDown(e: PointerEvent) {
   if (!ctx) return
-  if (e.button !== 0) return // 仅左键绘制
+  if (!e.isPrimary) return // 只认主指针，忽略多指/多笔同时落
+  if (e.pointerType === 'mouse' && e.button !== 0) return // 鼠标仅左键；触摸/笔 button 恒 0
+  e.preventDefault() // 抑制触摸滚动 / 长按选中 / 合成鼠标事件
+  // 指针捕获：手指划出 canvas 边界也持续收 move/up，避免断笔
+  try {
+    canvasRef.value?.setPointerCapture(e.pointerId)
+  } catch {
+    /* 个别浏览器不支持时忽略，不影响主流程 */
+  }
   pushSnapshot()
   drawing = true
   hasStroke.value = true
@@ -127,8 +138,9 @@ function onMouseDown(e: MouseEvent) {
   ctx.fill()
 }
 
-function onMouseMove(e: MouseEvent) {
+function onPointerMove(e: PointerEvent) {
   if (!drawing || !ctx) return
+  e.preventDefault()
   const { x, y } = getPos(e)
   applyStrokeStyle()
   ctx.beginPath()
@@ -139,8 +151,13 @@ function onMouseMove(e: MouseEvent) {
   lastY = y
 }
 
-function onMouseUp() {
+function onPointerUp(e: PointerEvent) {
   drawing = false
+  try {
+    canvasRef.value?.releasePointerCapture(e.pointerId)
+  } catch {
+    /* 忽略 */
+  }
 }
 
 function currentLineWidth(): number {
@@ -215,13 +232,14 @@ onBeforeUnmount(() => {
         ref="canvasRef"
         class="sketch-canvas"
         :style="{ cursor: activeTool === 'eraser' ? 'cell' : 'crosshair' }"
-        @mousedown="onMouseDown"
-        @mousemove="onMouseMove"
-        @mouseup="onMouseUp"
+        @pointerdown="onPointerDown"
+        @pointermove="onPointerMove"
+        @pointerup="onPointerUp"
+        @pointercancel="onPointerUp"
       />
 
       <!-- 悬浮工具条 -->
-      <div class="sketch-toolbar" @mousedown.stop @mousemove.stop>
+      <div class="sketch-toolbar" @pointerdown.stop @pointermove.stop>
         <div class="tb-title">
           <el-icon><EditPen /></el-icon>
           <span>草稿</span>
