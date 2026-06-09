@@ -165,8 +165,14 @@ function onPointerDown(e: PointerEvent) {
 }
 
 function onPointerMove(e: PointerEvent) {
-  if (!drawing || !ctx) return
-  if (e.pointerId !== activePointerId) return // 只跟当前作画的那一个指针，手掌/多指不掺和
+  if (!ctx) return
+  // 作画中、来的是「非当前指针」（手掌/多指）的 move：也要吞掉。
+  //   否则手掌拖动会被浏览器拿去发起「文本选中」→ 弹系统「拷贝/搜索/翻译」菜单。
+  if (activePointerId !== null && e.pointerId !== activePointerId) {
+    e.preventDefault()
+    return
+  }
+  if (!drawing || e.pointerId !== activePointerId) return
   e.preventDefault()
   const { x, y } = getPos(e)
   applyStrokeStyle()
@@ -421,13 +427,22 @@ onBeforeUnmount(() => {
 }
 </style>
 
-<!-- 🔴 全局样式（非 scoped）：草稿激活时禁掉全局悬浮按钮的可点性。
-     根因：FAB(试卷篮/试题栏)是盖在透明 canvas 下的活按钮，平板用笔写字时手掌等
-     次要触点会漏穿成对 FAB 的点击。pointer-events:none 让任何触点直接穿透，根除误触；
-     FAB 仍正常显示(含角标)，仅在草稿期间不可点。退出草稿即恢复。 -->
+<!-- 🔴 全局样式（非 scoped）：草稿激活时的两项防护。
+     ① 禁掉全局悬浮按钮可点性：FAB(试卷篮/试题栏)是盖在透明 canvas 下的活按钮，
+        平板用笔写字时手掌等次要触点会漏穿成对 FAB 的点击。pointer-events:none 让任何
+        触点直接穿透，根除误触；FAB 仍正常显示(含角标)，仅草稿期间不可点。
+     ② 整页禁止文本选中 + 关掉 iOS 长按气泡：笔/手掌拖动易选中底层题目文字，弹出系统
+        「拷贝/搜索/翻译/大声朗读」菜单。user-select:none 断掉选中，-webkit-touch-callout:none
+        压掉 iOS 选择气泡。退出草稿即恢复（文字照常可选可复制）。 -->
 <style>
 body.sketch-active .paper-basket-fab-badge,
 body.sketch-active .basket-fab-badge {
   pointer-events: none !important;
+}
+body.sketch-active {
+  -webkit-user-select: none !important;
+  -moz-user-select: none !important;
+  user-select: none !important;
+  -webkit-touch-callout: none !important;
 }
 </style>
