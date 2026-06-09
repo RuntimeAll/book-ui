@@ -116,7 +116,12 @@ function applyStrokeStyle() {
 //   旧实现只绑 mouse* 事件，触摸设备完全不触发 → 画笔在平板失效。
 function onPointerDown(e: PointerEvent) {
   if (!ctx) return
-  if (!e.isPrimary) return // 只认主指针，忽略多指/多笔同时落
+  // 🔴 次要触点（写字时手掌/另一指）也吞掉再退出：不 preventDefault 会被补「兼容点击」，
+  //    漏穿到下层 FAB（试卷篮/试题栏）→ 误触。只画主指针，但所有触点都要拦。
+  if (!e.isPrimary) {
+    e.preventDefault()
+    return
+  }
   if (e.pointerType === 'mouse' && e.button !== 0) return // 鼠标仅左键；触摸/笔 button 恒 0
   e.preventDefault() // 抑制触摸滚动 / 长按选中 / 合成鼠标事件
   // 指针捕获：手指划出 canvas 边界也持续收 move/up，避免断笔
@@ -209,9 +214,12 @@ watch(
     if (v) {
       await nextTick()
       initCanvas()
+      // 🔴 草稿激活：禁掉全局 FAB 的可点性（防笔写时误触试卷篮/试题栏），见底部全局样式
+      document.body.classList.add('sketch-active')
       window.addEventListener('resize', onResize)
       window.addEventListener('keydown', onKeydown)
     } else {
+      document.body.classList.remove('sketch-active')
       window.removeEventListener('resize', onResize)
       window.removeEventListener('keydown', onKeydown)
     }
@@ -219,6 +227,7 @@ watch(
 )
 
 onBeforeUnmount(() => {
+  document.body.classList.remove('sketch-active')
   window.removeEventListener('resize', onResize)
   window.removeEventListener('keydown', onKeydown)
 })
@@ -384,5 +393,16 @@ onBeforeUnmount(() => {
   /* DESIGN §3.2 青系选中态：teal-600 边 + 青光晕（替换 EP 默认蓝） */
   border-color: #1E8A8A;
   box-shadow: 0 0 0 2px rgba(30, 138, 138, 0.3);
+}
+</style>
+
+<!-- 🔴 全局样式（非 scoped）：草稿激活时禁掉全局悬浮按钮的可点性。
+     根因：FAB(试卷篮/试题栏)是盖在透明 canvas 下的活按钮，平板用笔写字时手掌等
+     次要触点会漏穿成对 FAB 的点击。pointer-events:none 让任何触点直接穿透，根除误触；
+     FAB 仍正常显示(含角标)，仅在草稿期间不可点。退出草稿即恢复。 -->
+<style>
+body.sketch-active .paper-basket-fab-badge,
+body.sketch-active .basket-fab-badge {
+  pointer-events: none !important;
 }
 </style>
