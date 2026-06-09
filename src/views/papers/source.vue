@@ -15,6 +15,7 @@ import {
 } from '@/api/question/index'
 import { updateExamPaper, type UpdatePaperQuestion, type PaperListItem } from '@/api/paper/index'
 import { usePaperBasket } from '@/composables/usePaperBasket'
+import { useAbortableRequest } from '@/composables/useAbortableRequest'
 import PaperPreview from '@/components/business/PaperPreview/index.vue'
 import SketchPad from '@/components/business/SketchPad/index.vue'
 import FavoriteFolderDrawer from '@/components/FavoriteFolderDrawer/index.vue'
@@ -37,18 +38,20 @@ const basket = useQuestionBasket()
 // ── 试卷篮 composable（本卷整卷加入/移出试卷篮，复用卷库列表页同一套，禁造轮子）──
 const paperBasket = usePaperBasket()
 // 用卷详情拼一个 PaperListItem（试卷篮 add/remove/角标 都按 id）
+// PRD-A-013 T2 — id / createUser 雪花 string，禁 Number() 精度丢；sort 业务字段 number。
 const asPaperItem = computed<PaperListItem>(() => ({
-  id: Number(detail.value?.paperId ?? paperId.value),
+  id: String(detail.value?.paperId ?? paperId.value),
   name: detail.value?.paperName ?? '试卷',
   questionCount: detail.value?.questionCount ?? allQuestions.value.length,
   score: detail.value?.score ?? 0,
   suggestTime: detail.value?.suggestTime ?? null,
   createTime: '',
   finishTime: null,
-  createUser: Number(detail.value?.createBy ?? 0),
+  createUser: String(detail.value?.createBy ?? '0'),
   subjectId: detail.value?.subjectId ?? '',
   paperType: (detail.value?.paperType as 1 | 2 | 6) ?? 1,
   status: 1,
+  // sort 业务字段 number；用 paperId 的数字部分排序仅是兜底，雪花超 MAX_SAFE 截尾不影响 sort 用途。
   sort: Number(detail.value?.paperId ?? 0),
 }))
 const inPaperBasket = computed(() => paperBasket.basketIds.value.has(asPaperItem.value.id))
@@ -78,6 +81,11 @@ const isOwner = computed(() => {
 const detail = ref<PaperDetailVo | null>(null)
 const loading = ref(false)
 
+// PRD-A-013 T5 M-10 — 切卷竞态防护
+// 用户从一个卷详情快速跳另一个卷（watch paperId 触发）时, 旧请求自动 abort,
+// 防止旧卷的 response 覆盖新卷的 UI。
+const { run: runAbortable } = useAbortableRequest<PaperDetailVo>()
+
 // 所有题（flatten — 空状态判断 + basket 操作遍历用）
 const allQuestions = computed<PaperSourceQuestion[]>(() => {
   if (!detail.value || !Array.isArray(detail.value.sections)) return []
@@ -88,7 +96,8 @@ const allQuestions = computed<PaperSourceQuestion[]>(() => {
 const previewVisible = ref(false)
 const exportPaperName = computed(() => detail.value?.paperName || '试卷')
 // 按卷内大题顺序 flatten 的题目 id（= 导出/预览显示顺序）
-const exportQuestionIds = computed<number[]>(() => allQuestions.value.map((q) => q.id))
+// PRD-A-013 T2 — 雪花 string[]
+const exportQuestionIds = computed<string[]>(() => allQuestions.value.map((q) => q.id))
 
 function handleExportPaper() {
   if (exportQuestionIds.value.length === 0) {
@@ -102,7 +111,15 @@ async function loadPaperDetail() {
   loading.value = true
   detail.value = null
   try {
-    const res = await getPaperDetail(paperId.value)
+    // PRD-A-013 T5 M-10 — 走 useAbortableRequest 包装, signal 透传到 axios。
+    // 切卷时上一个请求自动 abort, 返回 null 表示被取消（不更新 UI）。
+    const res = await runAbortable((signal) =>
+      getPaperDetail(paperId.value, { signal }),
+    )
+    if (res === null) {
+      // 被新一次请求取消, 保持当前 UI（loading 由更新的请求结束时关闭）
+      return
+    }
     // BE 真响应：response 内层 = PaperDetailVo（advice 解包后 request.post 拿到的）
     if (res && (res as { paperId?: unknown }).paperId) {
       detail.value = res as PaperDetailVo
@@ -191,10 +208,12 @@ function handleDraft() {
 // source 页题目现已带后端 isFavorite（PaperDetailServiceImpl LEFT JOIN biz_question_favorite），
 // 故与题库一致：未收藏→弹收藏目录抽屉(addFavorite 选夹)，已收藏→直接 removeFavorite。星标反映真态、可持久。
 const favDrawerVisible = ref(false)
-const favDrawerQuestionId = ref<number>(0)
+// PRD-A-013 T2 — 雪花 ID string
+const favDrawerQuestionId = ref<string>('')
 
 // 在 detail.sections[].questions[] 里按 id 定位题对象并 patch isFavorite（Vue3 深响应，直接改触发重渲染）
-function patchFavorite(id: number, val: boolean) {
+// PRD-A-013 T2 — id 雪花 string
+function patchFavorite(id: string, val: boolean) {
   for (const sec of detail.value?.sections ?? []) {
     const q = (sec.questions || []).find((x) => x.id === id)
     if (q) {
@@ -219,7 +238,7 @@ function handleFavorite(q: PaperSourceQuestion) {
   }
 }
 
-function handleFavDrawerSuccess(_folderId: number | string | undefined) {
+function handleFavDrawerSuccess(_folderId: string | undefined) {
   if (favDrawerQuestionId.value) patchFavorite(favDrawerQuestionId.value, true)
 }
 
@@ -235,20 +254,22 @@ function goBack() {
 type ViewMode = 'view' | 'edit'
 const mode = ref<ViewMode>('view')
 
+// PRD-A-013 T2 — sectionId 雪花 string
 interface EditRow extends PaperSourceQuestion {
-  _sectionId: number // 所属大题（新增题落默认 section）
+  _sectionId: string // 所属大题（新增题落默认 section）
   _score: number // 本地编辑分值
 }
 const editRows = ref<EditRow[]>([])
 const editPaperName = ref<string>('')
-const defaultSectionId = ref<number>(0)
+const defaultSectionId = ref<string>('')
 const saving = ref(false)
 const addDialogVisible = ref(false)
 
 const totalScore = computed<number>(() =>
   editRows.value.reduce((sum, r) => sum + (Number(r._score) || 0), 0),
 )
-const paperQuestionIds = computed<Set<number>>(
+// PRD-A-013 T2 — Set 雪花 string
+const paperQuestionIds = computed<Set<string>>(
   () => new Set(editRows.value.map((r) => r.id)),
 )
 
@@ -335,7 +356,8 @@ async function handleSave() {
       score: Number(r._score) || 0,
     }))
     await updateExamPaper({
-      paperId: Number(paperId.value),
+      // PRD-A-013 T2 — paperId 雪花 string，禁 Number() 截尾
+      paperId: paperId.value,
       name: editPaperName.value.trim(),
       questions,
     })

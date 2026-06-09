@@ -64,15 +64,16 @@ const groups = computed<TypeGroup[]>(() => {
 const isEmpty = computed<boolean>(() => props.questions.length === 0)
 
 // ── 选中态（按 question id；已在篮内的不可选）──────────────────
-const selectedIds = ref<Set<number>>(new Set())
+// PRD-A-013 T2 — id 雪花 string
+const selectedIds = ref<Set<string>>(new Set())
 
-function inBasket(id: number): boolean {
+function inBasket(id: string): boolean {
   return basket.basketIds.value.has(id)
 }
-function isSelected(id: number): boolean {
+function isSelected(id: string): boolean {
   return selectedIds.value.has(id)
 }
-function toggle(id: number): void {
+function toggle(id: string): void {
   if (inBasket(id)) return // 已在篮内不可选
   const next = new Set(selectedIds.value)
   if (next.has(id)) next.delete(id)
@@ -86,8 +87,9 @@ const selectedQuestions = computed<PaperSourceQuestion[]>(() =>
 )
 
 // "已选：2、3 题" —— 展示选中题的全局编号（升序）
+// PRD-A-013 T2 — seqMap key 雪花 string
 const selectedSeqLabel = computed<string>(() => {
-  const seqMap = new Map<number, number>()
+  const seqMap = new Map<string, number>()
   for (const g of groups.value) for (const it of g.items) seqMap.set(it.q.id, it.seq)
   const seqs = [...selectedIds.value]
     .map((id) => seqMap.get(id))

@@ -49,6 +49,11 @@ let dpr = 1
 let drawing = false
 let lastX = 0
 let lastY = 0
+// 🔴 当前正在作画的「那一个」指针（按 pointerId 跟踪）：
+//   不再用 isPrimary 一刀切（会误杀电容笔——握笔时手掌先落屏抢成 primary，
+//   笔反成 secondary 被丢）。改为单指针跟踪 + 笔优先抢占，既防手掌乱画又让笔能写。
+let activePointerId: number | null = null
+let activePointerType = ''
 const hasStroke = ref(false) // 是否画过（控制「清空/撤销」可用 + 退出提示）
 
 // 撤销快照栈（设备像素，整帧）
@@ -73,6 +78,9 @@ function initCanvas() {
   ctx.lineJoin = 'round'
   snapshots.length = 0
   hasStroke.value = false
+  drawing = false
+  activePointerId = null
+  activePointerType = ''
 }
 
 function clearCanvas() {
@@ -86,7 +94,8 @@ function clearCanvas() {
 }
 
 // ── 坐标（固定全屏 canvas，clientX/Y 即视口坐标）──────────────
-function getPos(e: MouseEvent): { x: number; y: number } {
+// PointerEvent 继承 MouseEvent，clientX/Y 通用 —— 鼠标 / 触摸 / 触控笔同一套坐标。
+function getPos(e: PointerEvent): { x: number; y: number } {
   return { x: e.clientX, y: e.clientY }
 }
 
@@ -111,24 +120,60 @@ function applyStrokeStyle() {
   }
 }
 
-function onMouseDown(e: MouseEvent) {
+// 🔴 Pointer Events 统一鼠标 / 触摸 / 触控笔 —— 平板（手指/Apple Pencil）也能画。
+//   旧实现只绑 mouse* 事件，触摸设备完全不触发 → 画笔在平板失效。
+function onPointerDown(e: PointerEvent) {
   if (!ctx) return
-  if (e.button !== 0) return // 仅左键绘制
+  if (e.pointerType === 'mouse' && e.button !== 0) return // 鼠标仅左键；触摸/笔 button 恒 0
+
+  // 已有笔画进行中 + 来了别的指针：
+  if (activePointerId !== null && activePointerId !== e.pointerId) {
+    // 笔优先（手掌抑制）：当前是「触摸（手掌）」那一笔、现在落下的是「笔」→ 让笔抢占接管。
+    const penPreempts = e.pointerType === 'pen' && activePointerType !== 'pen'
+    if (!penPreempts) {
+      e.preventDefault() // 吞掉次要触点（手掌/多指），不漏穿到下层 FAB
+      return
+    }
+    // 笔抢占：放掉旧（触摸）指针捕获，下面改由笔接管（手掌那一小段保留无妨）
+    try {
+      canvasRef.value?.releasePointerCapture(activePointerId)
+    } catch {
+      /* 忽略 */
+    }
+  }
+
+  e.preventDefault() // 抑制触摸滚动 / 长按选中 / 合成鼠标事件
+  // 指针捕获：手指/笔划出 canvas 边界也持续收 move/up，避免断笔
+  try {
+    canvasRef.value?.setPointerCapture(e.pointerId)
+  } catch {
+    /* 个别浏览器不支持时忽略，不影响主流程 */
+  }
+  activePointerId = e.pointerId
+  activePointerType = e.pointerType
   pushSnapshot()
   drawing = true
   hasStroke.value = true
   const { x, y } = getPos(e)
   lastX = x
   lastY = y
-  // 单击落点（圆点）
+  // 落点（圆点）
   applyStrokeStyle()
   ctx.beginPath()
   ctx.arc(x, y, currentLineWidth() / 2, 0, Math.PI * 2)
   ctx.fill()
 }
 
-function onMouseMove(e: MouseEvent) {
-  if (!drawing || !ctx) return
+function onPointerMove(e: PointerEvent) {
+  if (!ctx) return
+  // 作画中、来的是「非当前指针」（手掌/多指）的 move：也要吞掉。
+  //   否则手掌拖动会被浏览器拿去发起「文本选中」→ 弹系统「拷贝/搜索/翻译」菜单。
+  if (activePointerId !== null && e.pointerId !== activePointerId) {
+    e.preventDefault()
+    return
+  }
+  if (!drawing || e.pointerId !== activePointerId) return
+  e.preventDefault()
   const { x, y } = getPos(e)
   applyStrokeStyle()
   ctx.beginPath()
@@ -139,8 +184,16 @@ function onMouseMove(e: MouseEvent) {
   lastY = y
 }
 
-function onMouseUp() {
+function onPointerUp(e: PointerEvent) {
+  if (e.pointerId !== activePointerId) return // 非当前作画指针抬起，忽略
   drawing = false
+  activePointerId = null
+  activePointerType = ''
+  try {
+    canvasRef.value?.releasePointerCapture(e.pointerId)
+  } catch {
+    /* 忽略 */
+  }
 }
 
 function currentLineWidth(): number {
@@ -192,9 +245,12 @@ watch(
     if (v) {
       await nextTick()
       initCanvas()
+      // 🔴 草稿激活：禁掉全局 FAB 的可点性（防笔写时误触试卷篮/试题栏），见底部全局样式
+      document.body.classList.add('sketch-active')
       window.addEventListener('resize', onResize)
       window.addEventListener('keydown', onKeydown)
     } else {
+      document.body.classList.remove('sketch-active')
       window.removeEventListener('resize', onResize)
       window.removeEventListener('keydown', onKeydown)
     }
@@ -202,6 +258,7 @@ watch(
 )
 
 onBeforeUnmount(() => {
+  document.body.classList.remove('sketch-active')
   window.removeEventListener('resize', onResize)
   window.removeEventListener('keydown', onKeydown)
 })
@@ -215,13 +272,14 @@ onBeforeUnmount(() => {
         ref="canvasRef"
         class="sketch-canvas"
         :style="{ cursor: activeTool === 'eraser' ? 'cell' : 'crosshair' }"
-        @mousedown="onMouseDown"
-        @mousemove="onMouseMove"
-        @mouseup="onMouseUp"
+        @pointerdown="onPointerDown"
+        @pointermove="onPointerMove"
+        @pointerup="onPointerUp"
+        @pointercancel="onPointerUp"
       />
 
       <!-- 悬浮工具条 -->
-      <div class="sketch-toolbar" @mousedown.stop @mousemove.stop>
+      <div class="sketch-toolbar" @pointerdown.stop @pointermove.stop>
         <div class="tb-title">
           <el-icon><EditPen /></el-icon>
           <span>草稿</span>
@@ -366,5 +424,25 @@ onBeforeUnmount(() => {
   /* DESIGN §3.2 青系选中态：teal-600 边 + 青光晕（替换 EP 默认蓝） */
   border-color: #1E8A8A;
   box-shadow: 0 0 0 2px rgba(30, 138, 138, 0.3);
+}
+</style>
+
+<!-- 🔴 全局样式（非 scoped）：草稿激活时的两项防护。
+     ① 禁掉全局悬浮按钮可点性：FAB(试卷篮/试题栏)是盖在透明 canvas 下的活按钮，
+        平板用笔写字时手掌等次要触点会漏穿成对 FAB 的点击。pointer-events:none 让任何
+        触点直接穿透，根除误触；FAB 仍正常显示(含角标)，仅草稿期间不可点。
+     ② 整页禁止文本选中 + 关掉 iOS 长按气泡：笔/手掌拖动易选中底层题目文字，弹出系统
+        「拷贝/搜索/翻译/大声朗读」菜单。user-select:none 断掉选中，-webkit-touch-callout:none
+        压掉 iOS 选择气泡。退出草稿即恢复（文字照常可选可复制）。 -->
+<style>
+body.sketch-active .paper-basket-fab-badge,
+body.sketch-active .basket-fab-badge {
+  pointer-events: none !important;
+}
+body.sketch-active {
+  -webkit-user-select: none !important;
+  -moz-user-select: none !important;
+  user-select: none !important;
+  -webkit-touch-callout: none !important;
 }
 </style>

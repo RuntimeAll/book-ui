@@ -1,4 +1,5 @@
 import request from '@/http/request'
+import type { AxiosRequestConfig } from 'axios'
 
 // ── 类型定义 ────────────────────────────────────────────────
 // lazyTree 节点（misikt 返整棵树，children 嵌套）
@@ -17,9 +18,10 @@ export interface SubjectNode {
 }
 
 // 知识点 tag（misikt 真实字段：questionKnowledges）
+// PRD-A-013 T2 — id / questionId 都是雪花，必 string；knowledgeId 本身就 string。
 export interface QuestionKnowledge {
-  id: number | null
-  questionId: number
+  id: string | null
+  questionId: string
   knowledgeId: string
   knowledgeName: string
   createTime?: string | null
@@ -34,8 +36,10 @@ export interface FreeTagVo {
 }
 
 // 题目分页列表项（基于实际 /question/page 响应反推）
+// PRD-A-013 T2 — id / createUser / examPaperId 都是雪花 ID，必 string；
+// 业务字段（questionType / difficult / score / status / examYear）保留 number。
 export interface QuestionItem {
-  id: number
+  id: string
   questionType: number // 1=选择 / 4=填空 / 5=简答
   difficult: number | null   // ⚠️ 真实字段名是 difficult 不是 difficulty（4星制）
   stemImg: string | null      // 题干图 URL（完整 CDN URL）
@@ -47,13 +51,13 @@ export interface QuestionItem {
   questionStdKnowledges?: QuestionKnowledge[] | null
   subjectId?: string
   createTime?: string
-  createUser?: number
+  createUser?: string
   score?: number
   status?: number
   isSelected?: boolean | null
   isWrongBook?: boolean | null
   examYear?: string | null
-  examPaperId?: number | null
+  examPaperId?: string | null
   examPaperName?: string | null
   freeTag?: string | null              // 老字段（字符串），段③字典化后保留兼容
   freeTags?: FreeTagVo[]               // X 卡 段② BE 新字段，position asc 已排序
@@ -94,10 +98,11 @@ export interface QuestionDetail extends QuestionItem {
 
 // 收藏夹文件夹（GET /teacher/center/q-folder/tree 返回树结构）
 // misikt 真站端点：/api/teacher/center/q-folder/tree（playwright 已抓取确认）
+// PRD-A-013 T2 — id / pid 统一 string（雪花，原来 number|string 不一致）
 export interface FavoriteFolder {
-  id: number | string
+  id: string
   name: string
-  pid?: number | string | null
+  pid?: string | null
   count?: number           // 已收藏题数
   children?: FavoriteFolder[]
   sort?: number
@@ -126,9 +131,18 @@ export const lazyTree = (parentId: string | number = 0) =>
 
 /**
  * 分页拉题列表（⚠️ 入参 pageIndex 不是 pageNum）
+ *
+ * PRD-A-013 T5 M-10：可选 config 透传 axios 选项（主要为 signal —— 列表竞态防护）。
  */
-export const questionPage = (params: QuestionPageParams) =>
-  request.post<QuestionPageResult, QuestionPageResult>('/teacher/question/page', params)
+export const questionPage = (
+  params: QuestionPageParams,
+  config?: AxiosRequestConfig,
+) =>
+  request.post<QuestionPageResult, QuestionPageResult>(
+    '/teacher/question/page',
+    params,
+    config,
+  )
 
 /**
  * 拉试题栏角标数量
@@ -138,22 +152,25 @@ export const basketNum = () =>
 
 /**
  * 加入试题栏
+ * PRD-A-013 T2 — questionId 雪花 string
  */
-export const addBasket = (questionId: number) =>
+export const addBasket = (questionId: string) =>
   request.post<unknown, unknown>(`/teacher/question/addBasket/${questionId}`)
 
 /**
  * 判断是否已收藏（GET，每题独立调）
+ * PRD-A-013 T2 — questionId 雪花 string
  */
-export const getFavorite = (questionId: number) =>
+export const getFavorite = (questionId: string) =>
   request.get<FavoriteResult, FavoriteResult>(`/teacher/qd/favorite/${questionId}`)
 
 /**
  * 收藏题目（POST /teacher/qd/favorite/{id}）
  * folderId 可选 — misikt 真站接口是否支持 folderId 参数待验证（需登录态 playwright 才能抓 payload）
  * 当前：不带 folderId 调用（兼容现状），folderId 本地记录
+ * PRD-A-013 T2 — questionId / folderId 统一 string（雪花）
  */
-export const addFavorite = (questionId: number, folderId?: number | string) =>
+export const addFavorite = (questionId: string, folderId?: string) =>
   request.post<unknown, unknown>(`/teacher/qd/favorite/${questionId}`, folderId ? { folderId } : undefined)
 
 /**
@@ -172,34 +189,40 @@ export const getFavoriteFolderTree = () =>
  * 新建收藏夹（POST /teacher/center/q-folder/create）。
  * body {name, pid?}（pid 缺省 0=根）；返回新夹 id（Long）。
  */
-export const createFolder = (name: string, pid: number | string = 0) =>
-  request.post<number, number>('/teacher/center/q-folder/create', { name, pid })
+// PRD-A-013 T2 — pid / id 雪花，统一 string；createFolder pid 默认根 '0'。
+// BE 返回的新夹 id 也是 numeric string（雪花），保持 string 类型。
+export const createFolder = (name: string, pid: string = '0') =>
+  request.post<string, string>('/teacher/center/q-folder/create', { name, pid })
 
 /**
  * 收藏夹改名（POST /teacher/center/q-folder/rename）。
  * body {id, name}；仅名称可改（时间只展示）。BE 校验本人夹。
+ * PRD-A-013 T2 — id 雪花 string
  */
-export const renameFolder = (id: number | string, name: string) =>
+export const renameFolder = (id: string, name: string) =>
   request.post<unknown, unknown>('/teacher/center/q-folder/rename', { id, name })
 
 /**
  * 删除收藏夹（POST /teacher/center/q-folder/delete）。
  * body {id}；BE 把该夹下收藏 folder_id 重置 0（归默认夹，不丢收藏）。
+ * PRD-A-013 T2 — id 雪花 string
  */
-export const deleteFolder = (id: number | string) =>
+export const deleteFolder = (id: string) =>
   request.post<unknown, unknown>('/teacher/center/q-folder/delete', { id })
 
 /**
  * 取消收藏（DELETE /teacher/qd/favorite/{id}）
+ * PRD-A-013 T2 — questionId 雪花 string
  */
-export const removeFavorite = (questionId: number) =>
+export const removeFavorite = (questionId: string) =>
   request.delete<unknown, unknown>(`/teacher/qd/favorite/${questionId}`)
 
 // 收藏分页入参（PRD-A-005 T6 契约：GET /teacher/qd/favorite/page?pageNum&pageSize&folderId?）
+// PRD-A-013 T2 — folderId 雪花 string
 export interface FavoritePageParams {
   pageNum: number
   pageSize: number
-  folderId?: number | string
+  folderId?: string
 }
 
 /**
@@ -226,8 +249,9 @@ export const genExamData = () =>
  * 从试题栏移除题目
  * 端点：POST /teacher/question/cancel/{id}（misikt 真站命名，BE QuestionBasketController 已实现）
  * 函数名保留 removeBasket — FE 内部语义更清晰，调用方无感
+ * PRD-A-013 T2 — questionId 雪花 string
  */
-export const removeBasket = (questionId: number) =>
+export const removeBasket = (questionId: string) =>
   request.post<unknown, unknown>(`/teacher/question/cancel/${questionId}`)
 
 // ── 题目详情 / 原卷 / 错题栏接口（第十二波新增）──────────────────
@@ -235,8 +259,9 @@ export const removeBasket = (questionId: number) =>
 // 收录情况单条（试卷条目）
 // GET /teacher/question/{id}/sources 真实字段待 playwright 验证
 // 当前基于 A3-question-page.json 字段推断：examPaperId / examPaperName 已在 QuestionItem 里
+// PRD-A-013 T2 — examPaperId 雪花 string
 export interface QuestionSource {
-  examPaperId: number
+  examPaperId: string
   examPaperName: string
   examYear?: string | null
   sort?: number | null
@@ -262,8 +287,9 @@ export interface PaperSourceQuestion extends QuestionItem {
 }
 
 // 原卷详情响应
+// PRD-A-013 T2 — paperId 雪花 string
 export interface PaperSourceDetail {
-  paperId: number
+  paperId: string
   paperName: string
   examYear?: string | null
   questions: PaperSourceQuestion[]
@@ -271,16 +297,19 @@ export interface PaperSourceDetail {
 
 // ── E 卡 段② BE 真接口 /teacher/exam/paper/detail ──
 // 大题分组 VO
+// PRD-A-013 T2 — sectionId 雪花 string
 export interface PaperSectionVo {
-  sectionId: number
+  sectionId: string
   title: string
   sort: number
   questions: PaperSourceQuestion[]
 }
 
 // 试卷详情 VO（卷头 + sections 分组）
+// PRD-A-013 T2 — paperId 雪花 string；createBy 本来就 string；
+// 业务字段 score / suggestTime / questionCount / paperType 保留 number。
 export interface PaperDetailVo {
-  paperId: number
+  paperId: string
   paperName: string
   subjectId?: string
   score: number
@@ -299,15 +328,17 @@ export interface PaperDetailVo {
 /**
  * 获取题目详情
  * POST /teacher/question/select/{id}（A4 抓包证据 — misikt 真端点）
+ * PRD-A-013 T2 — questionId 雪花 string
  */
-export const getQuestionDetail = (questionId: number) =>
+export const getQuestionDetail = (questionId: string) =>
   request.post<QuestionDetail, QuestionDetail>(`/teacher/question/select/${questionId}`)
 
 
 // Q' 卡 段① BE 新端点 — 按 ids 批查完整字段（含 answer / explain / freeTags / questionStdKnowledges）。
 // query string = ?ids=1,2,3 逗号分隔（axios params 对 string 不会重复 key）；上限 100（BE 端约束）；
 // 软删自动过滤（BE WHERE status<>'2'）；顺序按 FIND_IN_SET 保入参顺序（FE 仍需 reorder 兜底）。
-export const questionListByIds = (ids: number[]) =>
+// PRD-A-013 T2 — ids 雪花 string[]
+export const questionListByIds = (ids: string[]) =>
   request.get<QuestionDetail[], QuestionDetail[]>('/teacher/question/list', {
     params: { ids: ids.join(',') },
   })
@@ -315,47 +346,62 @@ export const questionListByIds = (ids: number[]) =>
 /**
  * 获取我的备注（V1：BE 返单对象或 null）
  * GET /teacher/qd/note/{questionId}
+ * PRD-A-013 T2 — questionId 雪花 string
  */
-export const getQuestionNote = (questionId: number) =>
+export const getQuestionNote = (questionId: string) =>
   request.get<QuestionNote | null, QuestionNote | null>(`/teacher/qd/note/${questionId}`)
 
 /**
  * 添加/更新备注（V1：upsert，路径带 id + body 仅 content）
  * POST /teacher/qd/note/{id}
+ * PRD-A-013 T2 — questionId 雪花 string
  */
-export const saveQuestionNote = (questionId: number, content: string) =>
+export const saveQuestionNote = (questionId: string, content: string) =>
   request.post<unknown, unknown>(`/teacher/qd/note/${questionId}`, { content })
 
 /**
  * 获取收录情况（这道题被收录进了哪些试卷）
  * GET /teacher/qd/papers/{id}（A 端点清单 / 抓包确认）
+ * PRD-A-013 T2 — questionId 雪花 string
  */
-export const getQuestionSources = (questionId: number) =>
+export const getQuestionSources = (questionId: string) =>
   request.get<QuestionSource[], QuestionSource[]>(`/teacher/qd/papers/${questionId}`)
 
 /**
  * 获取相似题
  * GET /teacher/question/similar/{id}
  * 无登录态无法验证
+ * PRD-A-013 T2 — questionId 雪花 string
  */
-export const getSimilarQuestions = (questionId: number) =>
+export const getSimilarQuestions = (questionId: string) =>
   request.get<SimilarQuestion[], SimilarQuestion[]>(`/teacher/question/similar/${questionId}`)
 
 /**
  * 获取原卷详情（试卷所有题）
  * GET /teacher/paper/source/{id}
  * 无登录态无法验证
+ * PRD-A-013 T2 — paperId 雪花 string
  */
-export const getPaperSource = (paperId: number | string) =>
+export const getPaperSource = (paperId: string) =>
   request.get<PaperSourceDetail, PaperSourceDetail>(`/teacher/paper/source/${paperId}`)
 
 /**
  * E 卡 段② — 获取试卷详情（卷头 + 大题分组 + 题）
  * POST /teacher/exam/paper/detail body={paperId}
  * BE envelope `{code, message, response}` 已被 advice 解包，拿到的是 response 内层
+ *
+ * PRD-A-013 T5 M-10：可选 config 透传 axios 选项（主要为 signal —— 快速切卷竞态防护）。
+ * PRD-A-013 T2 — paperId 雪花 string
  */
-export const getPaperDetail = (paperId: number | string) =>
-  request.post<PaperDetailVo, PaperDetailVo>('/teacher/exam/paper/detail', { paperId })
+export const getPaperDetail = (
+  paperId: string,
+  config?: AxiosRequestConfig,
+) =>
+  request.post<PaperDetailVo, PaperDetailVo>(
+    '/teacher/exam/paper/detail',
+    { paperId },
+    config,
+  )
 
 // V1 删除：addErrorBasket / removeErrorBasket / reportQuestion 三个 API 函数
 // 原因：错题栏 + 题目报错本卡范围不实现，view 改为 noop + ElMessage warning "功能开发中"。
@@ -363,9 +409,10 @@ export const getPaperDetail = (paperId: number | string) =>
 
 // ── PRD-A-007 T1 换一题（BE 新端点） ────────────────────────────────────────
 
+// PRD-A-013 T2 — currentQuestionId / excludeIds 都是雪花 string
 export interface ReplaceQuestionParams {
-  currentQuestionId: number
-  excludeIds: number[]
+  currentQuestionId: string
+  excludeIds: string[]
 }
 
 /**

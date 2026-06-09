@@ -16,8 +16,9 @@ import { questionPage } from '@/api/question/index'
 import type { QuestionItem } from '@/api/question/index'
 
 // ── props / emits ────────────────────────────────────────────
+// PRD-A-013 T2 — 雪花 ID 全 string
 interface CurrentQuestion {
-  id: number
+  id: string
   subjectId?: string
   questionType?: number
   difficult?: number | null
@@ -27,7 +28,7 @@ interface CurrentQuestion {
 const props = defineProps<{
   visible: boolean
   question: CurrentQuestion
-  excludeIds: number[]
+  excludeIds: string[]
 }>()
 
 const emit = defineEmits<{
@@ -151,7 +152,8 @@ function typeTagColor(t: number): string {
 
 // 是否已在卷中
 const excludeSet = computed(() => new Set(props.excludeIds))
-function isInPaper(id: number) {
+// PRD-A-013 T2 — id 雪花 string
+function isInPaper(id: string) {
   return excludeSet.value.has(id)
 }
 </script>

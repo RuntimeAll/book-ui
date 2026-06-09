@@ -5,26 +5,28 @@ import { Folder } from '@element-plus/icons-vue'
 import { getFavoriteFolderTree, addFavorite, createFolder, type FavoriteFolder } from '@/api/question/index'
 
 // ── Props / Emits ──────────────────────────────────────────
+// PRD-A-013 T2 — 雪花 ID 全 string
 interface Props {
   modelValue: boolean  // v-model 控制抽屉开关
-  questionId: number   // 待收藏题 id
+  questionId: string   // 待收藏题 id
 }
 
 const props = defineProps<Props>()
 const emit = defineEmits<{
   (e: 'update:modelValue', val: boolean): void
-  (e: 'success', folderId: number | string | undefined): void
+  (e: 'success', folderId: string | undefined): void
 }>()
 
 // ── 默认 hardcode 收藏夹（兜底 — 当接口 401 或不可达时展示）──
+// PRD-A-013 T2 — id 雪花 string；'0' 是 BE "我的试题" 虚拟默认夹（id=0L 序列化成 "0"）。
 const DEFAULT_FOLDERS: FavoriteFolder[] = [
-  { id: 0, name: '我的试题', count: 0 },
+  { id: '0', name: '我的试题', count: 0 },
 ]
 
 // ── 状态 ─────────────────────────────────────────────────
 const folders = ref<FavoriteFolder[]>(DEFAULT_FOLDERS)
 const loadingFolders = ref(false)
-const selectedFolderId = ref<number | string | undefined>(undefined)
+const selectedFolderId = ref<string | undefined>(undefined)
 const confirming = ref(false)
 
 // ── 拉收藏夹列表 ─────────────────────────────────────────

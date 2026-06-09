@@ -19,8 +19,9 @@ import { Top, Bottom, Delete, InfoFilled, Refresh } from '@element-plus/icons-vu
 import type { PaperSourceQuestion } from '@/api/question/index'
 
 // EditRow 结构与 workbench.vue 一致（这里只声明用到的本地视图字段）
+// PRD-A-013 T2 — _sectionId 雪花 string（与 workbench.vue 对齐）
 interface EditRow extends PaperSourceQuestion {
-  _sectionId: number
+  _sectionId: string
   _score: number
   _showExplain: boolean
   _replacing: boolean

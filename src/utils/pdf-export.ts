@@ -18,9 +18,12 @@
 //
 // jsPDF 实装版本 = 4.2.1（PRD §3.2 沉淀坑 #6），遵守 2.5.1 兼容子集 API：
 //   new jsPDF({orientation,unit,format}) / addImage(canvas,'PNG',x,y,w,h) / save(filename)
+//
+// 🔴 PRD-A-013 T4 (H-4)：jspdf + html2canvas 改 dynamic import，避免占首屏 chunk 530KB。
+//   仅 type-only 静态 import 保留（编译期擦除，0 运行时影响 + 0 chunk 占用）。
+//   配合 vite.config.ts manualChunks 'pdf-vendor' 把二者切到独立 chunk，
+//   首次进入 home / workspace 等页面 Network 看不到 jspdf*，点导出 PDF 才按需加载。
 
-import jsPDF from 'jspdf'
-import html2canvas from 'html2canvas'
 import { typesetPaperPreview } from './mathjax'
 
 export interface PdfExportOptions {
@@ -51,6 +54,14 @@ async function waitAllImagesLoaded(root: HTMLElement): Promise<void> {
 
 export async function exportPaperToPdf(options: PdfExportOptions): Promise<void> {
   const { root, filename, onProgress } = options
+
+  // 🔴 PRD-A-013 T4 (H-4)：jspdf + html2canvas 动态加载（首屏免背 530KB）。
+  // Promise.all 并行下载两个 chunk（pdf-vendor 已被 vite manualChunks 合到一起，实际只 1 个 HTTP 请求）。
+  onProgress?.('加载导出引擎…')
+  const [{ default: jsPDF }, { default: html2canvas }] = await Promise.all([
+    import('jspdf'),
+    import('html2canvas'),
+  ])
 
   onProgress?.('等待公式渲染…')
   await typesetPaperPreview(root)

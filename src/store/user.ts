@@ -22,7 +22,8 @@ export interface AuthState {
  * 字段对齐 src/api/user/index.ts 的 CurrentUserVO。
  */
 export interface UserInfo {
-  id: number
+  // PRD-A-013 T2 — 雪花 ID 必 string（对齐 CurrentUserVO.id）
+  id: string
   userUuid?: string
   userName: string
   realName?: string

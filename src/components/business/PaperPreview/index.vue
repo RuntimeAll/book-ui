@@ -21,7 +21,8 @@ import { proxyImage } from '@/utils/image-proxy'
 const props = defineProps<{
   visible: boolean
   paperName: string
-  ids: number[]  // basket 提供的题目 id 列表（入参顺序 = 显示顺序）
+  // PRD-A-013 T2 — 雪花 ID string[]
+  ids: string[]  // basket 提供的题目 id 列表（入参顺序 = 显示顺序）
   /** 打开时的初始"显示答案"勾选态（可选，默认 false）— Wave2b 工作台右栏联动 */
   initialShowAnswer?: boolean
   /** 打开时的初始"显示解析"勾选态（可选，默认 false）— Wave2b 工作台右栏联动 */
@@ -56,8 +57,9 @@ const today = (() => {
 
 
 // 按 basket ids 入参顺序 reorder（兜底 BE 不保序场景；BE 走 FIND_IN_SET 已保序，此处冗余兜底）
-function reorderByIds(items: QuestionDetail[], orderIds: number[]): QuestionDetail[] {
-  const map = new Map<number, QuestionDetail>()
+// PRD-A-013 T2 — id / orderIds 雪花 string
+function reorderByIds(items: QuestionDetail[], orderIds: string[]): QuestionDetail[] {
+  const map = new Map<string, QuestionDetail>()
   for (const q of items) map.set(q.id, q)
   const result: QuestionDetail[] = []
   for (const id of orderIds) {

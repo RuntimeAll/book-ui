@@ -23,6 +23,8 @@ import {
 import { useUserStore } from '@/store/user'
 import { getCurrentUser } from '@/api/user'
 import { usePaperBasket } from '@/composables/usePaperBasket'
+import { useAbortableRequest } from '@/composables/useAbortableRequest'
+import type { MisiktPageVo } from '@/api/paper/index'
 
 const router = useRouter()
 const route = useRoute()
@@ -129,6 +131,10 @@ const pageParams = reactive({
   pageSize: 10,
 })
 
+// PRD-A-013 T5 M-10 — 列表请求竞态防护
+// 快速切分类树 / 改搜索 / 翻页时, 旧请求自动 abort, 防止旧 response 覆盖新数据。
+const { run: runAbortable } = useAbortableRequest<MisiktPageVo<PaperListItem>>()
+
 async function fetchPapers() {
   // scope=mine 时先兜底拉 userInfo（刷新页面后 userInfo 内存态丢失）
   if (currentScope.value === 'mine' && !userStore.userInfo) {
@@ -143,13 +149,24 @@ async function fetchPapers() {
   listLoading.value = true
   searchLoading.value = true
   try {
-    const result = await getPaperPage({
-      name: pageParams.name || '',
-      subjectId: pageParams.subjectId || '',
-      pageIndex: pageParams.pageIndex,
-      pageSize: pageParams.pageSize,
-      scope: currentScope.value,
-    })
+    // PRD-A-013 T5 M-10 — 走 useAbortableRequest 包装, signal 透传到 axios。
+    // 切分类 / 改搜索时上一个请求自动 abort, 返回 null 表示被取消（不更新 UI）。
+    const result = await runAbortable((signal) =>
+      getPaperPage(
+        {
+          name: pageParams.name || '',
+          subjectId: pageParams.subjectId || '',
+          pageIndex: pageParams.pageIndex,
+          pageSize: pageParams.pageSize,
+          scope: currentScope.value,
+        },
+        { signal },
+      ),
+    )
+    if (result === null) {
+      // 被新一次请求取消, 保持当前 UI（loading 由更新的请求结束时关闭）
+      return
+    }
     if (result && Array.isArray(result.list)) {
       papers.value = result.list
       total.value = result.total ?? 0

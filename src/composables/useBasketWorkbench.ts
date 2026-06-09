@@ -38,8 +38,9 @@ export interface KnowledgeGroup {
   count: number
 }
 
+// PRD-A-013 T2 — paperId 雪花 string
 export interface WorkbenchPaper {
-  paperId: number
+  paperId: string
   paperName: string
   questions: PaperSourceQuestion[]
 }
@@ -56,7 +57,8 @@ export interface UseBasketWorkbench {
   /** 已选卷数（= usePaperBasket.count） */
   paperCount: ComputedRef<number>
   /** 加载失败的卷 id（detail 报错 / 空返） */
-  failedPaperIds: Ref<number[]>
+  // PRD-A-013 T2 — 雪花 string[]
+  failedPaperIds: Ref<string[]>
   /** 遍历篮内卷，逐卷 detail → 合并去重 → 重算派生 */
   load: () => Promise<void>
 }
@@ -76,7 +78,8 @@ export function useBasketWorkbench(): UseBasketWorkbench {
   const loading = ref(false)
   const papers = ref<WorkbenchPaper[]>([])
   const questions = ref<PaperSourceQuestion[]>([])
-  const failedPaperIds = ref<number[]>([])
+  // PRD-A-013 T2 — 雪花 string[]
+  const failedPaperIds = ref<string[]>([])
 
   const paperCount = computed(() => basket.count.value)
 
@@ -116,7 +119,8 @@ export function useBasketWorkbench(): UseBasketWorkbench {
       const results = await Promise.allSettled(ids.map((id) => getPaperDetail(id)))
 
       const loadedPapers: WorkbenchPaper[] = []
-      const failed: number[] = []
+      // PRD-A-013 T2 — 雪花 string[]
+      const failed: string[] = []
 
       results.forEach((res, idx) => {
         const paperId = ids[idx]
@@ -141,11 +145,12 @@ export function useBasketWorkbench(): UseBasketWorkbench {
       })
 
       // 跨卷合并去重（按题 id，保首次出现顺序）
-      const seen = new Set<number>()
+      // PRD-A-013 T2 — id 雪花 string，禁 Number() 截尾；空 id 用 truthy 判断空串/null。
+      const seen = new Set<string>()
       const merged: PaperSourceQuestion[] = []
       for (const p of loadedPapers) {
         for (const q of p.questions) {
-          const qid = Number(q.id)
+          const qid = q.id
           if (!qid || seen.has(qid)) continue
           seen.add(qid)
           merged.push(q)

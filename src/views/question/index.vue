@@ -9,9 +9,11 @@ import {
   type SubjectNode,
   type QuestionItem,
   type QuestionPageParams,
+  type QuestionPageResult,
 } from '@/api/question/index'
 import { useRouter } from 'vue-router'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
+import { useAbortableRequest } from '@/composables/useAbortableRequest'
 import FavoriteFolderDrawer from '@/components/FavoriteFolderDrawer/index.vue'
 import ContentWrap from '@/components/ContentWrap/index.vue'
 import SearchWrap from '@/components/SearchWrap/index.vue'
@@ -136,6 +138,10 @@ const pageParams = reactive<QuestionPageParams>({
   notUsedQuestion: 0,
 })
 
+// PRD-A-013 T5 M-10 — 列表请求竞态防护
+// 快速切章节 / 改筛选时, 旧请求被自动 abort, 防止旧 response 覆盖新数据。
+const { run: runAbortable } = useAbortableRequest<QuestionPageResult>()
+
 // 空态文案动态切换（BUG-2 真修后，章节走 biz_question_knowledge JOIN 大多数节点有题；
 // 仅极少叶子节点确实 0 题时显示这条）
 const emptyDescription = computed(() => {
@@ -146,7 +152,13 @@ const emptyDescription = computed(() => {
 async function fetchQuestions() {
   listLoading.value = true
   try {
-    const result = await questionPage(pageParams)
+    // PRD-A-013 T5 M-10 — 走 useAbortableRequest 包装, signal 透传到 axios。
+    // 切章节 / 改筛选时上一个请求自动 abort, 返回 null 表示被取消（不更新 UI）。
+    const result = await runAbortable((signal) => questionPage(pageParams, { signal }))
+    if (result === null) {
+      // 被新一次请求取消, 保持当前 UI（loading 由更新的请求结束时关闭）
+      return
+    }
     const res = result as unknown as Record<string, unknown>
     if (res && Array.isArray(res['list'])) {
       questions.value = res['list'] as QuestionItem[]
@@ -176,7 +188,8 @@ function handlePageChange(page: number) {
 // J 卡段③：原 favoriteMap + loadFavoriteStatus N+1 删除。
 // 收藏态由 BE /page 响应里 q.isFavorite 字段直接带（段② BE 加字段）。
 // 收藏 / 取消时直接 patch q.isFavorite（reactive array 元素 property 改动 Vue 3 响应）。
-function setQuestionFavorite(qid: number, fav: boolean) {
+// PRD-A-013 T2 — qid 雪花 string
+function setQuestionFavorite(qid: string, fav: boolean) {
   const q = questions.value.find((it) => it.id === qid)
   if (q) q.isFavorite = fav
 }
@@ -200,13 +213,15 @@ function handleDraft(_q: QuestionItem) {
   sketchVisible.value = true
 }
 
-const favoriteLoading = reactive<Set<number>>(new Set())
+// PRD-A-013 T2 — Set 雪花 string
+const favoriteLoading = reactive<Set<string>>(new Set())
 
 // ── 收藏抽屉（子任务 D）──────────────────────────────────────
 // 未收藏 → 打开 FavoriteFolderDrawer 选择收藏目录
 // 已收藏 → 直接调 removeFavorite（不弹抽屉）
 const favDrawerVisible = ref(false)
-const favDrawerQuestionId = ref<number>(0)
+// PRD-A-013 T2 — 雪花 ID 空态 ''
+const favDrawerQuestionId = ref<string>('')
 
 function handleFavorite(q: QuestionItem) {
   if (favoriteLoading.has(q.id)) return
@@ -233,7 +248,7 @@ function handleRemoveFavorite(q: QuestionItem) {
     })
 }
 
-function handleFavDrawerSuccess(_folderId: number | string | undefined) {
+function handleFavDrawerSuccess(_folderId: string | undefined) {
   // 收藏抽屉内成功收藏 → patch q.isFavorite
   if (favDrawerQuestionId.value) {
     setQuestionFavorite(favDrawerQuestionId.value, true)

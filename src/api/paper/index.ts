@@ -1,4 +1,5 @@
 import request from '@/http/request'
+import type { AxiosRequestConfig } from 'axios'
 import type { PaperDetailVo } from '@/api/question/index'
 
 // ── 类型定义（misikt 真响应字节级对齐，证据：smoke/02-lazyTree-resp.json + 03-page-3001-resp.json）
@@ -19,15 +20,16 @@ export interface PaperTreeNode {
 }
 
 // page list 元素（misikt 字节级对齐 — 见 02-be-summary §4.2；PRD-B-013 已删 hgScore/directoryName/frameTextContentId）
+// PRD-A-013 T2 — id / createUser 雪花 string；业务字段（questionCount/score/suggestTime/paperType/status/sort）保留 number。
 export interface PaperListItem {
-  id: number
+  id: string
   name: string
   questionCount: number
   score: number               // Integer，BE CAST 自 DECIMAL 已去 .00
   suggestTime: number | null
   createTime: string          // 'YYYY-MM-DD' 字符串（不是 ms timestamp）
   finishTime: string | null
-  createUser: number
+  createUser: string
   subjectId: string
   paperType: 1 | 2 | 6        // 1=日常 / 2=月考 / 6=专题
   status: 1                   // 已发布
@@ -95,23 +97,31 @@ export const getPaperLazyTree = (params: PaperLazyTreeParams = { type: 2, versio
 /**
  * 试卷分页列表 — name LIKE / subjectId prefix-match / sort DESC
  * POST /teacher/exam/paper/page
+ *
+ * PRD-A-013 T5 M-10：可选 config 透传 axios 选项（主要为 signal —— 列表竞态防护）。
  */
-export const getPaperPage = (params: PaperPageParams) =>
+export const getPaperPage = (
+  params: PaperPageParams,
+  config?: AxiosRequestConfig,
+) =>
   request.post<MisiktPageVo<PaperListItem>, MisiktPageVo<PaperListItem>>(
     '/teacher/exam/paper/page',
     params,
+    config,
   )
 
 // ── Q 卡段① 创建试卷 ────────────────────────────────────────────────────
 
+// PRD-A-013 T2 — questionIds 雪花 string[]；paperCategoryId 是分类 code 本身就 string。
 export interface CreateExamPaperParams {
   name: string
-  questionIds: number[]
+  questionIds: string[]
   paperCategoryId?: string | null
 }
 
+// PRD-A-013 T2 — paperId 雪花 string
 export interface CreateExamPaperResult {
-  paperId: number
+  paperId: string
   questionCount: number
 }
 
@@ -129,9 +139,10 @@ export const createExamPaper = (params: CreateExamPaperParams) =>
 // ── PRD-A-005 T4 试卷编辑（重排/删/增题保存）────────────────────────────
 
 /** 编辑保存时单题条目（契约 manual：questionId / sectionId / sort / score）*/
+// PRD-A-013 T2 — questionId / sectionId 雪花 string；sort / score 业务字段 number。
 export interface UpdatePaperQuestion {
-  questionId: number
-  sectionId: number
+  questionId: string
+  sectionId: string
   sort: number
   score: number
 }
@@ -140,16 +151,19 @@ export interface UpdatePaperQuestion {
  * 大题分区（重命名）— design.md §0.2 SectionBo 契约
  * sectionId 非空 = 更新已有 section name/sort（v1 只支持重命名已有）
  * sectionId 空 = 新建（BE v1 未实现，FE 不发此项）
+ * PRD-A-013 T2 — sectionId 雪花 string | null
  */
 export interface UpdatePaperSection {
-  sectionId: number | null
+  sectionId: string | null
   name: string
   sort: number
 }
 
-/** 试卷编辑保存入参（契约 manual：POST /teacher/exam/paper/update）*/
+/** 试卷编辑保存入参（契约 manual：POST /teacher/exam/paper/update）
+ * PRD-A-013 T2 — paperId 雪花 string
+ */
 export interface UpdateExamPaperParams {
-  paperId: number
+  paperId: string
   name?: string
   paperCategoryId?: string | null
   questions: UpdatePaperQuestion[]
@@ -176,5 +190,6 @@ export const updateExamPaper = (params: UpdateExamPaperParams) =>
  * POST /teacher/exam/paper/delete body={paperId}
  * envelope 由拦截器自动拆，成功无业务数据（BE 返 null）。
  */
-export const deletePaper = (paperId: number) =>
+// PRD-A-013 T2 — paperId 雪花 string
+export const deletePaper = (paperId: string) =>
   request.post<unknown, unknown>('/teacher/exam/paper/delete', { paperId })

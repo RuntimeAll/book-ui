@@ -21,14 +21,14 @@ const router = useRouter()
 const userStore = useUserStore()
 
 // 当前收藏夹上下文（从工作台点夹进入时带 query.folderId；无 query = 全部收藏视图）
-const folderId = computed<number | undefined>(() => {
+// PRD-A-013 T2 — folderId 雪花 string（默认夹 '0' 是 BE 虚拟夹）
+const folderId = computed<string | undefined>(() => {
   const v = route.query.folderId
   if (v == null || v === '') return undefined
-  const n = Number(v)
-  return Number.isNaN(n) ? undefined : n
+  return String(v)
 })
 const inFolderView = computed(() => folderId.value !== undefined)
-const isDefaultFolder = computed(() => folderId.value === 0)
+const isDefaultFolder = computed(() => folderId.value === '0')
 const folderName = ref<string>(
   typeof route.query.folderName === 'string' ? route.query.folderName : '',
 )
@@ -39,7 +39,8 @@ const loading = ref(false)
 const pageParams = reactive({ pageNum: 1, pageSize: 10 })
 
 // 取消收藏进行中的题 id（防连点）
-const removingIds = reactive<Set<number>>(new Set())
+// PRD-A-013 T2 — Set 雪花 string
+const removingIds = reactive<Set<string>>(new Set())
 
 async function fetchFavorites() {
   loading.value = true
@@ -94,9 +95,9 @@ function handlePageChange(page: number) {
   fetchFavorites()
 }
 
-// 重命名当前收藏夹（仅夹内视图、非默认夹 id:0）
+// 重命名当前收藏夹（仅夹内视图、非默认夹 id:'0'）
 async function handleRename() {
-  if (folderId.value == null || folderId.value === 0) return
+  if (folderId.value == null || folderId.value === '0') return
   let name = ''
   try {
     const { value } = await ElMessageBox.prompt('请输入新的收藏夹名称', '重命名收藏夹', {
