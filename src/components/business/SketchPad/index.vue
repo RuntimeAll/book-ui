@@ -49,6 +49,11 @@ let dpr = 1
 let drawing = false
 let lastX = 0
 let lastY = 0
+// 🔴 当前正在作画的「那一个」指针（按 pointerId 跟踪）：
+//   不再用 isPrimary 一刀切（会误杀电容笔——握笔时手掌先落屏抢成 primary，
+//   笔反成 secondary 被丢）。改为单指针跟踪 + 笔优先抢占，既防手掌乱画又让笔能写。
+let activePointerId: number | null = null
+let activePointerType = ''
 const hasStroke = ref(false) // 是否画过（控制「清空/撤销」可用 + 退出提示）
 
 // 撤销快照栈（设备像素，整帧）
@@ -73,6 +78,9 @@ function initCanvas() {
   ctx.lineJoin = 'round'
   snapshots.length = 0
   hasStroke.value = false
+  drawing = false
+  activePointerId = null
+  activePointerType = ''
 }
 
 function clearCanvas() {
@@ -116,27 +124,40 @@ function applyStrokeStyle() {
 //   旧实现只绑 mouse* 事件，触摸设备完全不触发 → 画笔在平板失效。
 function onPointerDown(e: PointerEvent) {
   if (!ctx) return
-  // 🔴 次要触点（写字时手掌/另一指）也吞掉再退出：不 preventDefault 会被补「兼容点击」，
-  //    漏穿到下层 FAB（试卷篮/试题栏）→ 误触。只画主指针，但所有触点都要拦。
-  if (!e.isPrimary) {
-    e.preventDefault()
-    return
-  }
   if (e.pointerType === 'mouse' && e.button !== 0) return // 鼠标仅左键；触摸/笔 button 恒 0
+
+  // 已有笔画进行中 + 来了别的指针：
+  if (activePointerId !== null && activePointerId !== e.pointerId) {
+    // 笔优先（手掌抑制）：当前是「触摸（手掌）」那一笔、现在落下的是「笔」→ 让笔抢占接管。
+    const penPreempts = e.pointerType === 'pen' && activePointerType !== 'pen'
+    if (!penPreempts) {
+      e.preventDefault() // 吞掉次要触点（手掌/多指），不漏穿到下层 FAB
+      return
+    }
+    // 笔抢占：放掉旧（触摸）指针捕获，下面改由笔接管（手掌那一小段保留无妨）
+    try {
+      canvasRef.value?.releasePointerCapture(activePointerId)
+    } catch {
+      /* 忽略 */
+    }
+  }
+
   e.preventDefault() // 抑制触摸滚动 / 长按选中 / 合成鼠标事件
-  // 指针捕获：手指划出 canvas 边界也持续收 move/up，避免断笔
+  // 指针捕获：手指/笔划出 canvas 边界也持续收 move/up，避免断笔
   try {
     canvasRef.value?.setPointerCapture(e.pointerId)
   } catch {
     /* 个别浏览器不支持时忽略，不影响主流程 */
   }
+  activePointerId = e.pointerId
+  activePointerType = e.pointerType
   pushSnapshot()
   drawing = true
   hasStroke.value = true
   const { x, y } = getPos(e)
   lastX = x
   lastY = y
-  // 单击落点（圆点）
+  // 落点（圆点）
   applyStrokeStyle()
   ctx.beginPath()
   ctx.arc(x, y, currentLineWidth() / 2, 0, Math.PI * 2)
@@ -145,6 +166,7 @@ function onPointerDown(e: PointerEvent) {
 
 function onPointerMove(e: PointerEvent) {
   if (!drawing || !ctx) return
+  if (e.pointerId !== activePointerId) return // 只跟当前作画的那一个指针，手掌/多指不掺和
   e.preventDefault()
   const { x, y } = getPos(e)
   applyStrokeStyle()
@@ -157,7 +179,10 @@ function onPointerMove(e: PointerEvent) {
 }
 
 function onPointerUp(e: PointerEvent) {
+  if (e.pointerId !== activePointerId) return // 非当前作画指针抬起，忽略
   drawing = false
+  activePointerId = null
+  activePointerType = ''
   try {
     canvasRef.value?.releasePointerCapture(e.pointerId)
   } catch {
