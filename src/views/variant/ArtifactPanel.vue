@@ -3,9 +3,11 @@
 // PRD-C-011 Bucket3 — 右栏「变式题组」画布（DESIGN.md §14.4）。
 //
 // 数据源 = artifact 快照帧（snapshot 全量，宿主整量替换后传入）；本组件纯展示 +
-// 把所有动作冒泡成 utterance / regenerate 事件，由宿主走现有 chat SSE 通道（铁律 1）。
-//   - 全部入库 → emit('utterance', '这组可以了，入库')（确认 intent → agent save 节点真接口）
+// 把所有动作冒泡成事件，由宿主处理。
+//   - 全部入库 → emit('persist')（2026-06-11 用户拍板：确定性动作直连 BE
+//     /variant/persist，不再绕 LLM 分类器；宿主直调接口 + 回执进对话）
 //   - 换一批   → emit('regenerate')（宿主重发初始出题 utterance，PRD 开放问题方案 b）
+//   - 卡片快捷键（换数字/换场景/答疑，需要 LLM 生成）仍走 utterance → chat SSE（铁律 1）
 // 旧后端（无 artifact 帧）→ 空态引导，左栏完全可用（向后兼容兜底）。
 // ---------------------------------------------------------------------------
 import { computed } from 'vue'
@@ -23,6 +25,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'utterance', text: string): void
   (e: 'regenerate'): void
+  (e: 'persist'): void
 }>()
 
 const items = computed(() => props.artifact?.items ?? [])
@@ -30,7 +33,7 @@ const allPersisted = computed(() => items.value.length > 0 && items.value.every(
 
 function persistAll() {
   if (props.sending || items.value.length === 0 || allPersisted.value) return
-  emit('utterance', '这组可以了，入库')
+  emit('persist')
 }
 
 function regenerate() {

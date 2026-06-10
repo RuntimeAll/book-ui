@@ -309,6 +309,47 @@ export async function fetchVariantHistory(threadId: string): Promise<ToolkitChat
   return Array.isArray(data.messages) ? data.messages : []
 }
 
+/** 全部入库直连返回 */
+export interface VariantPersistResult {
+  ok: boolean
+  /** 入库回执（markdown，宿主作为 AI 气泡进对话流） */
+  reply: string
+  artifact: VariantArtifact | null
+}
+
+/**
+ * 「全部入库」直连（2026-06-11 用户拍板）：确定性动作不绕 LLM 分类器，直调
+ * POST /variant/persist —— BE 按 thread_id 取 checkpointer 里的当前题组，直跑
+ * persist 节点同一段代码（防重簿记/血缘逻辑零分叉），回执消息同步写回对话历史。
+ */
+export async function persistVariantGroup(
+  threadId: string,
+  ruoyiToken: string
+): Promise<VariantPersistResult> {
+  const res = await fetch('/agent/variant/persist', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ thread_id: threadId, ruoyi_token: ruoyiToken }),
+  })
+  if (!res.ok) {
+    const detail = await res
+      .json()
+      .then((d: { detail?: string }) => d.detail)
+      .catch(() => '')
+    throw new Error(detail || `/variant/persist ${res.status}`)
+  }
+  const data = (await res.json()) as { ok?: boolean; reply?: string; artifact?: unknown }
+  return {
+    ok: data.ok === true,
+    reply: typeof data.reply === 'string' ? data.reply : '',
+    artifact: pickArtifact({
+      type: 'custom',
+      content: '',
+      custom_data: { artifact: data.artifact as Record<string, unknown> },
+    }),
+  }
+}
+
 /** 取会话当前题组快照（重建右栏卡片栅）。无题组返回 items=[]。 */
 export async function fetchVariantArtifact(threadId: string): Promise<VariantArtifact | null> {
   const res = await fetch('/agent/variant/artifact', {

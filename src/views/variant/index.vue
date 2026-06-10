@@ -5,6 +5,7 @@ import { useUserStore } from '@/store/user'
 import {
   fetchVariantArtifact,
   fetchVariantHistory,
+  persistVariantGroup,
   streamVariant,
   uploadMotherImage,
 } from '@/api/variant'
@@ -346,10 +347,38 @@ function send() {
   dispatch(message, shown)
 }
 
-/** 卡片快捷键 / 全部入库：预设句走同一通道，用户气泡照常显示该句（铁律 1） */
+/** 卡片快捷键（换数字/换场景/答疑，需要 LLM）：预设句走 chat 通道，用户气泡照常显示（铁律 1） */
 function sendUtterance(text: string) {
   if (sending.value) return
   dispatch(text)
+}
+
+/**
+ * 全部入库（2026-06-11 用户拍板）：确定性动作直连 BE /variant/persist，不绕 LLM
+ * 分类器（省一次 LLM + 零误判）。回执作为 AI 气泡进对话（BE 已同步写回 checkpointer
+ * 历史，刷新恢复也能看到），artifact 整量替换刷新「已收录」徽章。
+ */
+async function persistAll() {
+  if (sending.value) return
+  stream.value.push({ type: 'bubble', role: 'user', text: '📥 全部入库' })
+  touchSession('全部入库')
+  sending.value = true
+  scrollToBottom()
+  try {
+    const res = await persistVariantGroup(threadId.value, userStore.accessToken)
+    if (res.reply) stream.value.push({ type: 'bubble', role: 'ai', kind: 'normal', text: res.reply })
+    if (res.artifact) artifact.value = res.artifact
+  } catch (e) {
+    stream.value.push({
+      type: 'bubble',
+      role: 'ai',
+      kind: 'error',
+      text: `入库失败：${e instanceof Error ? e.message : String(e)}`,
+    })
+  } finally {
+    sending.value = false
+    scrollToBottom()
+  }
 }
 
 /** 换一批：重发初始出题 utterance（整组重新出，agent 重新分析母题） */
@@ -620,6 +649,7 @@ onBeforeUnmount(() => {
       :can-regenerate="!!firstComposeMessage || !!motherImg"
       @utterance="sendUtterance"
       @regenerate="regenerate"
+      @persist="persistAll"
     />
   </div>
 </template>
