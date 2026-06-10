@@ -11,6 +11,7 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
+    AiStageRail: typeof import('./src/components/AiStageRail.vue')['default']
     BaseButton: typeof import('./src/components/BaseButton/index.vue')['default']
     ContentWrap: typeof import('./src/components/ContentWrap/index.vue')['default']
     ElAlert: typeof import('element-plus/es')['ElAlert']

@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, ref } from 'vue'
+import { ElMessage } from 'element-plus'
 import { useUserStore } from '@/store/user'
-import { streamVariant } from '@/api/variant'
-import type { ToolkitChatMessage, VariantStreamHandle } from '@/api/variant'
+import { streamVariant, uploadMotherImage } from '@/api/variant'
+import type { ToolkitChatMessage, VariantStage, VariantStreamHandle } from '@/api/variant'
 import MarkdownMath from '@/components/MarkdownMath.vue'
+import AiStageRail from '@/components/AiStageRail.vue'
 
 // 登录老师身份：入库 owner 走透传 token（agent_config.ruoyi_token），落老师本人个人题库。
 const userStore = useUserStore()
@@ -34,7 +36,47 @@ const imageUrl = ref('') // 顶部待发送的 OSS 图 URL（首轮随消息带�
 const motherImg = ref('') // 已发出的母题图，顶部缩略图常驻
 const sending = ref(false)
 const thinking = ref(false) // LLM token 流期的「思考中」动效
+// PRD-C-010 思维外放：当前轮思路条（stage 事件驱动，同 key 原地更新、新 key 追加保插入序）。
+// 收到第一条 stage 后由思路条接管在场感；静态「AI 正在分析…」占位只作 stage 到来前的兜底。
+const stages = ref<VariantStage[]>([])
 const streamRef = ref<HTMLElement | null>(null)
+
+// 母题图本地上传（BE /teacher/variant/upload-image → 公读 OSS URL + biz_variant_upload 留痕）
+const uploading = ref(false)
+const fileInputRef = ref<HTMLInputElement | null>(null)
+
+const UPLOAD_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
+const UPLOAD_MAX_BYTES = 10 * 1024 * 1024
+
+function pickFile() {
+  fileInputRef.value?.click()
+}
+
+async function onFileChange(e: Event) {
+  const inputEl = e.target as HTMLInputElement
+  const file = inputEl.files?.[0]
+  inputEl.value = '' // 允许同一文件再次选择
+  if (!file) return
+  // 客户端先挡一道（BE 同口径再硬校验）
+  if (!UPLOAD_TYPES.includes(file.type)) {
+    ElMessage.error('仅支持 jpg / png / webp / gif 图片')
+    return
+  }
+  if (file.size > UPLOAD_MAX_BYTES) {
+    ElMessage.error('图片不能超过 10MB')
+    return
+  }
+  uploading.value = true
+  try {
+    const { url } = await uploadMotherImage(file)
+    imageUrl.value = url
+    ElMessage.success('已上传，图链已填入，回车即可出题')
+  } catch {
+    // 失败 toast 由 http 拦截器统一弹，这里只收 loading
+  } finally {
+    uploading.value = false
+  }
+}
 
 // 会话级 thread_id：同会话所有 send 复用 → agent 记住当前题组。新母题 / 刷新换新。
 let threadId = crypto.randomUUID()
@@ -44,6 +86,19 @@ async function scrollToBottom() {
   await nextTick()
   const el = streamRef.value
   if (el) el.scrollTop = el.scrollHeight
+}
+
+/**
+ * 思路条终态收口：流中途出错/异常断流时，把还在 running 的条目就地改成 warn（标「已中断」），
+ * 避免紫色呼吸动画与旁边的错误气泡互相矛盾地永久挂着。正常完成时 BE 已把每个 stage 收成
+ * done/warn，此处天然 no-op；幂等，可在 onServerError/onError/onClose 重复调用。
+ */
+function settleStages() {
+  stages.value = stages.value.map((s) =>
+    s.status === 'running'
+      ? { ...s, status: 'warn' as const, detail: s.detail ? `${s.detail}·已中断` : '已中断' }
+      : s
+  )
 }
 
 function send() {
@@ -73,14 +128,22 @@ function send() {
   input.value = ''
   sending.value = true
   thinking.value = true
+  stages.value = [] // 新一轮：收起上一轮思路条（取简=清空），等本轮 stage 事件重建
   scrollToBottom()
 
   handle = streamVariant(
     { message, thread_id: threadId, ruoyiToken: userStore.accessToken },
     {
       onToken: () => {
-        // 只作「活着/思考中」信号，不外放原始 token
+        // 只作「活着/思考中」信号，不外放原始 token（思考型模型 reasoning 不外放，有意为之）
         if (!thinking.value) thinking.value = true
+      },
+      onStage: (stage: VariantStage) => {
+        // 思路条：同 key 原地更新 status/detail，新 key 追加（数组保 BE 发出的阶段顺序）
+        const idx = stages.value.findIndex((s) => s.key === stage.key)
+        if (idx >= 0) stages.value[idx] = stage
+        else stages.value.push(stage)
+        scrollToBottom()
       },
       onMessage: (msg: ToolkitChatMessage) => {
         thinking.value = false
@@ -91,6 +154,7 @@ function send() {
       },
       onServerError: (m) => {
         thinking.value = false
+        settleStages() // 思路条与错误气泡一致收口（running → warn·已中断）
         messages.value.push({ role: 'ai', kind: 'error', text: m })
         scrollToBottom()
       },
@@ -98,6 +162,7 @@ function send() {
         console.error('[variant] 流异常:', err)
         thinking.value = false
         sending.value = false
+        settleStages()
         messages.value.push({
           role: 'ai',
           kind: 'error',
@@ -108,6 +173,7 @@ function send() {
       onClose: () => {
         sending.value = false
         thinking.value = false
+        settleStages() // 正常完成时无 running 条目 = no-op；异常断流时兜底收口
         scrollToBottom()
       },
     }
@@ -119,6 +185,7 @@ function resetSession() {
   handle?.abort()
   threadId = crypto.randomUUID()
   messages.value = []
+  stages.value = []
   motherImg.value = ''
   imageUrl.value = ''
   input.value = ''
@@ -151,15 +218,28 @@ onBeforeUnmount(() => handle?.abort())
           <el-input
             v-model="imageUrl"
             size="default"
-            placeholder="粘贴题目图的 OSS / 公网图片地址（http…），首轮必填"
-            :disabled="sending"
+            placeholder="上传本地题图，或粘贴 OSS / 公网图片地址（http…），首轮必填"
+            :disabled="sending || uploading"
             clearable
           >
             <template #prepend>🖼 母题图</template>
+            <template #append>
+              <el-button :loading="uploading" :disabled="sending" @click="pickFile">
+                {{ uploading ? '上传中…' : '上传图片' }}
+              </el-button>
+            </template>
           </el-input>
+          <input
+            ref="fileInputRef"
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/gif"
+            style="display: none"
+            @change="onFileChange"
+          />
           <p class="default-hint">
-            默认配方：守考点 + 年级 + 难度，换数字 / 情境，出 3 道（2 普通 1 难）。
-            你也可以说「换场景」「转题型」「难一点」「补2道同第3」「为什么第2题选B」，最后说「可以了」入库。
+            默认配方：守考点 + 年级 + 难度，换数字 / 情境，出 3 道（2 普通 1 难）；
+            也可以首轮直接说要求（如「出5个，难度递增，2选择2填空1应用」）。
+            后续可说「换场景」「转题型」「难一点」「补2道同第3」「为什么第2题选B」，最后说「可以了」入库。
           </p>
         </div>
       </div>
@@ -187,8 +267,13 @@ onBeforeUnmount(() => handle?.abort())
           </div>
         </div>
 
-        <!-- 思考中动效（token 流期） -->
-        <div v-if="thinking" class="msg-row is-ai">
+        <!-- 思路条（stage 事件驱动，跟随当前轮；DESIGN §6.1） -->
+        <div v-if="stages.length > 0" class="msg-row is-ai">
+          <AiStageRail class="stage-rail-wrap" :stages="stages" />
+        </div>
+
+        <!-- 思考中动效（token 流期）：仅作首条 stage 到来前的兜底，之后由思路条接管 -->
+        <div v-if="thinking && stages.length === 0" class="msg-row is-ai">
           <div class="bubble ai-normal thinking">
             <span class="dot-pulse" /><span class="dot-pulse" /><span class="dot-pulse" />
             <span class="thinking-text">AI 正在分析 / 出题…（出 3 道含解析，稍候）</span>
@@ -373,6 +458,12 @@ onBeforeUnmount(() => handle?.abort())
   border: 1px solid #ffccc7;
   color: #cf1322;
   border-bottom-left-radius: 4px;
+}
+
+/* 思路条在消息流里的占宽（视觉本体在 AiStageRail 组件内） */
+.stage-rail-wrap {
+  max-width: 86%;
+  min-width: 320px;
 }
 
 /* 思考中动效 */
