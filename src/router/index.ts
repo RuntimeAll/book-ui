@@ -46,6 +46,12 @@ const router = createRouter({
           name: 'QuestionDetail',
           component: () => import('@/views/question/detail.vue'),
         },
+        // PRD-C-009「我的题库」——只看当前登录老师自己的题（mine:true），复用题库详情页
+        {
+          path: '/my-question',
+          name: 'MyQuestion',
+          component: () => import('@/views/my-question/index.vue'),
+        },
         // PRD-A-007 — misikt 式两栏组卷工作台（新建态 + 编辑态同页两入口）
         // 新建态（无 id）：数据源 = useQuestionBasket，动作"创建试卷"
         // 编辑态（带 id）：加载 paper detail，动作"保存修改"
