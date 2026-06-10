@@ -14,6 +14,7 @@
 import { ref, watch, computed } from 'vue'
 import { questionPage } from '@/api/question/index'
 import type { QuestionItem } from '@/api/question/index'
+import QuestionContent from '@/components/business/QuestionContent/index.vue'
 
 // ── props / emits ────────────────────────────────────────────
 // PRD-A-013 T2 — 雪花 ID 全 string
@@ -249,19 +250,14 @@ function isInPaper(id: string) {
             </span>
           </div>
 
-          <!-- 题干：优先图，兜底文字 -->
+          <!-- 题干（富文本/图片/占位统一走 QuestionContent） -->
           <div class="rqd-stem">
-            <img
-              v-if="q.stemImg"
-              :src="q.stemImg"
-              class="rqd-stem-img"
+            <QuestionContent
+              :text="q.stemText"
+              :img-url="q.stemImg"
               alt="题干"
-              referrerpolicy="no-referrer"
-              loading="lazy"
-              @error="(e: Event) => ((e.target as HTMLImageElement).style.display = 'none')"
+              img-max-height="100px"
             />
-            <span v-else-if="q.stemText" class="rqd-stem-text">{{ q.stemText }}</span>
-            <span v-else class="rqd-stem-placeholder">（ID: {{ q.id }}）</span>
           </div>
         </div>
 

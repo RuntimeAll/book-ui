@@ -17,6 +17,7 @@ import { computed } from 'vue'
 import { Edit, Star, ShoppingCart, Key } from '@element-plus/icons-vue'
 import Icon from '@/components/Icon/index.vue'
 import FreeTagList from '@/components/business/FreeTagList/index.vue'
+import QuestionContent from '@/components/business/QuestionContent/index.vue'
 import type { QuestionItem } from '@/api/question/index'
 
 type ActionKey = 'draft' | 'favorite' | 'basket' | 'detail'
@@ -129,19 +130,14 @@ function getQuestionTypeTag(type: number): 'success' | 'warning' | 'info' | 'pri
       <span class="q-id-text">{{ question.id }}</span>
     </div>
 
-    <!-- 题干图 / 文字 -->
+    <!-- 题干内容（富文本 / 图片 / 占位，统一走 QuestionContent） -->
     <div class="card-stem">
-      <img
-        v-if="question.stemImg"
-        :src="question.stemImg"
-        class="stem-img"
-        loading="lazy"
+      <QuestionContent
+        :text="question.stemText"
+        :img-url="question.stemImg"
         alt="题干"
-        referrerpolicy="no-referrer"
-        @error="(e: Event) => ((e.target as HTMLImageElement).style.display = 'none')"
+        img-max-height="220px"
       />
-      <span v-else-if="question.stemText" class="stem-text">{{ question.stemText }}</span>
-      <span v-else class="stem-placeholder">（题干加载中）</span>
     </div>
 
     <!-- ══ 底部 meta 行 ══ -->
@@ -290,24 +286,7 @@ function getQuestionTypeTag(type: number): 'success' | 'warning' | 'info' | 'pri
   min-height: 40px;
 }
 
-.stem-img {
-  max-width: 100%;
-  max-height: 220px;
-  display: block;
-  border-radius: 6px;
-  background: #f8f9fa;
-}
-
-.stem-text {
-  font-size: 14px;
-  color: #1d2129;
-  line-height: 1.7;
-}
-
-.stem-placeholder {
-  font-size: 12px;
-  color: #c9cdd4;
-}
+/* .stem-img / .stem-text / .stem-placeholder 已迁入 QuestionContent 组件内部，此处删除 */
 
 .card-meta-bottom {
   display: flex;

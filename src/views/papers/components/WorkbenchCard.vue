@@ -16,6 +16,7 @@
  * getQuestionTypeLabel / getQuestionTypeTag 是无副作用纯函数，随题卡一并迁入。
  */
 import { Top, Bottom, Delete, InfoFilled, Refresh } from '@element-plus/icons-vue'
+import QuestionContent from '@/components/business/QuestionContent/index.vue'
 import type { PaperSourceQuestion } from '@/api/question/index'
 
 // EditRow 结构与 workbench.vue 一致（这里只声明用到的本地视图字段）
@@ -91,33 +92,23 @@ function getQuestionTypeTag(type: number): string {
       <div class="q-global-num">{{ globalIndex }}</div>
     </div>
 
-    <!-- 题干区 -->
+    <!-- 题干区（富文本/图片/占位统一走 QuestionContent） -->
     <div class="q-stem-area">
-      <img
-        v-if="row.stemImg"
-        :src="row.stemImg"
-        class="q-stem-img"
+      <QuestionContent
+        :text="row.stemText"
+        :img-url="row.stemImg"
         alt="题干"
-        referrerpolicy="no-referrer"
-        loading="lazy"
-        @error="(e: Event) => ((e.target as HTMLImageElement).style.display = 'none')"
       />
-      <p v-else-if="row.stemText" class="q-stem-text">{{ row.stemText }}</p>
-      <p v-else class="q-stem-placeholder">（题目 ID: {{ row.id }}）</p>
     </div>
 
-    <!-- 解析区（toggle 显示，图模式 — 与 PaperPreview 一致）-->
+    <!-- 解析区（toggle 显示，富文本/图片统一走 QuestionContent） -->
     <div v-if="row._showExplain" class="q-explain-area">
       <div class="explain-label">解析：</div>
-      <img
-        v-if="row.explainImg"
-        :src="row.explainImg"
-        class="q-explain-img"
+      <QuestionContent
+        :text="(row as { explain?: string | null }).explain"
+        :img-url="row.explainImg"
         alt="解析"
-        referrerpolicy="no-referrer"
-        loading="lazy"
       />
-      <p v-else class="q-stem-placeholder">暂无解析图</p>
     </div>
 
     <!-- 底部工具栏（misikt 风格：分值 | 解析 | 上移 | 下移 | 删除 | 换一题 | 详情）-->

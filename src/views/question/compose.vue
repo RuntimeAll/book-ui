@@ -6,6 +6,7 @@ import { ArrowLeft, Download } from '@element-plus/icons-vue'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
 import { createExamPaper } from '@/api/paper'
 import PaperPreview from '@/components/business/PaperPreview/index.vue'
+import QuestionContent from '@/components/business/QuestionContent/index.vue'
 
 const router = useRouter()
 const basket = useQuestionBasket()
@@ -162,13 +163,13 @@ function handleBack() {
               </el-button>
             </div>
           </div>
+          <!-- 题干（富文本/图片/占位统一走 QuestionContent，含 Markdown+LaTeX 渲染） -->
           <div class="q-stem">
-            <!-- 题干 HTML（含 LaTeX 原文，Q' 卡再上 MathJax 渲染）—— PRD-A-013 H-3: v-html → v-safe-html, 走 DOMPurify 白名单防 XSS, 不剥光原内容 -->
-            <div v-if="q.stemText" class="stem-text" v-safe-html="q.stemText"></div>
-            <img v-if="q.stemImg" :src="q.stemImg" alt="题图" class="stem-img" />
-            <span v-if="!q.stemText && !q.stemImg" class="q-stem-placeholder">
-              题干数据缺失（LS 缓存未含完整字段）
-            </span>
+            <QuestionContent
+              :text="q.stemText"
+              :img-url="q.stemImg"
+              alt="题干"
+            />
           </div>
         </li>
       </ol>

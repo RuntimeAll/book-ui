@@ -26,6 +26,7 @@ import {
 import FreeTagList from '@/components/business/FreeTagList/index.vue'
 import SketchPad from '@/components/business/SketchPad/index.vue'
 import DetailSidebar from './components/DetailSidebar.vue'
+import QuestionContent from '@/components/business/QuestionContent/index.vue'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
 
 // ── 路由 ────────────────────────────────────────────────────
@@ -352,18 +353,13 @@ watch(questionId, async () => {
           </div>
         </div>
 
-        <!-- 题干图 -->
+        <!-- 题干（富文本/图片/占位统一走 QuestionContent） -->
         <div class="stem-area">
-          <img
-            v-if="question.stemImg"
-            :src="question.stemImg"
-            class="stem-img"
+          <QuestionContent
+            :text="question.stemText"
+            :img-url="question.stemImg"
             alt="题干"
-            referrerpolicy="no-referrer"
-            @error="(e: Event) => ((e.target as HTMLImageElement).style.display='none')"
           />
-          <p v-else-if="question.stemText" class="stem-text">{{ question.stemText }}</p>
-          <p v-else class="stem-placeholder">（题干数据暂无）</p>
         </div>
 
         <!-- 来源行 + freeTags + 问AI（misikt 风格：来源 + 多个 freeTag 同一行）-->
@@ -403,15 +399,12 @@ watch(questionId, async () => {
           </div>
           <div v-if="answerExpanded" class="collapse-body">
             <div class="answer-label">【答案】</div>
-            <img
-              v-if="question.answerImg"
-              :src="question.answerImg"
-              class="answer-img"
+            <!-- 答案（富文本/图片统一走 QuestionContent；answer=文本字段 answerImg=图字段）-->
+            <QuestionContent
+              :text="(question as { answer?: string | null }).answer"
+              :img-url="question.answerImg"
               alt="答案"
-              referrerpolicy="no-referrer"
-              @error="(e: Event) => ((e.target as HTMLImageElement).style.display='none')"
             />
-            <span v-else class="no-content">暂无答案图片</span>
           </div>
         </div>
 
@@ -422,15 +415,12 @@ watch(questionId, async () => {
             <span class="collapse-arrow" :class="{ 'expanded': explainExpanded }">▼</span>
           </div>
           <div v-if="explainExpanded" class="collapse-body">
-            <img
-              v-if="question.explainImg"
-              :src="question.explainImg"
-              class="explain-img"
+            <!-- 解析（富文本/图片统一走 QuestionContent；explain=文本字段 explainImg=图字段）-->
+            <QuestionContent
+              :text="(question as { explain?: string | null }).explain"
+              :img-url="question.explainImg"
               alt="解析"
-              referrerpolicy="no-referrer"
-              @error="(e: Event) => ((e.target as HTMLImageElement).style.display='none')"
             />
-            <span v-else class="no-content">暂无解析图片</span>
           </div>
         </div>
 
@@ -456,14 +446,11 @@ watch(questionId, async () => {
               :key="sq.id"
               class="similar-item"
             >
-              <img
-                v-if="sq.stemImg"
-                :src="sq.stemImg"
-                class="similar-img"
+              <QuestionContent
+                :text="sq.stemText"
+                :img-url="sq.stemImg"
                 alt="相似题"
-                referrerpolicy="no-referrer"
               />
-              <span v-else class="similar-text">{{ sq.stemText }}</span>
             </div>
           </div>
         </div>

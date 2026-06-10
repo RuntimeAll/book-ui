@@ -60,6 +60,7 @@ declare module 'vue' {
     PaperPreview: typeof import('./src/components/business/PaperPreview/index.vue')['default']
     QuestionBasket: typeof import('./src/components/business/QuestionBasket/index.vue')['default']
     QuestionCard: typeof import('./src/components/business/QuestionCard/index.vue')['default']
+    QuestionContent: typeof import('./src/components/business/QuestionContent/index.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
     SearchBar: typeof import('./src/components/SearchWrap/SearchBar.vue')['default']

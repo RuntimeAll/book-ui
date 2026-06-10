@@ -15,6 +15,7 @@ import { useQuestionBasket } from '@/composables/useQuestionBasket'
 import { getQuestionDetail, type QuestionItem } from '@/api/question/index'
 // 放大预览复用题库/组卷工作台共享题卡组件（actions=[] 关掉操作按钮，纯展示题干大图 + meta），不另造预览渲染。
 import QuestionCard from '@/components/business/QuestionCard/index.vue'
+import QuestionContent from '@/components/business/QuestionContent/index.vue'
 
 const basket = useQuestionBasket()
 const router = useRouter()
@@ -55,26 +56,32 @@ function getQuestionTypeTag(type: number): 'success' | 'warning' | 'info' | 'pri
   return map[type] ?? 'info'
 }
 
-// ── 展开解析（用户 2026-06-04 拍板实现）：toggle 显示该题解析图；item 自带 explainImg 优先，
-//    无则懒加载 getQuestionDetail 补取（试题栏 item 来自列表，可能不含解析图）──
+// ── 展开解析（用户 2026-06-04 拍板实现）：toggle 显示该题解析；item 自带 explainImg/explain 优先，
+//    无则懒加载 getQuestionDetail 补取（试题栏 item 来自列表，可能不含解析）──
 // PRD-A-013 T2 — key 雪花 string
-const explainState = reactive<Record<string, { open: boolean; img: string; loading: boolean }>>({})
+// 兼容富文本：img = 解析图 URL（misikt 老题），text = 解析文本（AI 入库题）
+const explainState = reactive<Record<string, { open: boolean; img: string; text: string; loading: boolean }>>({})
 
 async function toggleExplain(item: QuestionItem) {
   const id = item.id
-  if (!explainState[id]) explainState[id] = { open: false, img: '', loading: false }
+  if (!explainState[id]) explainState[id] = { open: false, img: '', text: '', loading: false }
   const st = explainState[id]
   st.open = !st.open
-  if (st.open && !st.img && !st.loading) {
+  if (st.open && !st.img && !st.text && !st.loading) {
     const own = (item as { explainImg?: string }).explainImg
+    const ownText = (item as { explain?: string }).explain
+    if (ownText) { st.text = ownText; return }
     if (own) { st.img = own; return }
     st.loading = true
     try {
       const res = await getQuestionDetail(id)
-      st.img = (res as { explainImg?: string })?.explainImg ?? ''
+      const d = res as { explainImg?: string; explain?: string }
+      st.text = d?.explain ?? ''
+      st.img = d?.explainImg ?? ''
     } catch (e) {
       console.warn('[basket] load explain failed', e)
       st.img = ''
+      st.text = ''
     } finally {
       st.loading = false
     }
@@ -82,28 +89,38 @@ async function toggleExplain(item: QuestionItem) {
 }
 
 // ── 放大预览（压缩题卡后的兼容入口）：点题卡/放大按钮打开 el-dialog，
-//    复用 QuestionCard 渲染完整题干大图 + meta；答案/解析图懒加载 getQuestionDetail 补取。──
+//    复用 QuestionCard 渲染完整题干大图 + meta；答案/解析（图/文）懒加载 getQuestionDetail 补取。──
 const previewVisible = ref(false)
 const previewItem = ref<QuestionItem | null>(null)
-const previewDetail = reactive<{ answerImg: string; explainImg: string; loading: boolean }>({
-  answerImg: '',
-  explainImg: '',
+const previewDetail = reactive<{
+  answerImg: string; answerText: string
+  explainImg: string; explainText: string
+  loading: boolean
+}>({
+  answerImg: '', answerText: '',
+  explainImg: '', explainText: '',
   loading: false,
 })
 
 async function openPreview(item: QuestionItem) {
   previewItem.value = item
   previewDetail.answerImg = (item as { answerImg?: string }).answerImg ?? ''
+  previewDetail.answerText = (item as { answer?: string }).answer ?? ''
   previewDetail.explainImg = (item as { explainImg?: string }).explainImg ?? ''
+  previewDetail.explainText = (item as { explain?: string }).explain ?? ''
   previewVisible.value = true
-  // 列表来的 item 可能不含答案/解析图 → 懒加载详情补取
-  if (!previewDetail.answerImg || !previewDetail.explainImg) {
+  // 列表来的 item 可能不含答案/解析（图/文）→ 懒加载详情补取
+  const needLoad = !previewDetail.answerImg && !previewDetail.answerText
+    || !previewDetail.explainImg && !previewDetail.explainText
+  if (needLoad) {
     previewDetail.loading = true
     try {
       const res = await getQuestionDetail(item.id)
-      const d = res as { answerImg?: string; explainImg?: string }
+      const d = res as { answerImg?: string; answer?: string; explainImg?: string; explain?: string }
       if (!previewDetail.answerImg) previewDetail.answerImg = d?.answerImg ?? ''
+      if (!previewDetail.answerText) previewDetail.answerText = d?.answer ?? ''
       if (!previewDetail.explainImg) previewDetail.explainImg = d?.explainImg ?? ''
+      if (!previewDetail.explainText) previewDetail.explainText = d?.explain ?? ''
     } catch (e) {
       console.warn('[basket] load preview detail failed', e)
     } finally {
@@ -217,32 +234,27 @@ async function openPreview(item: QuestionItem) {
               </el-button>
             </div>
           </div>
-          <div class="basket-item-stem">
-            <img
-              v-if="item.stemImg"
-              :src="item.stemImg"
-              class="stem-img-small"
-              loading="lazy"
+          <!-- 题干（点击放大）— 富文本/图片/占位统一走 QuestionContent -->
+          <div class="basket-item-stem" style="cursor: zoom-in;" @click="openPreview(item)">
+            <QuestionContent
+              :text="item.stemText"
+              :img-url="item.stemImg"
               alt="题干（点击放大）"
-              title="点击放大查看完整题目"
-              @click="openPreview(item)"
-              @error="(e: Event) => ((e.target as HTMLImageElement).style.display='none')"
+              img-max-height="112px"
             />
-            <span v-else-if="item.stemText" class="basket-stem-text" @click="openPreview(item)">{{ item.stemText }}</span>
-            <span v-else class="stem-placeholder">题 ID: {{ item.id }}</span>
           </div>
-          <!-- 展开解析区（懒加载 explainImg）-->
+          <!-- 展开解析区（懒加载，富文本/图片统一走 QuestionContent）-->
           <div v-if="explainState[item.id]?.open" class="basket-item-explain">
             <el-skeleton v-if="explainState[item.id]?.loading" :rows="2" animated />
-            <img
-              v-else-if="explainState[item.id]?.img"
-              :src="explainState[item.id]?.img"
-              class="basket-explain-img"
-              referrerpolicy="no-referrer"
-              alt="解析"
-              @error="(e: Event) => ((e.target as HTMLImageElement).style.display='none')"
-            />
-            <span v-else class="basket-explain-empty">暂无解析</span>
+            <template v-else>
+              <QuestionContent
+                v-if="explainState[item.id]?.img || explainState[item.id]?.text"
+                :text="explainState[item.id]?.text || null"
+                :img-url="explainState[item.id]?.img || null"
+                alt="解析"
+              />
+              <span v-else class="basket-explain-empty">暂无解析</span>
+            </template>
           </div>
         </div>
       </el-scrollbar>
@@ -293,32 +305,37 @@ async function openPreview(item: QuestionItem) {
     <div v-if="previewItem" class="basket-preview-body">
       <!-- 复用共享题卡：actions=[] 关掉草稿/收藏/试题栏/详情，纯展示题干大图 + meta -->
       <QuestionCard :question="previewItem" :actions="[]" />
-      <!-- 答案 / 解析图（懒加载补取）-->
+      <!-- 答案 / 解析（懒加载，富文本/图片统一走 QuestionContent）-->
       <div class="basket-preview-detail">
         <el-skeleton v-if="previewDetail.loading" :rows="3" animated />
         <template v-else>
-          <div v-if="previewDetail.answerImg" class="basket-preview-block">
+          <div
+            v-if="previewDetail.answerImg || previewDetail.answerText"
+            class="basket-preview-block"
+          >
             <span class="basket-preview-label">【答案】</span>
-            <img
-              :src="previewDetail.answerImg"
-              class="basket-preview-img"
-              referrerpolicy="no-referrer"
+            <QuestionContent
+              :text="previewDetail.answerText || null"
+              :img-url="previewDetail.answerImg || null"
               alt="答案"
-              @error="(e: Event) => ((e.target as HTMLImageElement).style.display='none')"
             />
           </div>
-          <div v-if="previewDetail.explainImg" class="basket-preview-block">
+          <div
+            v-if="previewDetail.explainImg || previewDetail.explainText"
+            class="basket-preview-block"
+          >
             <span class="basket-preview-label">【解析】</span>
-            <img
-              :src="previewDetail.explainImg"
-              class="basket-preview-img"
-              referrerpolicy="no-referrer"
+            <QuestionContent
+              :text="previewDetail.explainText || null"
+              :img-url="previewDetail.explainImg || null"
               alt="解析"
-              @error="(e: Event) => ((e.target as HTMLImageElement).style.display='none')"
             />
           </div>
-          <span v-if="!previewDetail.answerImg && !previewDetail.explainImg" class="basket-preview-empty">
-            暂无答案 / 解析图
+          <span
+            v-if="!previewDetail.answerImg && !previewDetail.answerText && !previewDetail.explainImg && !previewDetail.explainText"
+            class="basket-preview-empty"
+          >
+            暂无答案 / 解析
           </span>
         </template>
       </div>
