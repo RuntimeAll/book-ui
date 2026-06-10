@@ -26,6 +26,13 @@ const BOOK_SERVER_TARGET = 'http://localhost:8090'
 //    所以聊天调用独立封装（src/api/chat），不复用 /api 那套 misikt 拦截器。
 const AI_ORCHESTRATOR_TARGET = 'http://localhost:8092'
 
+// 🔴 PRD-C-009：举一反三 agent 跑在 agent-service-toolkit（LangGraph/FastAPI, :8080）—— 与
+//    ai-orchestrator(:8092) 是两个独立 Python 服务。前端调 /agent/variant/stream → vite proxy
+//    rewrite 掉 /agent → 转 http://localhost:8080/variant/stream（toolkit 原生 SSE 协议：
+//    data:{type:token|message|...} + data:[DONE]）。同源绕 CORS；toolkit 未设 AUTH_SECRET 故免鉴权。
+//    与 /ai(:8092)、/api(:8090) 三条调用链互不复用拦截器（src/api/variant 独立封装）。
+const AI_TOOLKIT_TARGET = 'http://localhost:8080'
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
@@ -52,11 +59,21 @@ export default defineConfig({
         secure: false,
         rewrite: (p) => p.replace(/^\/api/, ''),
       },
-      '/ai': {
+      // 🔴 用正则 `^/ai/`（带尾斜杠）而非裸 `/ai` 前缀 —— 否则 vite 前缀匹配会把 SPA 路由
+      //    /ai-assistant、/ai-variant 也吞进 proxy（/ai-variant → 转 :8092 → 404 detail:Not Found）。
+      //    `^/ai/` 只命中 /ai/chat 这类真接口，不误伤 /ai-* 页面路由（直连/刷新也不再 404）。
+      '^/ai/': {
         target: AI_ORCHESTRATOR_TARGET,
         changeOrigin: true,
         secure: false,
         rewrite: (p) => p.replace(/^\/ai/, ''),
+      },
+      // 🔴 PRD-C-009 举一反三 agent（toolkit :8080）。同样用 `^/agent/` 防误吞未来 /agent-* 路由。
+      '^/agent/': {
+        target: AI_TOOLKIT_TARGET,
+        changeOrigin: true,
+        secure: false,
+        rewrite: (p) => p.replace(/^\/agent/, ''),
       },
     },
   },
