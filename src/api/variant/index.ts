@@ -65,6 +65,75 @@ function pickStage(msg: ToolkitChatMessage): VariantStage | null {
   }
 }
 
+// ---------------------------------------------------------------------------
+// PRD-C-011 Bucket3 — artifact 快照帧（右栏卡片栅的唯一数据源，FE 不 parse markdown 拼卡片）。
+// BE 发射点 = assemble 收尾 + persist_to_bank 成功后（persisted 逐题置位）；
+// 帧落在 type=custom 消息的 custom_data.artifact 上，snapshot 全量语义（FE 整量替换）。
+// ---------------------------------------------------------------------------
+
+/** artifact 快照 — 单题（契约与 BE _artifact_payload 严格一致） */
+export interface VariantArtifactItem {
+  index: number
+  stem: string
+  answer: string
+  solution: string
+  qtype: string
+  difficulty: number
+  level: string
+  /** check.verify 或 check.review（证明类只有 review 键，如 proof_needs_human） */
+  verify: string | null
+  /** gene.gate（平行度闸） */
+  gene: string | null
+  persisted: boolean
+}
+
+/** artifact 快照 — 画布头 */
+export interface VariantArtifactHeader {
+  recipe: string | null
+  kp: string | null
+  grade: string | null
+}
+
+/** artifact 快照（整帧 = 当前题组全量） */
+export interface VariantArtifact {
+  items: VariantArtifactItem[]
+  header: VariantArtifactHeader
+}
+
+/** 从 custom 消息里安全抠出 artifact（镜像 pickStage 的宽松校验，结构不符返回 null） */
+function pickArtifact(msg: ToolkitChatMessage): VariantArtifact | null {
+  const raw = msg.custom_data?.artifact
+  if (!raw || typeof raw !== 'object') return null
+  const a = raw as { items?: unknown; header?: unknown }
+  if (!Array.isArray(a.items)) return null
+  const items: VariantArtifactItem[] = []
+  for (const it of a.items) {
+    if (!it || typeof it !== 'object') continue
+    const o = it as Record<string, unknown>
+    items.push({
+      index: typeof o.index === 'number' ? o.index : Number(o.index) || items.length + 1,
+      stem: typeof o.stem === 'string' ? o.stem : '',
+      answer: typeof o.answer === 'string' ? o.answer : '',
+      solution: typeof o.solution === 'string' ? o.solution : '',
+      qtype: typeof o.qtype === 'string' ? o.qtype : '',
+      difficulty: typeof o.difficulty === 'number' ? o.difficulty : Number(o.difficulty) || 0,
+      level: typeof o.level === 'string' && o.level ? o.level : 'normal',
+      verify: typeof o.verify === 'string' && o.verify ? o.verify : null,
+      gene: typeof o.gene === 'string' && o.gene ? o.gene : null,
+      persisted: o.persisted === true,
+    })
+  }
+  const h = (a.header && typeof a.header === 'object' ? a.header : {}) as Record<string, unknown>
+  return {
+    items,
+    header: {
+      recipe: typeof h.recipe === 'string' && h.recipe ? h.recipe : null,
+      kp: typeof h.kp === 'string' && h.kp ? h.kp : null,
+      grade: typeof h.grade === 'string' && h.grade ? h.grade : null,
+    },
+  }
+}
+
 /** 逐字 token */
 export interface VariantTokenEvent {
   type: 'token'
@@ -91,6 +160,8 @@ export interface VariantStreamHandlers {
   onMessage: (msg: ToolkitChatMessage) => void
   /** stage 事件（type=custom 且 custom_data.stage）→ 思路条。不传则 stage 帧静默丢弃，旧行为不变 */
   onStage?: (stage: VariantStage) => void
+  /** artifact 快照帧（type=custom 且 custom_data.artifact）→ 右栏卡片栅。不传则静默丢弃，向后兼容 */
+  onArtifact?: (artifact: VariantArtifact) => void
   /** 服务端 error 帧 */
   onServerError?: (msg: string) => void
   /** 连接异常 / 非 SSE 响应 / 不可达。fatal 后流终止 */
@@ -182,7 +253,13 @@ export function streamVariant(
               handlers.onStage?.(stage)
               break // stage 帧只进思路条，不进消息气泡
             }
-            // 无 stage 的 custom：落回旧逻辑（content 非空才透传），向后兼容
+            // PRD-C-011：artifact 快照帧 → 右栏卡片栅（snapshot 全量替换），不进消息气泡
+            const artifact = pickArtifact(msg)
+            if (artifact) {
+              handlers.onArtifact?.(artifact)
+              break
+            }
+            // 无 stage / artifact 的 custom：落回旧逻辑（content 非空才透传），向后兼容
           }
           // 只渲染 AI 产出的块；human（agent 回放输入）/ 空内容忽略
           if (msg.type !== 'human' && String(msg.content || '').trim()) {

@@ -1,63 +1,83 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useUserStore } from '@/store/user'
 import { streamVariant, uploadMotherImage } from '@/api/variant'
-import type { ToolkitChatMessage, VariantStage, VariantStreamHandle } from '@/api/variant'
+import type {
+  ToolkitChatMessage,
+  VariantArtifact,
+  VariantStage,
+  VariantStreamHandle,
+} from '@/api/variant'
 import MarkdownMath from '@/components/MarkdownMath.vue'
 import AiStageRail from '@/components/AiStageRail.vue'
+import ArtifactPanel from './ArtifactPanel.vue'
 
 // 登录老师身份：入库 owner 走透传 token（agent_config.ruoyi_token），落老师本人个人题库。
 const userStore = useUserStore()
 
 // ---------------------------------------------------------------------------
-// PRD-C-009 — 图片举一反三 agent 入口（接 toolkit :8080 variant agent，走 /agent proxy）。
+// PRD-C-009/C-011 — 图片举一反三 agent（toolkit :8080 variant agent，/agent proxy）。
 //
-// 老师拍一张题目图 → 传 OSS 拿公网 URL → 贴进来 → agent 分析(年级/学科/考点) → 出代表性变式
-// （默认 3 = 2 普通 + 1 难）→ 每道带解析 + ✓/⚠ 质量信号 → 老师说「可以了」入个人题库。
+// PRD-C-011 Bucket3 双栏形态（DESIGN.md §14）：
+//   左栏 = 「AI 命题搭子」聊天面板（气泡 markdown+LaTeX 叙述保留 + 思路条 + 输入）。
+//   右栏 = 「变式题组 · N 道」卡片栅，数据源 = BE artifact 快照帧（铁律 2：FE 不
+//          parse markdown 拼卡片），snapshot 全量整量替换。
+//   🔴 统一指令通道（铁律 1）：卡片快捷键（换数字/换场景/答疑）与「全部入库」全部 =
+//      utterance 预设句，走【现有 chat SSE 通道】（同 thread_id），零新增结构化端点。
 //
-// 形态 = 有状态对话：agent 端着「当前题组」，老师每句话 = 一条编辑指令（删/改/补/换难度/答疑）。
-// 多轮记忆靠 thread_id（同会话复用，刷新或「新母题」换新 thread）。
+// 思路条位置（用户反馈①）：消息流改为联合类型（气泡 | rail 锚点）。send 时 push 用户
+// 气泡后立即 push 本轮 rail 锚点，onStage 只更新当前轮锚点 → 思路条钉在本轮头部
+//（用户问下方、本轮 AI 产出上方），历史轮 rail 留存，不再永远沉底。
 //
-// 渲染策略：agent 全部用 AIMessage 文本块沟通（DNA 外显 / 题组带 ✓⚠ / 反问 / 入库回执都在
-// message.content 文本里），逐块成气泡渲染；LLM 逐字 token 期只显「思考中」动效，不外放原始
-// token（含 reasoning/JSON，噪声大），结果以 agent 自己 curate 的文本块为准。
+// 母题图入口（用户反馈②）：剪贴板 Ctrl+V 粘贴截图即传（页面级 paste 监听，复用
+// uploadMotherImage + 同口径类型/10MB 校验）；「上传图片」按钮已删；URL 输入框保留。
+//
+// 渲染策略：agent 人话叙述仍走 AIMessage 文本块成左栏气泡（铁律 5 保留）；LLM 逐字
+// token 期只显「思考中」动效，不外放原始 token（思考型模型 reasoning 不外放，有意为之）。
 // ---------------------------------------------------------------------------
 
 interface Bubble {
+  type: 'bubble'
   role: 'user' | 'ai'
   kind?: 'normal' | 'error'
   text: string
 }
 
-const messages = ref<Bubble[]>([])
+/** 本轮思路条锚点（钉在该轮用户气泡之后、AI 产出之前；历史轮留存） */
+interface RailItem {
+  type: 'rail'
+  stages: VariantStage[]
+}
+
+type StreamItem = Bubble | RailItem
+
+const stream = ref<StreamItem[]>([])
 const input = ref('')
 const imageUrl = ref('') // 顶部待发送的 OSS 图 URL（首轮随消息带出，发后清空）
 const motherImg = ref('') // 已发出的母题图，顶部缩略图常驻
 const sending = ref(false)
 const thinking = ref(false) // LLM token 流期的「思考中」动效
-// PRD-C-010 思维外放：当前轮思路条（stage 事件驱动，同 key 原地更新、新 key 追加保插入序）。
-// 收到第一条 stage 后由思路条接管在场感；静态「AI 正在分析…」占位只作 stage 到来前的兜底。
-const stages = ref<VariantStage[]>([])
+// 当前轮 rail 锚点（onStage 只更新它；新一轮 send 换新锚点，旧轮 rail 冻结留存）
+const currentRail = ref<RailItem | null>(null)
+// PRD-C-011：右栏卡片栅数据源 = artifact 快照帧（snapshot 全量，整量替换）
+const artifact = ref<VariantArtifact | null>(null)
 const streamRef = ref<HTMLElement | null>(null)
 
-// 母题图本地上传（BE /teacher/variant/upload-image → 公读 OSS URL + biz_variant_upload 留痕）
+const currentRailEmpty = computed(
+  () => !currentRail.value || currentRail.value.stages.length === 0
+)
+
+// ---------------------------------------------------------------------------
+// 母题图：剪贴板粘贴上传（BE /teacher/variant/upload-image → 公读 OSS URL）
+// ---------------------------------------------------------------------------
 const uploading = ref(false)
-const fileInputRef = ref<HTMLInputElement | null>(null)
 
 const UPLOAD_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
 const UPLOAD_MAX_BYTES = 10 * 1024 * 1024
 
-function pickFile() {
-  fileInputRef.value?.click()
-}
-
-async function onFileChange(e: Event) {
-  const inputEl = e.target as HTMLInputElement
-  const file = inputEl.files?.[0]
-  inputEl.value = '' // 允许同一文件再次选择
-  if (!file) return
-  // 客户端先挡一道（BE 同口径再硬校验）
+async function uploadPastedImage(file: File) {
+  // 客户端先挡一道（BE 同口径再硬校验）；截图粘贴通常是 image/png
   if (!UPLOAD_TYPES.includes(file.type)) {
     ElMessage.error('仅支持 jpg / png / webp / gif 图片')
     return
@@ -66,11 +86,12 @@ async function onFileChange(e: Event) {
     ElMessage.error('图片不能超过 10MB')
     return
   }
+  if (uploading.value) return
   uploading.value = true
   try {
     const { url } = await uploadMotherImage(file)
     imageUrl.value = url
-    ElMessage.success('已上传，图链已填入，回车即可出题')
+    ElMessage.success('截图已上传，图链已填入，回车即可出题')
   } catch {
     // 失败 toast 由 http 拦截器统一弹，这里只收 loading
   } finally {
@@ -78,9 +99,35 @@ async function onFileChange(e: Event) {
   }
 }
 
+/** 页面级 paste 监听：输入框 / 页面任意处 Ctrl+V 截图均可触发 */
+function onPaste(e: ClipboardEvent) {
+  if (sending.value) return
+  const items = e.clipboardData?.items
+  if (!items) return
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i]
+    if (it.kind === 'file' && it.type.startsWith('image/')) {
+      const file = it.getAsFile()
+      if (file) {
+        e.preventDefault()
+        void uploadPastedImage(file)
+      }
+      return
+    }
+  }
+}
+
+onMounted(() => document.addEventListener('paste', onPaste))
+
+// ---------------------------------------------------------------------------
+// 会话 / 发送
+// ---------------------------------------------------------------------------
+
 // 会话级 thread_id：同会话所有 send 复用 → agent 记住当前题组。新母题 / 刷新换新。
 let threadId = crypto.randomUUID()
 let handle: VariantStreamHandle | null = null
+// 「换一批」= 重发初始出题 utterance（PRD 开放问题方案 b：不动 agent 路由）
+let firstComposeMessage: string | null = null
 
 async function scrollToBottom() {
   await nextTick()
@@ -89,46 +136,35 @@ async function scrollToBottom() {
 }
 
 /**
- * 思路条终态收口：流中途出错/异常断流时，把还在 running 的条目就地改成 warn（标「已中断」），
- * 避免紫色呼吸动画与旁边的错误气泡互相矛盾地永久挂着。正常完成时 BE 已把每个 stage 收成
- * done/warn，此处天然 no-op；幂等，可在 onServerError/onError/onClose 重复调用。
+ * 思路条终态收口：流中途出错/异常断流时，把【当前轮】还在 running 的条目就地改成 warn
+ *（标「已中断」）。历史轮 rail 已冻结不受影响；幂等，可重复调用。
  */
 function settleStages() {
-  stages.value = stages.value.map((s) =>
+  const rail = currentRail.value
+  if (!rail) return
+  rail.stages = rail.stages.map((s) =>
     s.status === 'running'
       ? { ...s, status: 'warn' as const, detail: s.detail ? `${s.detail}·已中断` : '已中断' }
       : s
   )
 }
 
-function send() {
-  const text = input.value.trim()
-  const url = imageUrl.value.trim()
-  // 首轮必须有图；后续轮纯指令即可（text 非空）
-  if (!url && !text) return
+/**
+ * 🔴 统一发送管道：输入框手打 / 卡片快捷键 / 全部入库 / 换一批最终都走这里
+ *（同 thread_id 同 chat SSE 通道，agent 既有受约束分类器路由）。
+ */
+function dispatch(message: string, shownText?: string) {
   if (sending.value) return
-
   handle?.abort()
 
-  // 组消息：首轮把 OSS URL 拼进文本（agent 端从 human 文本抠 URL）
-  const parts: string[] = []
-  if (url) parts.push(url)
-  if (text) parts.push(text)
-  const message = parts.join('\n')
+  stream.value.push({ type: 'bubble', role: 'user', text: shownText ?? message })
+  // 本轮思路条锚点：紧跟用户气泡 push，后续 AI 气泡追加在它下方 → rail 钉在本轮头部
+  const rail = reactive<RailItem>({ type: 'rail', stages: [] })
+  stream.value.push(rail)
+  currentRail.value = rail
 
-  // 顶部缩略图常驻；输入框 URL 发后清空，避免后续编辑轮重复触发分析
-  if (url) {
-    motherImg.value = url
-    imageUrl.value = ''
-  }
-
-  // 展示用户气泡（带图首轮显示「[母题图] + 文字」）
-  const shown = url ? (text ? `🖼 母题图\n${text}` : '🖼 母题图（开始举一反三）') : text
-  messages.value.push({ role: 'user', text: shown })
-  input.value = ''
   sending.value = true
   thinking.value = true
-  stages.value = [] // 新一轮：收起上一轮思路条（取简=清空），等本轮 stage 事件重建
   scrollToBottom()
 
   handle = streamVariant(
@@ -139,15 +175,24 @@ function send() {
         if (!thinking.value) thinking.value = true
       },
       onStage: (stage: VariantStage) => {
-        // 思路条：同 key 原地更新 status/detail，新 key 追加（数组保 BE 发出的阶段顺序）
-        const idx = stages.value.findIndex((s) => s.key === stage.key)
-        if (idx >= 0) stages.value[idx] = stage
-        else stages.value.push(stage)
+        // 思路条：同 key 原地更新 status/detail，新 key 追加（保 BE 发出的阶段顺序）
+        const idx = rail.stages.findIndex((s) => s.key === stage.key)
+        if (idx >= 0) rail.stages[idx] = stage
+        else rail.stages.push(stage)
         scrollToBottom()
+      },
+      onArtifact: (a: VariantArtifact) => {
+        // 快照全量语义：整帧替换（assemble 每轮收尾 + persist 成功后各发一帧）
+        artifact.value = a
       },
       onMessage: (msg: ToolkitChatMessage) => {
         thinking.value = false
-        messages.value.push({ role: 'ai', kind: 'normal', text: String(msg.content || '') })
+        stream.value.push({
+          type: 'bubble',
+          role: 'ai',
+          kind: 'normal',
+          text: String(msg.content || ''),
+        })
         scrollToBottom()
         // 下一节点若继续跑会再来 token → 重新进思考态
         thinking.value = true
@@ -155,7 +200,7 @@ function send() {
       onServerError: (m) => {
         thinking.value = false
         settleStages() // 思路条与错误气泡一致收口（running → warn·已中断）
-        messages.value.push({ role: 'ai', kind: 'error', text: m })
+        stream.value.push({ type: 'bubble', role: 'ai', kind: 'error', text: m })
         scrollToBottom()
       },
       onError: (err) => {
@@ -163,7 +208,8 @@ function send() {
         thinking.value = false
         sending.value = false
         settleStages()
-        messages.value.push({
+        stream.value.push({
+          type: 'bubble',
           role: 'ai',
           kind: 'error',
           text: '网络或 AI 服务异常，未能完成本次请求。请确认举一反三服务（toolkit :8080）已启动后重试。',
@@ -180,35 +226,81 @@ function send() {
   )
 }
 
-/** 新母题：换新 thread + 清空对话（当前题组丢弃） */
+/** 输入框发送（首轮把 OSS URL 拼进文本，agent 端从 human 文本抠 URL） */
+function send() {
+  const text = input.value.trim()
+  const url = imageUrl.value.trim()
+  // 首轮必须有图；后续轮纯指令即可（text 非空）
+  if (!url && !text) return
+  if (sending.value) return
+
+  const parts: string[] = []
+  if (url) parts.push(url)
+  if (text) parts.push(text)
+  const message = parts.join('\n')
+
+  // 顶部缩略图常驻；输入框 URL 发后清空，避免后续编辑轮重复触发分析
+  if (url) {
+    motherImg.value = url
+    imageUrl.value = ''
+    firstComposeMessage = message // 「换一批」重发这条初始出题 utterance
+  }
+
+  const shown = url ? (text ? `🖼 母题图\n${text}` : '🖼 母题图（开始举一反三）') : text
+  input.value = ''
+  dispatch(message, shown)
+}
+
+/** 卡片快捷键 / 全部入库：预设句走同一通道，用户气泡照常显示该句（铁律 1） */
+function sendUtterance(text: string) {
+  if (sending.value) return
+  dispatch(text)
+}
+
+/** 换一批：重发初始出题 utterance（整组重新出，agent 重新分析母题） */
+function regenerate() {
+  if (sending.value || !firstComposeMessage) return
+  // PRD-C-011 line 102 方案 b =「清空当前卡 + 重发初始出题 utterance」：先清画布，
+  // 骨架卡接管重出期（约数十秒），避免老师把滞留的旧卡当成结果抄题
+  artifact.value = null
+  dispatch(firstComposeMessage, '🔁 换一批（按原母题重新出一组）')
+}
+
+/** 新母题：换新 thread + 清空对话 / 各轮思路条 / 右栏题组 */
 function resetSession() {
   handle?.abort()
   threadId = crypto.randomUUID()
-  messages.value = []
-  stages.value = []
+  stream.value = []
+  currentRail.value = null
+  artifact.value = null
   motherImg.value = ''
   imageUrl.value = ''
   input.value = ''
   sending.value = false
   thinking.value = false
+  firstComposeMessage = null
 }
 
-onBeforeUnmount(() => handle?.abort())
+onBeforeUnmount(() => {
+  handle?.abort()
+  document.removeEventListener('paste', onPaste)
+})
 </script>
 
 <template>
   <div class="variant-page">
-    <section class="variant-chat">
+    <!-- 左栏：AI 命题搭子（对话 + 思路条 + 输入） -->
+    <section class="variant-chat" data-testid="variant-chat-panel">
       <header class="chat-head">
-        <span class="dot" />
-        <span class="chat-title">举一反三 · 图片变式</span>
-        <span class="chat-sub">拍题 → 贴 OSS 图链 → 自动出代表性变式（默认 2 普通 + 1 难）</span>
+        <span class="head-spark">✦</span>
+        <span class="chat-title">AI 命题搭子</span>
+        <span class="chat-sub">举一反三 · 图片变式</span>
         <el-button text size="small" class="reset-btn" :disabled="sending" @click="resetSession">
           新母题
         </el-button>
       </header>
 
-      <!-- 顶部：母题图入口 + 外显默认 -->
+      <!-- 顶部：母题图入口（Ctrl+V 粘贴截图 / 贴 URL） -->
       <div class="mother-bar">
         <div v-if="motherImg" class="mother-thumb">
           <img :src="motherImg" alt="母题图" referrerpolicy="no-referrer" />
@@ -218,62 +310,56 @@ onBeforeUnmount(() => handle?.abort())
           <el-input
             v-model="imageUrl"
             size="default"
-            placeholder="上传本地题图，或粘贴 OSS / 公网图片地址（http…），首轮必填"
+            placeholder="可直接 Ctrl+V 粘贴截图，或贴 OSS / 公网图片地址（http…），首轮必填"
             :disabled="sending || uploading"
             clearable
           >
             <template #prepend>🖼 母题图</template>
-            <template #append>
-              <el-button :loading="uploading" :disabled="sending" @click="pickFile">
-                {{ uploading ? '上传中…' : '上传图片' }}
-              </el-button>
-            </template>
           </el-input>
-          <input
-            ref="fileInputRef"
-            type="file"
-            accept="image/jpeg,image/png,image/webp,image/gif"
-            style="display: none"
-            @change="onFileChange"
-          />
+          <p v-if="uploading" class="uploading-hint">截图上传中…</p>
           <p class="default-hint">
-            默认配方：守考点 + 年级 + 难度，换数字 / 情境，出 3 道（2 普通 1 难）；
-            也可以首轮直接说要求（如「出5个，难度递增，2选择2填空1应用」）。
-            后续可说「换场景」「转题型」「难一点」「补2道同第3」「为什么第2题选B」，最后说「可以了」入库。
+            默认配方：守考点 + 年级 + 难度，换数字 / 情境，出 3 道（2 普通 1 难）。
+            出题后可直接点右侧卡片上的「换数字 / 换场景 / 答疑」，或在这里说
+            「删第2」「难一点」「补2道同第3」，最后说「可以了」入库。
           </p>
         </div>
       </div>
 
       <div ref="streamRef" class="chat-stream">
-        <div v-if="messages.length === 0" class="chat-empty">
+        <div v-if="stream.length === 0" class="chat-empty">
           <div class="empty-emoji">🧮</div>
           <p class="empty-title">贴一张题目图，开始举一反三</p>
           <p class="empty-tip">
-            AI 会先分析这道母题的年级 / 考点 / 题型，再出 3 道考点一致、只换数字情境的变式题，
-            每道附解析与质量信号。你随时可以删 / 改 / 补 / 调难度 / 答疑。
+            AI 会先分析这道母题的年级 / 考点 / 题型，再出 3 道考点一致、只换数字情境的变式题。
+            题组会以卡片形式出现在右侧画布，左侧保留 AI 的分析与解释。
           </p>
         </div>
 
-        <div
-          v-for="(m, i) in messages"
-          :key="i"
-          class="msg-row"
-          :class="m.role === 'user' ? 'is-user' : 'is-ai'"
-        >
-          <div class="bubble" :class="m.role === 'ai' ? `ai-${m.kind}` : ''">
-            <!-- AI 气泡走富文本（markdown + LaTeX）；用户气泡纯文本 -->
-            <MarkdownMath v-if="m.role === 'ai' && m.kind !== 'error'" :content="m.text" />
-            <span v-else class="bubble-text">{{ m.text }}</span>
+        <template v-for="(item, i) in stream" :key="i">
+          <!-- 气泡（用户 / AI 叙述 / 错误） -->
+          <div
+            v-if="item.type === 'bubble'"
+            class="msg-row"
+            :class="item.role === 'user' ? 'is-user' : 'is-ai'"
+          >
+            <div class="bubble" :class="item.role === 'ai' ? `ai-${item.kind}` : ''">
+              <!-- AI 气泡走富文本（markdown + LaTeX）；用户气泡纯文本 -->
+              <MarkdownMath
+                v-if="item.role === 'ai' && item.kind !== 'error'"
+                :content="item.text"
+              />
+              <span v-else class="bubble-text">{{ item.text }}</span>
+            </div>
           </div>
-        </div>
 
-        <!-- 思路条（stage 事件驱动，跟随当前轮；DESIGN §6.1） -->
-        <div v-if="stages.length > 0" class="msg-row is-ai">
-          <AiStageRail class="stage-rail-wrap" :stages="stages" />
-        </div>
+          <!-- 本轮思路条锚点（钉在该轮用户气泡之后、AI 产出之前；历史轮留存） -->
+          <div v-else-if="item.stages.length > 0" class="msg-row is-ai">
+            <AiStageRail class="stage-rail-wrap" :stages="item.stages" />
+          </div>
+        </template>
 
-        <!-- 思考中动效（token 流期）：仅作首条 stage 到来前的兜底，之后由思路条接管 -->
-        <div v-if="thinking && stages.length === 0" class="msg-row is-ai">
+        <!-- 思考中动效（token 流期）：仅作本轮首条 stage 到来前的兜底 -->
+        <div v-if="thinking && currentRailEmpty" class="msg-row is-ai">
           <div class="bubble ai-normal thinking">
             <span class="dot-pulse" /><span class="dot-pulse" /><span class="dot-pulse" />
             <span class="thinking-text">AI 正在分析 / 出题…（出 3 道含解析，稍候）</span>
@@ -302,29 +388,64 @@ onBeforeUnmount(() => handle?.abort())
         </el-button>
       </footer>
     </section>
+
+    <!-- 右栏：变式题组画布（artifact 快照帧驱动；动作全部冒泡回左栏 chat 通道） -->
+    <ArtifactPanel
+      class="variant-artifact"
+      :artifact="artifact"
+      :sending="sending"
+      :can-regenerate="!!firstComposeMessage || !!motherImg"
+      @utterance="sendUtterance"
+      @regenerate="regenerate"
+    />
   </div>
 </template>
 
 <style scoped>
+/* DESIGN token：bg-50 #F5F8F8 / card #FFF / border #E3E9E9 / ink-900 #1D2A2E
+   violet-600 #7B6CF0（AI 在场）/ teal-600 #1E8A8A（老师拍板） */
 .variant-page {
   display: flex;
+  gap: 12px;
   height: 100%;
   min-height: 600px;
-  background: #f0f2f5;
+  background: #f5f8f8; /* bg-50 */
   padding: 12px;
   box-sizing: border-box;
 }
 
+/* 左栏 ~420px（min 360 不塌），右栏自适应（min-width:0 防内容撑破） */
 .variant-chat {
-  flex: 1;
-  max-width: 880px;
-  margin: 0 auto;
+  flex: 0 1 420px;
+  min-width: 360px;
   display: flex;
   flex-direction: column;
   background: #fff;
+  border: 1px solid #e3e9e9;
   border-radius: 12px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
   overflow: hidden;
+}
+.variant-artifact {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid #e3e9e9;
+}
+
+/* 小屏（<1024px）上下堆叠，各自内部滚动 */
+@media (max-width: 1024px) {
+  .variant-page {
+    flex-direction: column;
+    height: auto;
+  }
+  .variant-chat {
+    flex: none;
+    min-width: 0;
+    height: 70vh;
+  }
+  .variant-artifact {
+    flex: none;
+    height: 60vh;
+  }
 }
 
 .chat-head {
@@ -332,19 +453,17 @@ onBeforeUnmount(() => handle?.abort())
   align-items: center;
   gap: 8px;
   padding: 14px 18px;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid #e3e9e9;
   flex-shrink: 0;
 }
-.dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #22c55e;
+.head-spark {
+  color: #7b6cf0; /* violet-600：AI 在场 */
+  font-size: 15px;
 }
 .chat-title {
   font-size: 15px;
   font-weight: 700;
-  color: #1d2129;
+  color: #1d2a2e; /* ink-900 */
 }
 .chat-sub {
   font-size: 12px;
@@ -388,6 +507,12 @@ onBeforeUnmount(() => handle?.abort())
 }
 .mother-input {
   flex: 1;
+  min-width: 0;
+}
+.uploading-hint {
+  margin: 6px 2px 0;
+  font-size: 12px;
+  color: #7b6cf0;
 }
 .default-hint {
   margin: 8px 2px 0;
@@ -463,7 +588,7 @@ onBeforeUnmount(() => handle?.abort())
 /* 思路条在消息流里的占宽（视觉本体在 AiStageRail 组件内） */
 .stage-rail-wrap {
   max-width: 86%;
-  min-width: 320px;
+  min-width: 300px;
 }
 
 /* 思考中动效 */
@@ -476,7 +601,7 @@ onBeforeUnmount(() => handle?.abort())
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #4080ff;
+  background: #7b6cf0; /* violet-600：AI 在场 */
   animation: dot-pulse 1.2s infinite ease-in-out;
 }
 .dot-pulse:nth-child(2) {
@@ -506,7 +631,7 @@ onBeforeUnmount(() => handle?.abort())
 .chat-input {
   flex-shrink: 0;
   padding: 12px 14px;
-  border-top: 1px solid #f0f0f0;
+  border-top: 1px solid #e3e9e9;
   display: flex;
   gap: 10px;
   align-items: flex-end;
