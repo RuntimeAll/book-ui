@@ -18,7 +18,17 @@ const props = defineProps<{ content: string }>()
 const md = new MarkdownIt({ breaks: true, linkify: true, html: false })
 md.use(katexPlugin, { throwOnError: false, errorColor: '#cf1322' })
 
-const rendered = computed(() => md.render(props.content || ''))
+// LLM 产出脏格式归一化（兜底已入库的历史数据；新产出 BE 解析边界已净化）：
+//   \( x \) / \[ x \] → $x$ / $$x$$（markdown-it 会把 \( 的反斜杠当转义吃掉，katex 插件只认 $）
+//   字面 \n（反斜杠+n 两个字符，非换行）→ 真换行；后跟小写字母的不动（\neq \nabla 等 LaTeX 命令）
+function normalizeMath(src: string): string {
+  return src
+    .replace(/\\\[\s*([\s\S]+?)\s*\\\]/g, (_, expr: string) => `$$${expr}$$`)
+    .replace(/\\\(\s*([\s\S]+?)\s*\\\)/g, (_, expr: string) => `$${expr}$`)
+    .replace(/\\n(?![a-z])/g, '\n')
+}
+
+const rendered = computed(() => md.render(normalizeMath(props.content || '')))
 </script>
 
 <template>

@@ -8,10 +8,10 @@ import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 
 // ---------------------------------------------------------------------------
 // V1 卡（题库去原网站化）：proxy 全本地，删 misikt fallback + cookie 注入。
-// 所有 /api/* → http://localhost:8080（book-server），axios baseURL='/api'
+// 所有 /api/* → http://localhost:8090（C 线 book-server），axios baseURL='/api'
 //   → 客户端 path 形如 '/teacher/qd/note/123'
 //   → vite proxy 收到 '/api/teacher/qd/note/123'
-//   → rewrite 掉 /api → 转发 'http://localhost:8080/teacher/qd/note/123'
+//   → rewrite 掉 /api → 转发 'http://localhost:8090/teacher/qd/note/123'
 //
 // 18+ 端点（详见 PRD §3.1）全走本地 — 无白名单/fallback 分支。
 // ---------------------------------------------------------------------------
@@ -26,12 +26,12 @@ const BOOK_SERVER_TARGET = 'http://localhost:8090'
 //    所以聊天调用独立封装（src/api/chat），不复用 /api 那套 misikt 拦截器。
 const AI_ORCHESTRATOR_TARGET = 'http://localhost:8092'
 
-// 🔴 PRD-C-009：举一反三 agent 跑在 agent-service-toolkit（LangGraph/FastAPI, :8080）—— 与
+// 🔴 PRD-C-009：举一反三 agent 跑在 agent-service-toolkit（LangGraph/FastAPI, :8093）—— 与
 //    ai-orchestrator(:8092) 是两个独立 Python 服务。前端调 /agent/variant/stream → vite proxy
-//    rewrite 掉 /agent → 转 http://localhost:8080/variant/stream（toolkit 原生 SSE 协议：
+//    rewrite 掉 /agent → 转 http://localhost:8093/variant/stream（toolkit 原生 SSE 协议：
 //    data:{type:token|message|...} + data:[DONE]）。同源绕 CORS；toolkit 未设 AUTH_SECRET 故免鉴权。
 //    与 /ai(:8092)、/api(:8090) 三条调用链互不复用拦截器（src/api/variant 独立封装）。
-const AI_TOOLKIT_TARGET = 'http://localhost:8080'
+const AI_TOOLKIT_TARGET = 'http://localhost:8093'
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -68,7 +68,7 @@ export default defineConfig({
         secure: false,
         rewrite: (p) => p.replace(/^\/ai/, ''),
       },
-      // 🔴 PRD-C-009 举一反三 agent（toolkit :8080）。同样用 `^/agent/` 防误吞未来 /agent-* 路由。
+      // 🔴 PRD-C-009 举一反三 agent（toolkit :8093）。同样用 `^/agent/` 防误吞未来 /agent-* 路由。
       '^/agent/': {
         target: AI_TOOLKIT_TARGET,
         changeOrigin: true,

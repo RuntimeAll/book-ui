@@ -2,7 +2,12 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useUserStore } from '@/store/user'
-import { streamVariant, uploadMotherImage } from '@/api/variant'
+import {
+  fetchVariantArtifact,
+  fetchVariantHistory,
+  streamVariant,
+  uploadMotherImage,
+} from '@/api/variant'
 import type {
   ToolkitChatMessage,
   VariantArtifact,
@@ -17,7 +22,7 @@ import ArtifactPanel from './ArtifactPanel.vue'
 const userStore = useUserStore()
 
 // ---------------------------------------------------------------------------
-// PRD-C-009/C-011 — 图片举一反三 agent（toolkit :8080 variant agent，/agent proxy）。
+// PRD-C-009/C-011 — 图片举一反三 agent（toolkit :8093 variant agent，/agent proxy）。
 //
 // PRD-C-011 Bucket3 双栏形态（DESIGN.md §14）：
 //   左栏 = 「AI 命题搭子」聊天面板（气泡 markdown+LaTeX 叙述保留 + 思路条 + 输入）。
@@ -120,14 +125,88 @@ function onPaste(e: ClipboardEvent) {
 onMounted(() => document.addEventListener('paste', onPaste))
 
 // ---------------------------------------------------------------------------
+// 会话注册表（用户反馈③④ 2026-06-11）：BE checkpointer（sqlite）一直按 thread_id
+// 持久着全部对话 —— 缺的只是 FE 这边「记住 thread_id + 取回」。注册表落 localStorage
+//（id/标题/时间/母题图），刷新恢复上次会话；历史会话可切换/删除（删的只是本地索引，
+// BE checkpoint 不动）。气泡回放走 /history，右栏卡片重建走 /variant/artifact。
+// ---------------------------------------------------------------------------
+
+interface SessionMeta {
+  id: string
+  title: string
+  at: number // 最近活跃时间戳
+  img?: string // 母题图（列表缩略 + 恢复时回填顶部）
+}
+
+const SESSIONS_KEY = 'variant.sessions.v1'
+const ACTIVE_KEY = 'variant.active.v1'
+const SESSIONS_MAX = 50
+
+function loadSessions(): SessionMeta[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(SESSIONS_KEY) || '[]') as unknown
+    if (!Array.isArray(raw)) return []
+    return raw.filter(
+      (s): s is SessionMeta =>
+        !!s && typeof (s as SessionMeta).id === 'string' && typeof (s as SessionMeta).title === 'string'
+    )
+  } catch {
+    return []
+  }
+}
+
+const sessions = ref<SessionMeta[]>(loadSessions())
+const restoring = ref(false)
+
+function saveSessions() {
+  try {
+    localStorage.setItem(SESSIONS_KEY, JSON.stringify(sessions.value.slice(0, SESSIONS_MAX)))
+  } catch {
+    /* 配额满等异常不影响主流程 */
+  }
+}
+
+/** 本会话首条消息时登记 / 后续消息只刷活跃时间，并置顶 */
+function touchSession(firstShownText?: string) {
+  const idx = sessions.value.findIndex((s) => s.id === threadId.value)
+  if (idx >= 0) {
+    const s = sessions.value[idx]
+    s.at = Date.now()
+    if (motherImg.value && !s.img) s.img = motherImg.value
+    sessions.value.splice(idx, 1)
+    sessions.value.unshift(s)
+  } else {
+    const title =
+      (firstShownText || '')
+        .replace(/https?:\/\/[^\s)>'"]+/g, '')
+        .replace(/🖼|🔁/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 24) || '图片举一反三'
+    sessions.value.unshift({ id: threadId.value, title, at: Date.now(), img: motherImg.value || undefined })
+  }
+  saveSessions()
+  try {
+    localStorage.setItem(ACTIVE_KEY, threadId.value)
+  } catch {
+    /* 同上 */
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 会话 / 发送
 // ---------------------------------------------------------------------------
 
-// 会话级 thread_id：同会话所有 send 复用 → agent 记住当前题组。新母题 / 刷新换新。
-let threadId = crypto.randomUUID()
+// 会话级 thread_id：同会话所有 send 复用 → agent 记住当前题组。
+// 刷新不再换新 —— onMounted 恢复上次活跃会话（用户反馈③）。ref 是为了
+// 会话列表里 is-active 高亮能跟着切换走（模板里要响应式）。
+const threadId = ref<string>(crypto.randomUUID())
 let handle: VariantStreamHandle | null = null
 // 「换一批」= 重发初始出题 utterance（PRD 开放问题方案 b：不动 agent 路由）
 let firstComposeMessage: string | null = null
+// 打字机气泡（用户反馈① 思维外放）：BE 只对人话型 LLM 输出（答疑等）放行 token
+//（JSON 中间产物打 skip_stream 在服务端就被滤掉），所以这里收到的 token 可直接外放。
+let typingBubble: Bubble | null = null
 
 async function scrollToBottom() {
   await nextTick()
@@ -162,17 +241,26 @@ function dispatch(message: string, shownText?: string) {
   const rail = reactive<RailItem>({ type: 'rail', stages: [] })
   stream.value.push(rail)
   currentRail.value = rail
+  touchSession(shownText ?? message) // 会话注册表：首条登记 / 后续刷活跃置顶
 
   sending.value = true
   thinking.value = true
+  typingBubble = null
   scrollToBottom()
 
   handle = streamVariant(
-    { message, thread_id: threadId, ruoyiToken: userStore.accessToken },
+    { message, thread_id: threadId.value, ruoyiToken: userStore.accessToken },
     {
-      onToken: () => {
-        // 只作「活着/思考中」信号，不外放原始 token（思考型模型 reasoning 不外放，有意为之）
-        if (!thinking.value) thinking.value = true
+      onToken: (delta) => {
+        // 思维外放（用户反馈①）：BE 已在服务端滤掉 JSON 中间产物的 token
+        //（skip_stream），到这里的都是人话（答疑/解释），打字机逐字渲染。
+        thinking.value = false
+        if (!typingBubble) {
+          typingBubble = reactive<Bubble>({ type: 'bubble', role: 'ai', kind: 'normal', text: '' })
+          stream.value.push(typingBubble)
+        }
+        typingBubble.text += delta
+        scrollToBottom()
       },
       onStage: (stage: VariantStage) => {
         // 思路条：同 key 原地更新 status/detail，新 key 追加（保 BE 发出的阶段顺序）
@@ -187,6 +275,12 @@ function dispatch(message: string, shownText?: string) {
       },
       onMessage: (msg: ToolkitChatMessage) => {
         thinking.value = false
+        // 整块消息是该 LLM 输出的终稿 → 替换打字机半成品气泡（避免同文重复两个气泡）
+        if (typingBubble) {
+          const i = stream.value.indexOf(typingBubble)
+          if (i >= 0) stream.value.splice(i, 1)
+          typingBubble = null
+        }
         stream.value.push({
           type: 'bubble',
           role: 'ai',
@@ -212,13 +306,14 @@ function dispatch(message: string, shownText?: string) {
           type: 'bubble',
           role: 'ai',
           kind: 'error',
-          text: '网络或 AI 服务异常，未能完成本次请求。请确认举一反三服务（toolkit :8080）已启动后重试。',
+          text: '网络或 AI 服务异常，未能完成本次请求。请确认举一反三服务（toolkit :8093）已启动后重试。',
         })
         scrollToBottom()
       },
       onClose: () => {
         sending.value = false
         thinking.value = false
+        typingBubble = null // 半成品打字气泡留在原地（极少见：流断在 token 中途）
         settleStages() // 正常完成时无 running 条目 = no-op；异常断流时兜底收口
         scrollToBottom()
       },
@@ -266,10 +361,9 @@ function regenerate() {
   dispatch(firstComposeMessage, '🔁 换一批（按原母题重新出一组）')
 }
 
-/** 新母题：换新 thread + 清空对话 / 各轮思路条 / 右栏题组 */
-function resetSession() {
+/** 清空画布到「空会话」视觉态（新建 / 切换会话共用） */
+function clearCanvas() {
   handle?.abort()
-  threadId = crypto.randomUUID()
   stream.value = []
   currentRail.value = null
   artifact.value = null
@@ -278,8 +372,99 @@ function resetSession() {
   input.value = ''
   sending.value = false
   thinking.value = false
+  typingBubble = null
   firstComposeMessage = null
 }
+
+/** 新会话（原「新母题」）：换新 thread；首条消息发出时才登记进会话列表 */
+function resetSession() {
+  clearCanvas()
+  threadId.value = crypto.randomUUID()
+  try {
+    localStorage.setItem(ACTIVE_KEY, '')
+  } catch {
+    /* noop */
+  }
+}
+
+const URL_IN_TEXT_RE = /https?:\/\/[^\s)>'"]+/
+
+/** 恢复 / 切换到历史会话：/history 回放气泡 + /variant/artifact 重建右栏卡片 */
+async function restoreSession(id: string) {
+  clearCanvas()
+  threadId.value = id
+  try {
+    localStorage.setItem(ACTIVE_KEY, id)
+  } catch {
+    /* noop */
+  }
+  restoring.value = true
+  try {
+    const [msgs, art] = await Promise.all([
+      fetchVariantHistory(id),
+      fetchVariantArtifact(id).catch(() => null),
+    ])
+    for (const m of msgs) {
+      const text = String(m.content || '').trim()
+      if (!text) continue
+      if (m.type === 'human') {
+        const um = text.match(URL_IN_TEXT_RE)
+        if (um) {
+          // 第一条带图 URL 的 human = 母题轮：回填顶部缩略图 +「换一批」基准
+          if (!motherImg.value) motherImg.value = um[0]
+          firstComposeMessage = firstComposeMessage ?? text
+        }
+        stream.value.push({
+          type: 'bubble',
+          role: 'user',
+          text: text.replace(URL_IN_TEXT_RE, '🖼 母题图').trim(),
+        })
+      } else if (m.type === 'ai') {
+        stream.value.push({ type: 'bubble', role: 'ai', kind: 'normal', text })
+      }
+      // tool/custom 帧不回放（stage 思路条是过程态，历史会话无需重演）
+    }
+    if (art) artifact.value = art
+    const meta = sessions.value.find((s) => s.id === id)
+    if (meta?.img && !motherImg.value) motherImg.value = meta.img
+  } catch (e) {
+    console.warn('[variant] 历史会话恢复失败:', e)
+    ElMessage.warning('历史会话拉取失败（举一反三服务 :8093 未启动？），已开新会话')
+    threadId.value = crypto.randomUUID()
+  } finally {
+    restoring.value = false
+  }
+  scrollToBottom()
+}
+
+/** 删除会话（只删本地索引，BE checkpoint 不动）；删的是当前会话则顺手开新会话 */
+function deleteSession(id: string) {
+  sessions.value = sessions.value.filter((s) => s.id !== id)
+  saveSessions()
+  if (id === threadId.value) resetSession()
+}
+
+function sessionTime(at: number): string {
+  const d = new Date(at)
+  const today = new Date()
+  const sameDay = d.toDateString() === today.toDateString()
+  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  return sameDay ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`
+}
+
+// 刷新恢复上次活跃会话（用户反馈③：聊天记录持久化的 FE 半边）
+onMounted(() => {
+  const active = (() => {
+    try {
+      return localStorage.getItem(ACTIVE_KEY) || ''
+    } catch {
+      return ''
+    }
+  })()
+  if (active && sessions.value.some((s) => s.id === active)) {
+    void restoreSession(active)
+  }
+})
 
 onBeforeUnmount(() => {
   handle?.abort()
@@ -295,8 +480,42 @@ onBeforeUnmount(() => {
         <span class="head-spark">✦</span>
         <span class="chat-title">AI 命题搭子</span>
         <span class="chat-sub">举一反三 · 图片变式</span>
+        <!-- 会话管理（用户反馈④）：历史会话列表（切换/删除）+ 新会话 -->
+        <el-popover placement="bottom-end" :width="300" trigger="click">
+          <template #reference>
+            <el-button text size="small" class="sessions-btn" :disabled="sending">
+              历史会话<span v-if="sessions.length"> · {{ sessions.length }}</span>
+            </el-button>
+          </template>
+          <div class="session-list">
+            <p v-if="sessions.length === 0" class="session-empty">
+              还没有历史会话，发出第一条消息后会自动记录
+            </p>
+            <div
+              v-for="s in sessions"
+              :key="s.id"
+              class="session-item"
+              :class="{ 'is-active': s.id === threadId }"
+              @click="s.id !== threadId && !sending && restoreSession(s.id)"
+            >
+              <img v-if="s.img" :src="s.img" class="session-thumb" referrerpolicy="no-referrer" />
+              <span v-else class="session-thumb session-thumb-empty">🧮</span>
+              <span class="session-title">{{ s.title }}</span>
+              <span class="session-time">{{ sessionTime(s.at) }}</span>
+              <el-button
+                text
+                size="small"
+                class="session-del"
+                :disabled="sending"
+                @click.stop="deleteSession(s.id)"
+              >
+                ✕
+              </el-button>
+            </div>
+          </div>
+        </el-popover>
         <el-button text size="small" class="reset-btn" :disabled="sending" @click="resetSession">
-          新母题
+          ＋新会话
         </el-button>
       </header>
 
@@ -326,7 +545,11 @@ onBeforeUnmount(() => {
       </div>
 
       <div ref="streamRef" class="chat-stream">
-        <div v-if="stream.length === 0" class="chat-empty">
+        <div v-if="restoring" class="chat-empty">
+          <div class="empty-emoji">⏳</div>
+          <p class="empty-title">正在恢复上次会话…</p>
+        </div>
+        <div v-else-if="stream.length === 0" class="chat-empty">
           <div class="empty-emoji">🧮</div>
           <p class="empty-title">贴一张题目图，开始举一反三</p>
           <p class="empty-tip">
@@ -469,8 +692,11 @@ onBeforeUnmount(() => {
   font-size: 12px;
   color: #86909c;
 }
-.reset-btn {
+.sessions-btn {
   margin-left: auto;
+}
+.reset-btn {
+  margin-left: 0;
 }
 
 /* 母题图入口 */
@@ -642,5 +868,69 @@ onBeforeUnmount(() => {
 .send-btn {
   height: 56px;
   padding: 0 22px;
+}
+
+/* 会话列表（popover 内容由本组件模板渲染，scoped 样式可达） */
+.session-list {
+  max-height: 320px;
+  overflow-y: auto;
+}
+.session-empty {
+  font-size: 12px;
+  color: #a0a8b3;
+  text-align: center;
+  padding: 12px 0;
+  margin: 0;
+}
+.session-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.session-item:hover {
+  background: #f5f8f8;
+}
+.session-item.is-active {
+  background: #f1eeff; /* violet 浅底：当前会话 */
+  cursor: default;
+}
+.session-thumb {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  object-fit: cover;
+  border: 1px solid #e5e6eb;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+}
+.session-thumb-empty {
+  background: #f2f3f5;
+}
+.session-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: #1d2a2e;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.session-time {
+  font-size: 11px;
+  color: #a0a8b3;
+  flex-shrink: 0;
+}
+.session-del {
+  padding: 2px 4px;
+  color: #c0c6cf;
+}
+.session-del:hover {
+  color: #cf1322;
 }
 </style>

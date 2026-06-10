@@ -2,10 +2,10 @@ import { fetchEventSource } from '@microsoft/fetch-event-source'
 import request from '@/http/request'
 
 // ---------------------------------------------------------------------------
-// PRD-C-009 — 图片举一反三 agent（agent-service-toolkit :8080，LangGraph）SSE 封装。
+// PRD-C-009 — 图片举一反三 agent（agent-service-toolkit :8093，LangGraph）SSE 封装。
 //
 // 与 src/api/chat（ai-orchestrator :8092）是两套独立协议，不复用：
-//   - 走 vite proxy /agent/variant/stream → rewrite 掉 /agent → :8080/variant/stream。
+//   - 走 vite proxy /agent/variant/stream → rewrite 掉 /agent → :8093/variant/stream。
 //   - toolkit 原生 SSE 协议（见 service.py message_generator）：
 //       data: {"type":"token",  "content":"<片段>"}            ← LLM 逐字（打字机）
 //       data: {"type":"message","content":<ChatMessage 全量>}  ← 节点产出的整块 AI 消息
@@ -287,6 +287,39 @@ export function streamVariant(
   })
 
   return { abort: () => ctrl.abort() }
+}
+
+// ---------------------------------------------------------------------------
+// 会话持久化（2026-06-11 用户反馈③④）：toolkit checkpointer（sqlite）本来就按
+// thread_id 持久了全部对话 state —— 缺的只是 FE 取回。两个取回口都走 /agent proxy
+//（toolkit 原生接口，无 misikt envelope，不走 http/request 拦截器）：
+//   POST /history            {thread_id} → {messages:[{type:'human'|'ai',content,...}]}
+//   POST /variant/artifact   {thread_id} → VariantArtifact（右栏卡片栅重建，C 线扩展端点）
+// ---------------------------------------------------------------------------
+
+/** 取会话历史消息（回放左栏气泡）。失败抛错，调用方自行兜底（显示空会话）。 */
+export async function fetchVariantHistory(threadId: string): Promise<ToolkitChatMessage[]> {
+  const res = await fetch('/agent/history', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ thread_id: threadId }),
+  })
+  if (!res.ok) throw new Error(`/history ${res.status}`)
+  const data = (await res.json()) as { messages?: ToolkitChatMessage[] }
+  return Array.isArray(data.messages) ? data.messages : []
+}
+
+/** 取会话当前题组快照（重建右栏卡片栅）。无题组返回 items=[]。 */
+export async function fetchVariantArtifact(threadId: string): Promise<VariantArtifact | null> {
+  const res = await fetch('/agent/variant/artifact', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ thread_id: threadId }),
+  })
+  if (!res.ok) throw new Error(`/variant/artifact ${res.status}`)
+  const raw = (await res.json()) as { items?: unknown }
+  // 复用流内帧的宽松校验（同契约）
+  return pickArtifact({ type: 'custom', content: '', custom_data: { artifact: raw } })
 }
 
 // ---------------------------------------------------------------------------

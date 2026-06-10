@@ -102,7 +102,7 @@ const router = createRouter({
           component: () => import('@/views/ai-compose/index.vue'),
         },
         // 🔴 举一反三（PRD-C-009）= 图片变式 agent 入口。拍题 → 贴 OSS 图链 → 自动出代表性变式
-        //    （2 普通 1 难）→ 对话式编辑 → 入个人题库。调 toolkit :8080 variant agent（vite proxy /agent）。
+        //    （2 普通 1 难）→ 对话式编辑 → 入个人题库。调 toolkit :8093 variant agent（vite proxy /agent）。
         {
           path: '/ai-variant',
           name: 'AiVariant',
