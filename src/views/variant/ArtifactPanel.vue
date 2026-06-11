@@ -31,6 +31,16 @@ const emit = defineEmits<{
 const items = computed(() => props.artifact?.items ?? [])
 const allPersisted = computed(() => items.value.length > 0 && items.value.every((i) => i.persisted))
 
+// PRD-C-012 P2 渐进渲染：增量帧（partial=true）期间，在已完成题卡后补
+// (expectedTotal - items.length) 张「生成中」占位骨架卡。定稿帧无 partial 键 →
+// pendingCount 归 0，占位卡消失；expectedTotal 缺失/脏值 → 0（不渲染，绝不为负）。
+const pendingCount = computed(() => {
+  const a = props.artifact
+  if (!a || a.partial !== true) return 0
+  const total = a.expectedTotal ?? 0
+  return total > items.value.length ? total - items.value.length : 0
+})
+
 function persistAll() {
   if (props.sending || items.value.length === 0 || allPersisted.value) return
   emit('persist')
@@ -74,7 +84,7 @@ function regenerate() {
 
     <!-- 卡片列 -->
     <div class="canvas-body">
-      <template v-if="items.length > 0">
+      <template v-if="items.length > 0 || pendingCount > 0">
         <VariantCard
           v-for="it in items"
           :key="it.index"
@@ -82,6 +92,20 @@ function regenerate() {
           :sending="sending"
           @utterance="(t: string) => emit('utterance', t)"
         />
+        <!-- PRD-C-012 P2：增量帧期的「生成中」占位卡（题号顺延已完成题，定稿帧到达即消失） -->
+        <div
+          v-for="n in pendingCount"
+          :key="`pending-${items.length + n}`"
+          class="pending-card"
+          data-testid="variant-pending-card"
+        >
+          <header class="pending-head">
+            <span class="pending-seq">{{ items.length + n }}</span>
+            <span class="pending-text">生成中…</span>
+          </header>
+          <div class="sk-line" />
+          <div class="sk-line sk-w70" />
+        </div>
       </template>
 
       <!-- 生成中骨架卡（尚无快照时） -->
@@ -218,6 +242,42 @@ function regenerate() {
   50% {
     opacity: 0.55;
   }
+}
+
+/* PRD-C-012 P2 占位卡：与 VariantCard 同宽同圆角（白底 14px radius 14/16 padding），
+   题号圆灰化 + 「生成中…」+ 淡灰 shimmer 行，复用 sk-pulse 脉动 */
+.pending-card {
+  background: #fff;
+  border: 1px dashed #d4dede;
+  border-radius: 14px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  animation: sk-pulse 1.4s infinite ease-in-out;
+}
+.pending-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+/* 题号圆：尺寸/字重对齐 VariantCard .seq，灰底表「未完成」 */
+.pending-seq {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #c0c6cf;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.pending-text {
+  font-size: 13px;
+  color: #86909c;
 }
 
 .canvas-empty {

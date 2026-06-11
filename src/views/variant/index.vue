@@ -271,7 +271,10 @@ function dispatch(message: string, shownText?: string) {
         scrollToBottom()
       },
       onArtifact: (a: VariantArtifact) => {
-        // 快照全量语义：整帧替换（assemble 每轮收尾 + persist 成功后各发一帧）
+        // 快照全量语义：整帧替换（assemble 每轮收尾 + persist 成功后各发一帧）。
+        // PRD-C-012 P2：增量帧（partial=true，items=已完成题全量快照）同样整量替换 ——
+        // partial / expectedTotal 随帧存进同一响应式 artifact，ArtifactPanel 据此渲染
+        // 「生成中」占位骨架卡；定稿帧无 partial 键 → 占位卡自然消失。
         artifact.value = a
       },
       onMessage: (msg: ToolkitChatMessage) => {

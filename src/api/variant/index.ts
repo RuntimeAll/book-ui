@@ -100,6 +100,14 @@ export interface VariantArtifactHeader {
 export interface VariantArtifact {
   items: VariantArtifactItem[]
   header: VariantArtifactHeader
+  /**
+   * PRD-C-012 P2 渐进渲染 — 增量帧标记：true = 流内增量帧（items = 已完成题的
+   * 全量快照，按生成序）；定稿帧没有 partial 键（解析后为 undefined = 定稿语义）。
+   * 会话恢复（/variant/artifact）与入库返回天然无此键，不受影响。
+   */
+  partial?: boolean
+  /** 增量帧宣称的本组预期总题数（BE expected_total）；占位卡数 = expectedTotal - items.length */
+  expectedTotal?: number
 }
 
 /** 从 custom 消息里安全抠出 artifact（镜像 pickStage 的宽松校验，结构不符返回 null） */
@@ -127,7 +135,7 @@ function pickArtifact(msg: ToolkitChatMessage): VariantArtifact | null {
     })
   }
   const h = (a.header && typeof a.header === 'object' ? a.header : {}) as Record<string, unknown>
-  return {
+  const out: VariantArtifact = {
     items,
     header: {
       recipe: typeof h.recipe === 'string' && h.recipe ? h.recipe : null,
@@ -135,6 +143,13 @@ function pickArtifact(msg: ToolkitChatMessage): VariantArtifact | null {
       grade: typeof h.grade === 'string' && h.grade ? h.grade : null,
     },
   }
+  // PRD-C-012 P2：增量帧字段宽松解析 —— partial 非 true 一律视为定稿（不设键）；
+  // expected_total 非正数/非数值忽略（占位卡计算端再兜底，绝不因脏值崩渲染）。
+  const ax = a as Record<string, unknown>
+  if (ax.partial === true) out.partial = true
+  const et = typeof ax.expected_total === 'number' ? ax.expected_total : Number(ax.expected_total)
+  if (Number.isFinite(et) && et > 0) out.expectedTotal = Math.floor(et)
+  return out
 }
 
 /** 逐字 token */
