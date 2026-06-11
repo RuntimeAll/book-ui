@@ -74,6 +74,12 @@ function pickStage(msg: ToolkitChatMessage): VariantStage | null {
 /** artifact 快照 — 单题（契约与 BE _artifact_payload 严格一致） */
 export interface VariantArtifactItem {
   index: number
+  /**
+   * PRD-C-013 P2b 逐题上屏 — 稳定原位 merge 键（BE 题序号，跨增量帧不变）。
+   * BE 增量帧按此键 upsert：同 seq 二次到达 = 原位更新（首帧无 tier→闸链完成补 tier）。
+   * 旧后端/旧线程恢复可能缺 seq → 解析端回退用 index 兜底（见 pickArtifact）。
+   */
+  seq: number
   stem: string
   answer: string
   solution: string
@@ -82,11 +88,20 @@ export interface VariantArtifactItem {
   level: string
   /** check.verify 或 check.review（证明类只有 review 键，如 proof_needs_human） */
   verify: string | null
-  /** 4d 外显层级（PRD-C-012 _apply_visibility）：verified/self_ok/proof/silent/both_low；旧线程恢复可能缺 */
+  /**
+   * 4d 外显层级（PRD-C-012 _apply_visibility）：verified/self_ok/proof/silent/both_low；
+   * PRD-C-013 P2b：增量帧首发该题时无 tier（闸链未跑完）→ null，VariantCard 渲染「验算中…」
+   * 过渡态；闸链完成后 BE 原位重发同 seq 带 tier。可显式取 'checking' 表过渡（向前兼容）。
+   */
   tier: string | null
   /** gene.gate（平行度闸） */
   gene: string | null
   persisted: boolean
+  /**
+   * PRD-C-013 P2b：BE 后续帧标记本题被剔除（闸链判废）。true → ArtifactPanel 触发退场过渡后移除。
+   * 增量 merge 语义专用；定稿帧不应再带 _dropped 的题。
+   */
+  _dropped?: boolean
 }
 
 /** artifact 快照 — 画布头 */
@@ -120,8 +135,12 @@ function pickArtifact(msg: ToolkitChatMessage): VariantArtifact | null {
   for (const it of a.items) {
     if (!it || typeof it !== 'object') continue
     const o = it as Record<string, unknown>
+    const index = typeof o.index === 'number' ? o.index : Number(o.index) || items.length + 1
+    // P2b：seq = 稳定 merge 键，缺失（旧后端/旧帧）→ 回退用 index（与一期等价，单键不分叉）
+    const seqRaw = typeof o.seq === 'number' ? o.seq : Number(o.seq)
     items.push({
-      index: typeof o.index === 'number' ? o.index : Number(o.index) || items.length + 1,
+      index,
+      seq: Number.isFinite(seqRaw) && seqRaw > 0 ? seqRaw : index,
       stem: typeof o.stem === 'string' ? o.stem : '',
       answer: typeof o.answer === 'string' ? o.answer : '',
       solution: typeof o.solution === 'string' ? o.solution : '',
@@ -132,6 +151,7 @@ function pickArtifact(msg: ToolkitChatMessage): VariantArtifact | null {
       tier: typeof o.tier === 'string' && o.tier ? o.tier : null,
       gene: typeof o.gene === 'string' && o.gene ? o.gene : null,
       persisted: o.persisted === true,
+      _dropped: o._dropped === true,
     })
   }
   const h = (a.header && typeof a.header === 'object' ? a.header : {}) as Record<string, unknown>

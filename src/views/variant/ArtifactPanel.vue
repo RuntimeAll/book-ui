@@ -10,8 +10,8 @@
 //   - 卡片快捷键（换数字/换场景/答疑，需要 LLM 生成）仍走 utterance → chat SSE（铁律 1）
 // 旧后端（无 artifact 帧）→ 空态引导，左栏完全可用（向后兼容兜底）。
 // ---------------------------------------------------------------------------
-import { computed } from 'vue'
-import type { VariantArtifact } from '@/api/variant'
+import { computed, ref, watch } from 'vue'
+import type { VariantArtifact, VariantArtifactItem } from '@/api/variant'
 import VariantCard from './VariantCard.vue'
 
 const props = defineProps<{
@@ -28,8 +28,85 @@ const emit = defineEmits<{
   (e: 'persist'): void
 }>()
 
-const items = computed(() => props.artifact?.items ?? [])
-const allPersisted = computed(() => items.value.length > 0 && items.value.every((i) => i.persisted))
+// ---------------------------------------------------------------------------
+// PRD-C-013 P2b 逐题上屏 — 按 seq 原位 merge（不再整组重渲）。
+//
+// 旧语义（一期）：每帧 = 全量快照，整数组替换 → 任一字段变化触发整列重渲（首题内容稳定
+// 后，徽章后到仍会让整列闪/重排）。新语义：
+//   ① 维护本地 mergedItems（按到达顺序的 VariantArtifactItem[]），收到新 artifact 帧时对
+//      帧内每个 item 按 seq 做 upsert（已存在的 seq 原位替换该卡数据，新 seq 追加），而不是
+//      整数组替换 —— 首题内容可见后，徽章后到只更新该卡，不闪烁、不换位。
+//   ② item._dropped===true → 触发可见退场过渡（dropping 集合标记 → CSS 收起 → 计时移除）。
+//   ③ 定稿帧 / 入库帧 / 会话恢复帧（partial 不为 true）= 权威全量 → 直接 reconcile 成帧内集合
+//      （剔除帧里已消失的 seq），不残留增量期的脏卡。
+//   ④ 渲染顺序：按 seq 升序（BE 题序），merge upsert 不打乱既有卡位置。
+// 守恒：mergedItems 是渲染唯一来源；header/partial/expectedTotal 仍直接读 props.artifact。
+// ---------------------------------------------------------------------------
+const mergedItems = ref<VariantArtifactItem[]>([])
+const dropping = ref<Set<number>>(new Set())
+
+function reconcileFinal(incoming: VariantArtifactItem[]) {
+  // 权威全量帧：直接以帧内集合为准（按 seq 升序），清掉退场标记
+  dropping.value = new Set()
+  mergedItems.value = [...incoming].sort((a, b) => a.seq - b.seq)
+}
+
+function upsertIncremental(incoming: VariantArtifactItem[]) {
+  const bySeq = new Map<number, VariantArtifactItem>(
+    mergedItems.value.map((i) => [i.seq, i] as [number, VariantArtifactItem])
+  )
+  // 🔴 退场标记集合就地变更不触发 :class 重算（Vue 不追踪 Set 内部突变）——攒到本次
+  //   merge 末尾整体重建引用，确保 dropping.has(seq) 的 :class 绑定重新求值、退场动画起播。
+  const nextDropping = new Set(dropping.value)
+  for (const it of incoming) {
+    if (it._dropped) {
+      // 剔除题：标记退场过渡，由 scheduleDropRemoval 计时移除（与 CSS 过渡时长对齐）。
+      // 幂等：同一 _dropped 哨兵每帧重发（BE 累计帧会带）→ 已在退场中的 seq 不重复排计时。
+      if (bySeq.has(it.seq) && !nextDropping.has(it.seq)) {
+        nextDropping.add(it.seq)
+        bySeq.set(it.seq, { ...bySeq.get(it.seq)!, _dropped: true })
+        scheduleDropRemoval(it.seq)
+      }
+      continue
+    }
+    bySeq.set(it.seq, it) // upsert：新 seq 追加 / 已存在原位替换
+    nextDropping.delete(it.seq)
+  }
+  dropping.value = nextDropping // 重建引用 → :class 重算
+  mergedItems.value = [...bySeq.values()].sort((a, b) => a.seq - b.seq)
+}
+
+// 退场兜底计时（CSS transitionend 不触发时也保证移除），与 .card-leave 过渡时长对齐
+function scheduleDropRemoval(seq: number) {
+  window.setTimeout(() => {
+    mergedItems.value = mergedItems.value.filter((i) => i.seq !== seq)
+    // 重建引用（同 upsertIncremental）：就地 delete 不触发依赖 dropping 的 computed/:class
+    const next = new Set(dropping.value)
+    next.delete(seq)
+    dropping.value = next
+  }, 320)
+}
+
+watch(
+  () => props.artifact,
+  (a) => {
+    if (!a) {
+      mergedItems.value = []
+      dropping.value = new Set()
+      return
+    }
+    if (a.partial === true) upsertIncremental(a.items)
+    else reconcileFinal(a.items)
+  },
+  { immediate: true, deep: true }
+)
+
+const items = computed(() => mergedItems.value)
+const allPersisted = computed(
+  () => items.value.length > 0 && items.value.every((i) => i.persisted)
+)
+// 本组仍在增量上屏期 → 传给 VariantCard，使其把「无 tier」解读为验算中过渡态
+const checking = computed(() => props.artifact?.partial === true)
 
 // PRD-C-012 P2 渐进渲染：增量帧（partial=true）期间，在已完成题卡后补
 // (expectedTotal - items.length) 张「生成中」占位骨架卡。定稿帧无 partial 键 →
@@ -38,7 +115,9 @@ const pendingCount = computed(() => {
   const a = props.artifact
   if (!a || a.partial !== true) return 0
   const total = a.expectedTotal ?? 0
-  return total > items.value.length ? total - items.value.length : 0
+  // 退场中的卡不占名额（已逻辑剔除），用非退场题数算缺口
+  const live = items.value.filter((i) => !dropping.value.has(i.seq)).length
+  return total > live ? total - live : 0
 })
 
 function persistAll() {
@@ -85,11 +164,14 @@ function regenerate() {
     <!-- 卡片列 -->
     <div class="canvas-body">
       <template v-if="items.length > 0 || pendingCount > 0">
+        <!-- P2b：按 seq 原位 merge，剔除题（_dropped）走 is-dropping 退场过渡后由计时移除 -->
         <VariantCard
           v-for="it in items"
-          :key="it.index"
+          :key="it.seq"
           :item="it"
           :sending="sending"
+          :checking="checking"
+          :class="{ 'is-dropping': dropping.has(it.seq) }"
           @utterance="(t: string) => emit('utterance', t)"
         />
         <!-- PRD-C-012 P2：增量帧期的「生成中」占位卡（题号顺延已完成题，定稿帧到达即消失） -->
@@ -210,6 +292,23 @@ function regenerate() {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+/* P2b 剔除题退场过渡：淡出 + 收高（与 scheduleDropRemoval 320ms 兜底对齐） */
+.canvas-body > :deep(.is-dropping) {
+  opacity: 0;
+  transform: translateX(12px);
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  margin-top: -14px; /* 抵消 gap，避免退场期留空隙 */
+  overflow: hidden;
+  transition:
+    opacity 0.28s ease,
+    transform 0.28s ease,
+    max-height 0.3s ease,
+    margin 0.3s ease,
+    padding 0.3s ease;
 }
 
 /* 生成中骨架卡：bg-100 脉动 + 120ms stagger */

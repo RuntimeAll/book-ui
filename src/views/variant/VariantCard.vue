@@ -22,20 +22,35 @@ const props = defineProps<{
   item: VariantArtifactItem
   /** 发送中禁用所有快捷键 */
   sending: boolean
+  /**
+   * PRD-C-013 P2b：本组仍在增量上屏（artifact.partial===true）。仅在此期间，
+   * item.tier 为 null 才解读为「验算中」过渡态；恢复/定稿帧无此标记 → 走只说好兜底。
+   */
+  checking?: boolean
 }>()
 
 const emit = defineEmits<{ (e: 'utterance', text: string): void }>()
 
 const showSolution = ref(false)
 
+// PRD-C-013 P2b 逐题上屏：增量帧首发该题时无 tier（闸链 A+B 未跑完）→ 显示「验算中…」
+// 过渡徽章（呼吸态，不出 ✓/⚠）；闸链完成后 BE 原位重发同 seq 带 tier，徽章原位更新、不闪烁。
+// 🔴 与一期「旧线程恢复无 tier 按只说好兜底」的区分：恢复帧（partial 不为 true）里无 tier =
+// 历史定稿、走兜底沉默；只有增量帧（partial===true）里无 tier 才是「验算中」过渡态。
+const isChecking = computed(() => {
+  if (props.item.tier === 'checking') return true // 向前兼容：BE 显式标过渡
+  return props.item.tier === null && props.checking === true
+})
+
 const verifyBadge = computed(() => {
+  if (isChecking.value) return null // 过渡态由独立呼吸徽章承担，不走此 computed
   const t = props.item.tier
   if (t === 'verified') return { cls: 'vb-green', text: '✓ 程序验算通过' }
   if (t === 'self_ok') return { cls: 'vb-green', text: '✓ 已独立复算一致' }
   if (t === 'proof') return { cls: 'vb-violet', text: 'ℹ 转人工复核' }
   if (t === 'both_low') return { cls: 'vb-amber', text: '⚠ 需重点核对' }
   if (t === 'silent') return null
-  // 旧数据无 tier：按「只说好」兜底——只外显正面/中性，其余沉默
+  // 旧数据无 tier（且非增量过渡）：按「只说好」兜底——只外显正面/中性，其余沉默
   const v = props.item.verify
   if (v === 'sympy_pass') return { cls: 'vb-green', text: '✓ 程序验算通过' }
   if (v === 'proof_needs_human') return { cls: 'vb-violet', text: 'ℹ 转人工复核' }
@@ -45,6 +60,20 @@ const verifyBadge = computed(() => {
 const geneBadge = computed(() => {
   // 4d：只说好——warn 等负面值一律沉默（双闸低由 verifyBadge 的 ⚠ 承担）
   return props.item.gene === 'pass' ? { cls: 'gb-teal', text: '平行度 ✓' } : null
+})
+
+// PRD-C-013 P8：难度按数值渲染星级。上限动态（存量库题可能 5，新生成题 1-4）——
+// 满格 = max(difficulty, 5)，实心 = difficulty，空星补足；title 仍给「难度 N」文本可读。
+const difficultyStars = computed(() => {
+  const d = props.item.difficulty
+  if (!(d > 0)) return null
+  const filled = Math.round(d)
+  const total = Math.max(filled, 5)
+  return {
+    full: filled,
+    empty: total - filled,
+    title: `难度 ${d}`,
+  }
 })
 
 const levelText = computed(() => {
@@ -66,12 +95,19 @@ function knob(text: string) {
     <header class="card-head">
       <span class="seq">{{ item.index }}</span>
       <span v-if="item.qtype" class="meta-tag">{{ item.qtype }}</span>
-      <span v-if="item.difficulty > 0" class="meta-tag">难度 {{ item.difficulty }}</span>
+      <span v-if="difficultyStars" class="diff-stars" :title="difficultyStars.title">
+        <span v-for="n in difficultyStars.full" :key="`f${n}`" class="star is-full">★</span>
+        <span v-for="n in difficultyStars.empty" :key="`e${n}`" class="star is-empty">☆</span>
+      </span>
       <span class="meta-tag" :class="item.level === 'hard' ? 'is-hard' : ''">{{ levelText }}</span>
       <span class="head-spacer" />
       <span v-if="item.persisted" class="persisted-tag">已收录</span>
       <span v-if="geneBadge" class="gene-badge" :class="geneBadge.cls">{{ geneBadge.text }}</span>
-      <span v-if="verifyBadge" class="verify-badge" :class="verifyBadge.cls">
+      <!-- P2b 过渡态：闸链未完成（增量帧无 tier）→ 呼吸「验算中…」，不出 ✓/⚠ -->
+      <span v-if="isChecking" class="verify-badge vb-checking">
+        <span class="check-dot" />验算中…
+      </span>
+      <span v-else-if="verifyBadge" class="verify-badge" :class="verifyBadge.cls">
         {{ verifyBadge.text }}
       </span>
     </header>
@@ -176,6 +212,22 @@ function knob(text: string) {
   flex: 1;
 }
 
+/* P8 难度星：实心 amber、空心淡灰，紧凑无间隙 */
+.diff-stars {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+  font-size: 13px;
+  letter-spacing: -1px;
+  cursor: default;
+}
+.star.is-full {
+  color: #e0a23c; /* amber-500 */
+}
+.star.is-empty {
+  color: #d4dede;
+}
+
 /* 验证角标：⚠ 比 ✓ 醒目（实底白字 + ⚠ 加粗） */
 .verify-badge {
   font-size: 12px;
@@ -196,6 +248,30 @@ function knob(text: string) {
 }
 .vb-violet {
   background: #7b6cf0; /* violet-600 */
+}
+/* P2b 验算中过渡态：中性灰底 + 呼吸点，不抢 ✓/⚠ 的视觉权重 */
+.vb-checking {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #5b6770;
+  background: #edf2f2; /* bg-100 */
+  animation: vb-breathe 1.4s infinite ease-in-out;
+}
+.check-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #7b6cf0; /* violet-600：AI 在场 */
+}
+@keyframes vb-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
 }
 
 .gene-badge {

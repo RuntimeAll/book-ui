@@ -48,6 +48,12 @@ interface Bubble {
   role: 'user' | 'ai'
   kind?: 'normal' | 'error'
   text: string
+  /**
+   * PRD-C-013 P10：随气泡进对话流的图片（公网 URL）。母题图不再只钉顶部，发送时随用户
+   * 气泡进流（~120px 缩略图，点开看大图）。BE 零改动（imageUrl 走 FE 独立字段、不进
+   * messages）；会话恢复时从 localStorage per-message 注册表贴回（checkpointer 回放无图）。
+   */
+  images?: string[]
 }
 
 /** 本轮思路条锚点（钉在该轮用户气泡之后、AI 产出之前；历史轮留存） */
@@ -60,8 +66,11 @@ type StreamItem = Bubble | RailItem
 
 const stream = ref<StreamItem[]>([])
 const input = ref('')
-const imageUrl = ref('') // 顶部待发送的 OSS 图 URL（首轮随消息带出，发后清空）
-const motherImg = ref('') // 已发出的母题图，顶部缩略图常驻
+const imageUrl = ref('') // URL 输入框：手贴公网图地址（回车/发送时并入 pendingImages）
+// PRD-C-013 P10：待发附件缩略图（粘贴上传 / 贴 URL 都进这里）。发送时随用户气泡进流后清空。
+const pendingImages = ref<string[]>([])
+const motherImg = ref('') // 已发出的母题图，顶部小徽章常驻（守恒锚视觉提示）
+const previewUrl = ref('') // 点开看大图（el-image-viewer / 简易遮罩）
 const sending = ref(false)
 const thinking = ref(false) // LLM token 流期的「思考中」动效
 // 当前轮 rail 锚点（onStage 只更新它；新一轮 send 换新锚点，旧轮 rail 冻结留存）
@@ -96,13 +105,28 @@ async function uploadPastedImage(file: File) {
   uploading.value = true
   try {
     const { url } = await uploadMotherImage(file)
-    imageUrl.value = url
-    ElMessage.success('截图已上传，图链已填入，回车即可出题')
+    // P10：进「待发附件」缩略图区（可删），发送时随用户气泡进流
+    if (!pendingImages.value.includes(url)) pendingImages.value.push(url)
+    ElMessage.success('截图已上传，已加入待发附件，回车即可出题')
   } catch {
     // 失败 toast 由 http 拦截器统一弹，这里只收 loading
   } finally {
     uploading.value = false
   }
+}
+
+/** 移除一张待发附件 */
+function removePending(url: string) {
+  pendingImages.value = pendingImages.value.filter((u) => u !== url)
+}
+
+/** 把 URL 输入框里手贴的公网图地址并入待发附件（发送 / 失焦时调用，去重 + 清空输入框） */
+function commitUrlInput() {
+  const url = imageUrl.value.trim()
+  if (!url) return
+  if (!/^https?:\/\//i.test(url)) return // 非法地址留在输入框，不入队
+  if (!pendingImages.value.includes(url)) pendingImages.value.push(url)
+  imageUrl.value = ''
 }
 
 /** 页面级 paste 监听：输入框 / 页面任意处 Ctrl+V 截图均可触发 */
@@ -141,7 +165,52 @@ interface SessionMeta {
 
 const SESSIONS_KEY = 'variant.sessions.v1'
 const ACTIVE_KEY = 'variant.active.v1'
+// PRD-C-013 P10：per-message 图片注册表。BE checkpointer 回放的 messages 没有图（imageUrl
+// 走 FE 独立字段、不进 messages）→ 把每条「带图的用户消息」的 URL 按发送序存这里，恢复时按
+// 用户气泡序贴回。结构 = { [threadId]: string[][] }，第 N 项 = 第 N 条用户气泡的图（无图为 []）。
+const MSG_IMG_KEY = 'variant.msgimg.v1'
 const SESSIONS_MAX = 50
+
+function loadMsgImgMap(): Record<string, string[][]> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(MSG_IMG_KEY) || '{}') as unknown
+    return raw && typeof raw === 'object' ? (raw as Record<string, string[][]>) : {}
+  } catch {
+    return {}
+  }
+}
+
+/** 取本 thread 的用户气泡图序列（恢复时用） */
+function getThreadMsgImgs(id: string): string[][] {
+  const m = loadMsgImgMap()[id]
+  return Array.isArray(m) ? m : []
+}
+
+/** 追加一条用户气泡的图（发送时调用，保发送序 = 用户气泡序） */
+function pushMsgImgs(urls: string[]) {
+  try {
+    const map = loadMsgImgMap()
+    const arr = Array.isArray(map[threadId.value]) ? map[threadId.value] : []
+    arr.push(urls)
+    map[threadId.value] = arr
+    localStorage.setItem(MSG_IMG_KEY, JSON.stringify(map))
+  } catch {
+    /* 配额满等异常不影响主流程 */
+  }
+}
+
+/** 删除本 thread 的图注册（删会话时连带清理） */
+function dropThreadMsgImgs(id: string) {
+  try {
+    const map = loadMsgImgMap()
+    if (id in map) {
+      delete map[id]
+      localStorage.setItem(MSG_IMG_KEY, JSON.stringify(map))
+    }
+  } catch {
+    /* noop */
+  }
+}
 
 function loadSessions(): SessionMeta[] {
   try {
@@ -233,11 +302,18 @@ function settleStages() {
  * 🔴 统一发送管道：输入框手打 / 卡片快捷键 / 全部入库 / 换一批最终都走这里
  *（同 thread_id 同 chat SSE 通道，agent 既有受约束分类器路由）。
  */
-function dispatch(message: string, shownText?: string) {
+function dispatch(message: string, shownText?: string, images?: string[]) {
   if (sending.value) return
   handle?.abort()
 
-  stream.value.push({ type: 'bubble', role: 'user', text: shownText ?? message })
+  stream.value.push({
+    type: 'bubble',
+    role: 'user',
+    text: shownText ?? message,
+    images: images && images.length ? images : undefined,
+  })
+  // P10：把本条用户气泡的图按发送序登记，会话恢复时贴回（checkpointer 回放无图）
+  pushMsgImgs(images ?? [])
   // 本轮思路条锚点：紧跟用户气泡 push，后续 AI 气泡追加在它下方 → rail 钉在本轮头部
   const rail = reactive<RailItem>({ type: 'rail', stages: [] })
   stream.value.push(rail)
@@ -327,27 +403,30 @@ function dispatch(message: string, shownText?: string) {
 
 /** 输入框发送（首轮把 OSS URL 拼进文本，agent 端从 human 文本抠 URL） */
 function send() {
+  commitUrlInput() // 先把 URL 输入框里没回车的地址并入待发附件
   const text = input.value.trim()
-  const url = imageUrl.value.trim()
+  const imgs = [...pendingImages.value]
   // 首轮必须有图；后续轮纯指令即可（text 非空）
-  if (!url && !text) return
+  if (imgs.length === 0 && !text) return
   if (sending.value) return
 
+  // agent 端从 human 文本抠 URL（_extract_image_url），故图 URL 仍内联进 message 文本
   const parts: string[] = []
-  if (url) parts.push(url)
+  if (imgs.length) parts.push(imgs.join('\n'))
   if (text) parts.push(text)
   const message = parts.join('\n')
 
-  // 顶部缩略图常驻；输入框 URL 发后清空，避免后续编辑轮重复触发分析
-  if (url) {
-    motherImg.value = url
-    imageUrl.value = ''
-    firstComposeMessage = message // 「换一批」重发这条初始出题 utterance
+  if (imgs.length) {
+    // 首图作母题：顶部小徽章常驻（守恒锚）；「换一批」重发这条初始出题 utterance
+    if (!motherImg.value) motherImg.value = imgs[0]
+    firstComposeMessage = message
   }
 
-  const shown = url ? (text ? `🖼 母题图\n${text}` : '🖼 母题图（开始举一反三）') : text
+  // 气泡文案：图随气泡进流（缩略图），文本同气泡。无需再把 URL 替成「🖼 母题图」占位文字。
+  const shown = text || (imgs.length ? '（开始举一反三）' : '')
   input.value = ''
-  dispatch(message, shown)
+  pendingImages.value = []
+  dispatch(message, shown, imgs)
 }
 
 /** 卡片快捷键（换数字/换场景/答疑，需要 LLM）：预设句走 chat 通道，用户气泡照常显示（铁律 1） */
@@ -401,6 +480,8 @@ function clearCanvas() {
   artifact.value = null
   motherImg.value = ''
   imageUrl.value = ''
+  pendingImages.value = []
+  previewUrl.value = ''
   input.value = ''
   sending.value = false
   thinking.value = false
@@ -419,7 +500,7 @@ function resetSession() {
   }
 }
 
-const URL_IN_TEXT_RE = /https?:\/\/[^\s)>'"]+/
+const URL_IN_TEXT_RE_G = /https?:\/\/[^\s)>'"]+/g
 
 /** 恢复 / 切换到历史会话：/history 回放气泡 + /variant/artifact 重建右栏卡片 */
 async function restoreSession(id: string) {
@@ -436,20 +517,32 @@ async function restoreSession(id: string) {
       fetchVariantHistory(id),
       fetchVariantArtifact(id).catch(() => null),
     ])
+    // P10：per-message 图注册表（按用户气泡发送序）；旧会话（P10 前）无此记录 → 回退用文本里的 URL
+    const msgImgs = getThreadMsgImgs(id)
+    let humanIdx = 0
     for (const m of msgs) {
       const text = String(m.content || '').trim()
       if (!text) continue
       if (m.type === 'human') {
-        const um = text.match(URL_IN_TEXT_RE)
-        if (um) {
-          // 第一条带图 URL 的 human = 母题轮：回填顶部缩略图 +「换一批」基准
-          if (!motherImg.value) motherImg.value = um[0]
+        // 优先用注册表；缺失则从文本抠出内联 URL（向后兼容旧会话）
+        const fromReg = msgImgs[humanIdx]
+        const imgs =
+          Array.isArray(fromReg) && fromReg.length
+            ? fromReg
+            : text.match(URL_IN_TEXT_RE_G) ?? []
+        humanIdx++
+        if (imgs.length) {
+          // 第一条带图 human = 母题轮：回填顶部小徽章 +「换一批」基准
+          if (!motherImg.value) motherImg.value = imgs[0]
           firstComposeMessage = firstComposeMessage ?? text
         }
+        // 展示文本剥掉内联 URL（图改由气泡缩略图承载）
+        const shownText = text.replace(URL_IN_TEXT_RE_G, '').replace(/\s+/g, ' ').trim()
         stream.value.push({
           type: 'bubble',
           role: 'user',
-          text: text.replace(URL_IN_TEXT_RE, '🖼 母题图').trim(),
+          text: shownText,
+          images: imgs.length ? imgs : undefined,
         })
       } else if (m.type === 'ai') {
         stream.value.push({ type: 'bubble', role: 'ai', kind: 'normal', text })
@@ -473,6 +566,7 @@ async function restoreSession(id: string) {
 function deleteSession(id: string) {
   sessions.value = sessions.value.filter((s) => s.id !== id)
   saveSessions()
+  dropThreadMsgImgs(id) // P10：连带清理本会话的 per-message 图注册
   if (id === threadId.value) resetSession()
 }
 
@@ -551,22 +645,34 @@ onBeforeUnmount(() => {
         </el-button>
       </header>
 
-      <!-- 顶部：母题图入口（Ctrl+V 粘贴截图 / 贴 URL） -->
+      <!-- 顶部：母题锚位（守恒锚小徽章）+ 图入口（Ctrl+V 粘贴截图 / 贴 URL） -->
       <div class="mother-bar">
-        <div v-if="motherImg" class="mother-thumb">
-          <img :src="motherImg" alt="母题图" referrerpolicy="no-referrer" />
-          <span class="thumb-tag">母题</span>
+        <!-- P10：母题不再是唯一展示位，顶部保留为当前母题小徽章（守恒锚视觉提示） -->
+        <div v-if="motherImg" class="mother-badge" title="当前母题（守恒锚）" @click="previewUrl = motherImg">
+          <img :src="motherImg" alt="母题" referrerpolicy="no-referrer" />
+          <span class="badge-tag">母题</span>
         </div>
         <div class="mother-input">
           <el-input
             v-model="imageUrl"
             size="default"
-            placeholder="可直接 Ctrl+V 粘贴截图，或贴 OSS / 公网图片地址（http…），首轮必填"
+            placeholder="可直接 Ctrl+V 粘贴截图，或贴 OSS / 公网图片地址（http…）后回车加入附件"
             :disabled="sending || uploading"
             clearable
+            @keyup.enter.prevent="commitUrlInput"
+            @blur="commitUrlInput"
           >
             <template #prepend>🖼 母题图</template>
           </el-input>
+          <!-- P10：待发附件缩略图（可删除），发送时随用户气泡进流 -->
+          <div v-if="pendingImages.length" class="pending-imgs">
+            <div v-for="(u, k) in pendingImages" :key="k" class="pending-thumb">
+              <img :src="u" referrerpolicy="no-referrer" @click="previewUrl = u" />
+              <button type="button" class="pending-del" :disabled="sending" @click="removePending(u)">
+                ✕
+              </button>
+            </div>
+          </div>
           <p v-if="uploading" class="uploading-hint">截图上传中…</p>
           <p class="default-hint">
             默认配方：守考点 + 年级 + 难度，换数字 / 情境，出 3 道（2 普通 1 难）。
@@ -598,12 +704,23 @@ onBeforeUnmount(() => {
             :class="item.role === 'user' ? 'is-user' : 'is-ai'"
           >
             <div class="bubble" :class="item.role === 'ai' ? `ai-${item.kind}` : ''">
+              <!-- P10：图随气泡进流（~120px 缩略图，点开看大图）；同气泡可带文字 -->
+              <div v-if="item.images && item.images.length" class="bubble-imgs">
+                <img
+                  v-for="(u, k) in item.images"
+                  :key="k"
+                  :src="u"
+                  class="bubble-img"
+                  referrerpolicy="no-referrer"
+                  @click="previewUrl = u"
+                />
+              </div>
               <!-- AI 气泡走富文本（markdown + LaTeX）；用户气泡纯文本 -->
               <MarkdownMath
                 v-if="item.role === 'ai' && item.kind !== 'error'"
                 :content="item.text"
               />
-              <span v-else class="bubble-text">{{ item.text }}</span>
+              <span v-else-if="item.text" class="bubble-text">{{ item.text }}</span>
             </div>
           </div>
 
@@ -636,7 +753,7 @@ onBeforeUnmount(() => {
           type="primary"
           class="send-btn"
           :loading="sending"
-          :disabled="!input.trim() && !imageUrl.trim()"
+          :disabled="!input.trim() && !imageUrl.trim() && pendingImages.length === 0"
           @click="send"
         >
           发送
@@ -654,6 +771,12 @@ onBeforeUnmount(() => {
       @regenerate="regenerate"
       @persist="persistAll"
     />
+
+    <!-- P10：点开看大图（简易遮罩，点遮罩关闭；不引新依赖） -->
+    <div v-if="previewUrl" class="img-preview-mask" @click="previewUrl = ''">
+      <img :src="previewUrl" class="img-preview" referrerpolicy="no-referrer" @click.stop />
+      <button type="button" class="img-preview-close" @click="previewUrl = ''">✕</button>
+    </div>
   </div>
 </template>
 
@@ -741,32 +864,79 @@ onBeforeUnmount(() => {
   background: #fafbfc;
   flex-shrink: 0;
 }
-.mother-thumb {
+/* P10：母题小徽章（守恒锚视觉提示，比原 72px 缩略图更克制） */
+.mother-badge {
   position: relative;
-  width: 72px;
-  height: 72px;
+  width: 48px;
+  height: 48px;
   flex-shrink: 0;
   border-radius: 8px;
   overflow: hidden;
-  border: 1px solid #e5e6eb;
+  border: 1px solid #7b6cf0; /* violet-600：守恒锚 */
+  cursor: zoom-in;
 }
-.mother-thumb img {
+.mother-badge img {
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
-.thumb-tag {
+.badge-tag {
   position: absolute;
   left: 0;
   bottom: 0;
-  font-size: 10px;
+  right: 0;
+  font-size: 9px;
   color: #fff;
-  background: rgba(0, 0, 0, 0.55);
-  padding: 1px 6px;
+  text-align: center;
+  background: rgba(123, 108, 240, 0.78);
+  padding: 0 2px;
 }
 .mother-input {
   flex: 1;
   min-width: 0;
+}
+
+/* P10：待发附件缩略图行 */
+.pending-imgs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.pending-thumb {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid #e5e6eb;
+}
+.pending-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  cursor: zoom-in;
+}
+.pending-del {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.pending-del:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 .uploading-hint {
   margin: 6px 2px 0;
@@ -831,6 +1001,27 @@ onBeforeUnmount(() => {
   background: #4080ff;
   color: #fff;
   border-bottom-right-radius: 4px;
+}
+
+/* P10：气泡内图片缩略图（~120px），点开看大图 */
+.bubble-imgs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+/* 图后若紧跟文本/富文本，补间距 */
+.bubble-imgs:has(+ *) {
+  margin-bottom: 6px;
+}
+.bubble-img {
+  width: 120px;
+  max-width: 100%;
+  height: auto;
+  max-height: 160px;
+  object-fit: cover;
+  border-radius: 8px;
+  cursor: zoom-in;
+  display: block;
 }
 .ai-normal {
   background: #f2f3f5;
@@ -965,5 +1156,40 @@ onBeforeUnmount(() => {
 }
 .session-del:hover {
   color: #cf1322;
+}
+
+/* P10：大图预览遮罩 */
+.img-preview-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  background: rgba(0, 0, 0, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: zoom-out;
+}
+.img-preview {
+  max-width: 90vw;
+  max-height: 90vh;
+  object-fit: contain;
+  border-radius: 8px;
+  cursor: default;
+}
+.img-preview-close {
+  position: fixed;
+  top: 20px;
+  right: 24px;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+  font-size: 18px;
+  cursor: pointer;
+}
+.img-preview-close:hover {
+  background: rgba(255, 255, 255, 0.32);
 }
 </style>
