@@ -6,7 +6,7 @@
 //             → 按 freeTags[0].name 分组（"其他"段末尾）→ v-html 渲染 → typesetPaperPreview
 //   段⑤ PDF 工艺：本组件不实现，按钮 click handler stub（开发组长波 3 自接手）
 // ────────────────────────────────────────────────────────────────────────────
-import { ref, computed, nextTick, watch } from 'vue'
+import { ref, computed, nextTick, watch, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Download } from '@element-plus/icons-vue'
 import {
@@ -17,12 +17,18 @@ import {
 import { typesetPaperPreview } from '@/utils/mathjax'
 import { exportPaperToPdf } from '@/utils/pdf-export'
 import { proxyImage } from '@/utils/image-proxy'
+import { useUserStore } from '@/store/user'
+import { getCurrentUser } from '@/api/user'
+// PRD-A-014 T2 — 导出配置弹窗（异步导出入口，旧 handleExportPdf 保留不删）
+import ExportConfigDialog from '@/components/business/ExportConfigDialog/index.vue'
 
 const props = defineProps<{
   visible: boolean
   paperName: string
   // PRD-A-013 T2 — 雪花 ID string[]
   ids: string[]  // basket 提供的题目 id 列表（入参顺序 = 显示顺序）
+  /** PRD-A-014 T2 — 整卷导出时传卷 ID（可选，自选题集不传） */
+  paperId?: string
   /** 打开时的初始"显示答案"勾选态（可选，默认 false）— Wave2b 工作台右栏联动 */
   initialShowAnswer?: boolean
   /** 打开时的初始"显示解析"勾选态（可选，默认 false）— Wave2b 工作台右栏联动 */
@@ -37,6 +43,43 @@ const emit = defineEmits<{
 // PRD §0.4 misikt 真站铁证：预览模态 + PDF 均为纯图模式（pdftotext 提取 0 文本 / 全位图）。
 // V1 仅支持 image-only 模式；富文本模式待 B-014 录题完成后再考虑。
 const RENDER_MODE = 'image-only' as const
+
+// ── 用户 store（水印用） ──────────────────────────────────────────────────────
+const userStore = useUserStore()
+
+// 🔴 onMounted 兜底：userInfo 是内存态，F5 刷新后会丢（A-002 老坑）
+onMounted(async () => {
+  if (!userStore.userInfo) {
+    try {
+      const user = await getCurrentUser()
+      userStore.setUserInfo(user)
+    } catch (e) {
+      console.warn('[PaperPreview] getCurrentUser failed', e)
+    }
+  }
+})
+
+/** 手机号脱敏 138****1234 */
+function maskPhone(phone?: string): string {
+  if (!phone || phone.length < 7) return phone ?? ''
+  return phone.slice(0, 3) + '****' + phone.slice(-4)
+}
+
+/** 水印文案：老师名 + 脱敏手机号 */
+const watermarkText = computed(() => {
+  const info = userStore.userInfo
+  const name = info?.realName || info?.userName || '教师'
+  const phone = maskPhone(info?.phone)
+  return phone ? `${name}  ${phone}` : name
+})
+
+// ── 导出配置弹窗 ─────────────────────────────────────────────────────────────
+// PRD-A-014 T2：「导出 PDF」按钮改为先弹配置弹窗（旧 handleExportPdf 入口切走，保留函数）
+const exportDialogVisible = ref(false)
+
+function openExportDialog() {
+  exportDialogVisible.value = true
+}
 
 // ── 状态 ────────────────────────────────────────────────────────────────────
 const loading = ref(false)
@@ -230,20 +273,28 @@ async function handleExportPdf() {
           <el-checkbox v-model="showExplain">显示解析</el-checkbox>
           <el-divider direction="vertical" />
           <span v-if="exporting" class="pp-export-progress">{{ exportProgress }}</span>
+          <!-- PRD-A-014 T2：入口改为先弹导出配置弹窗（旧 handleExportPdf 保留不删） -->
           <el-button
             type="primary"
             :icon="Download"
-            :loading="exporting"
             :disabled="loading || groups.length === 0"
-            @click="handleExportPdf"
+            @click="openExportDialog"
           >
-            {{ exporting ? '导出中…' : '导出 PDF' }}
+            导出 PDF
           </el-button>
         </div>
       </div>
     </template>
 
     <div v-loading="loading" element-loading-text="试题加载中..." class="pp-body">
+      <!-- PRD-A-014 T2 §5 — 预览水印层：absolute 平铺，pointer-events:none，常显（与导出水印开关无关） -->
+      <div class="pp-watermark" aria-hidden="true">
+        <span
+          v-for="n in 40"
+          :key="n"
+          class="pp-watermark-text"
+        >{{ watermarkText }}</span>
+      </div>
       <div ref="previewRoot" class="paper-preview-content">
         <div v-if="!loading && groups.length === 0" class="pp-empty">
           暂无试题数据
@@ -314,6 +365,14 @@ async function handleExportPdf() {
     </div>
 
   </el-dialog>
+
+  <!-- PRD-A-014 T2 — 导出配置弹窗 -->
+  <ExportConfigDialog
+    v-model:visible="exportDialogVisible"
+    :paper-name="displayName"
+    :paper-id="props.paperId"
+    :ids="props.ids"
+  />
 </template>
 
 <style scoped>
@@ -367,6 +426,34 @@ async function handleExportPdf() {
 .pp-body {
   min-height: calc(100vh - 130px);
   padding: 24px 40px;
+  position: relative;
+}
+
+/* PRD-A-014 T2 §5 — 预览水印层：pointer-events:none 不影响交互，absolute 平铺整个 body 区 */
+.pp-watermark {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 10;
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 0;
+}
+
+.pp-watermark-text {
+  display: inline-block;
+  font-size: 14px;
+  color: rgba(30, 138, 138, 0.12);
+  transform: rotate(-30deg);
+  white-space: nowrap;
+  width: 260px;
+  margin: 40px 20px;
+  user-select: none;
 }
 
 .paper-preview-content {
