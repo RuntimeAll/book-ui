@@ -12,6 +12,7 @@ import {
   deleteFolder,
   type FavoriteFolder,
 } from '@/api/question'
+import ExportRecords from './ExportRecords.vue'
 
 // U 卡 段④ — 教师"我的工作台"聚合页（PRD §0.1 U-3）。
 //
@@ -237,10 +238,13 @@ onMounted(async () => {
       </el-button>
     </header>
 
-    <!-- 4 section 网格 -->
-    <main class="sections-grid">
-      <!-- section 1 — 我创建的卷 -->
-      <section class="section-card">
+    <!-- 页签主体 -->
+    <el-tabs class="workspace-tabs">
+      <!-- 页签 1：概览 (我创建的卷 + 我的收藏) -->
+      <el-tab-pane label="概览" name="overview">
+        <main class="sections-grid">
+          <!-- section 1 — 我创建的卷 -->
+          <section class="section-card">
         <div class="section-header">
           <div class="section-title">
             <el-icon class="section-icon" color="#1E8A8A"><Document /></el-icon>
@@ -347,7 +351,15 @@ onMounted(async () => {
         </div>
       </section>
 
-    </main>
+        </main>
+      </el-tab-pane>
+
+      <!-- 页签 2：导出记录 -->
+      <el-tab-pane label="导出记录" name="exports">
+        <ExportRecords />
+      </el-tab-pane>
+
+    </el-tabs>
   </div>
 </template>
 
