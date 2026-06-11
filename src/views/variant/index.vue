@@ -3,9 +3,12 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'v
 import { ElMessage } from 'element-plus'
 import { useUserStore } from '@/store/user'
 import {
+  editVariantItem,
   fetchVariantArtifact,
   fetchVariantHistory,
   persistVariantGroup,
+  reorderVariant,
+  reverifyVariantItem,
   streamVariant,
   uploadMotherImage,
 } from '@/api/variant'
@@ -77,6 +80,8 @@ const thinking = ref(false) // LLM token 流期的「思考中」动效
 const currentRail = ref<RailItem | null>(null)
 // PRD-C-011：右栏卡片栅数据源 = artifact 快照帧（snapshot 全量，整量替换）
 const artifact = ref<VariantArtifact | null>(null)
+// 题组编辑器：正在重新验算的题 index（1-based），驱动该卡 loading 态
+const reverifyingIndex = ref<number | null>(null)
 const streamRef = ref<HTMLElement | null>(null)
 
 const currentRailEmpty = computed(
@@ -463,6 +468,61 @@ async function persistAll() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// 题组编辑器（拖动排序 / 内容编辑 / 重新验算）—— 全部走 BE 直连端点落 toolkit 会话 state，
+// 返回 artifact 整量替换刷新右栏。这些是确定性/单题动作，不进对话流、不绕 LLM 分类器。
+// ---------------------------------------------------------------------------
+
+/** 拖动排序：order = 1-based 全排列。ArtifactPanel 已乐观更新；失败回滚（拉回 BE 快照）。 */
+async function onReorder(order: number[]) {
+  if (sending.value) return
+  try {
+    const a = await reorderVariant(threadId.value, order)
+    if (a) artifact.value = a // 以 BE 重排后快照为准（seq/字段跟题不错位）
+  } catch (e) {
+    ElMessage.error(`排序失败：${e instanceof Error ? e.message : String(e)}`)
+    // 回滚：拉回 BE 当前真实快照，撤销乐观重排
+    try {
+      const a = await fetchVariantArtifact(threadId.value)
+      if (a) artifact.value = a
+    } catch {
+      /* 拉取也失败则保持现状，老师可刷新 */
+    }
+  }
+}
+
+/** 内容编辑保存：只 patch 改过的字段。BE 净化 + 标 manual + 置 tier='manual'，返回新快照。 */
+async function onEditItem(payload: {
+  index: number
+  stem?: string
+  answer?: string
+  solution?: string
+}) {
+  if (sending.value) return
+  try {
+    const { index, ...patch } = payload
+    const a = await editVariantItem(threadId.value, index, patch)
+    if (a) artifact.value = a
+    ElMessage.success('已保存修改（验算待重跑，可点「重新验算」）')
+  } catch (e) {
+    ElMessage.error(`保存失败：${e instanceof Error ? e.message : String(e)}`)
+  }
+}
+
+/** 单题重新验算：跑闸B（LLM+sympy，几秒），徽章变真实验算结果。loading 落本题。 */
+async function onReverify(index: number) {
+  if (sending.value || reverifyingIndex.value !== null) return
+  reverifyingIndex.value = index
+  try {
+    const a = await reverifyVariantItem(threadId.value, index)
+    if (a) artifact.value = a
+  } catch (e) {
+    ElMessage.error(`重新验算失败：${e instanceof Error ? e.message : String(e)}`)
+  } finally {
+    reverifyingIndex.value = null
+  }
+}
+
 /** 换一批：重发初始出题 utterance（整组重新出，agent 重新分析母题） */
 function regenerate() {
   if (sending.value || !firstComposeMessage) return
@@ -767,9 +827,13 @@ onBeforeUnmount(() => {
       :artifact="artifact"
       :sending="sending"
       :can-regenerate="!!firstComposeMessage || !!motherImg"
+      :reverifying-index="reverifyingIndex"
       @utterance="sendUtterance"
       @regenerate="regenerate"
       @persist="persistAll"
+      @reorder="onReorder"
+      @edit="onEditItem"
+      @reverify="onReverify"
     />
 
     <!-- P10：点开看大图（简易遮罩，点遮罩关闭；不引新依赖） -->

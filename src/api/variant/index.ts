@@ -98,6 +98,11 @@ export interface VariantArtifactItem {
   gene: string | null
   persisted: boolean
   /**
+   * 题组编辑器（FE 端编辑）：BE edit-item 后置位 tier='manual'（验算待重跑的中性态）。
+   * VariantCard 据此渲染中性「手动编辑」徽章 + 显示「重新验算」按钮（reverify 后变真实 tier）。
+   * 注：BE 字段白名单已挡 manual_edited/from_edit 不外漏入库，故 FE 仅消费 tier='manual'。
+   */
+  /**
    * PRD-C-013 P2b：BE 后续帧标记本题被剔除（闸链判废）。true → ArtifactPanel 触发退场过渡后移除。
    * 增量 merge 语义专用；定稿帧不应再带 _dropped 的题。
    */
@@ -399,6 +404,80 @@ export async function fetchVariantArtifact(threadId: string): Promise<VariantArt
   const raw = (await res.json()) as { items?: unknown }
   // 复用流内帧的宽松校验（同契约）
   return pickArtifact({ type: 'custom', content: '', custom_data: { artifact: raw } })
+}
+
+// ---------------------------------------------------------------------------
+// 题组编辑器（傻瓜式可视化，3 个直连端点；照 /variant/persist 直连模式：BE aget_state
+// → 改 → aupdate_state(as_node) → 返回 _artifact_payload）。
+//   - 都走 /agent proxy（toolkit 原生接口，无 misikt envelope，不走 http/request 拦截器）；
+//   - body 带 thread_id（会话键），返回 {ok:true, artifact:<_artifact_payload>}；
+//   - 不入 RuoYi、无需 ruoyi_token（题组是 toolkit 会话状态，编辑不落库；「全部入库」
+//     仍走既有 persistVariantGroup）。失败抛错，调用方自行兜底。
+// ---------------------------------------------------------------------------
+
+/** 题组编辑器端点的统一返回（artifact = _artifact_payload，复用 pickArtifact 解包） */
+function unpackEditResult(raw: unknown): VariantArtifact | null {
+  const data = (raw && typeof raw === 'object' ? raw : {}) as {
+    ok?: boolean
+    artifact?: unknown
+    error?: string
+  }
+  if (data.ok === false) throw new Error(data.error || '编辑失败')
+  return pickArtifact({
+    type: 'custom',
+    content: '',
+    custom_data: { artifact: data.artifact as Record<string, unknown> },
+  })
+}
+
+async function postEdit(
+  path: string,
+  body: Record<string, unknown>
+): Promise<VariantArtifact | null> {
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const detail = await res
+      .json()
+      .then((d: { detail?: string; error?: string }) => d.detail || d.error)
+      .catch(() => '')
+    throw new Error(detail || `${path} ${res.status}`)
+  }
+  return unpackEditResult(await res.json())
+}
+
+/**
+ * 拖动排序（纯代码重排，零 LLM）。order = 1-based 全排列（长度=当前题数，每号恰一次）；
+ * 非法（给不全/重复/越界）BE 返 400 或 {ok:false}。返回重排后的 artifact 快照。
+ */
+export function reorderVariant(threadId: string, order: number[]): Promise<VariantArtifact | null> {
+  return postEdit('/agent/variant/reorder', { thread_id: threadId, order })
+}
+
+/**
+ * 内容编辑（只 patch 传入字段，零 LLM）。index = 1-based；只传改过的字段，其余不动。
+ * BE 写回前过 _sanitize_rich_text + 标 manual_edited/from_edit + 置 tier='manual'（验算待重跑）。
+ */
+export function editVariantItem(
+  threadId: string,
+  index: number,
+  patch: { stem?: string; answer?: string; solution?: string }
+): Promise<VariantArtifact | null> {
+  return postEdit('/agent/variant/edit-item', { thread_id: threadId, index, ...patch })
+}
+
+/**
+ * 单题重新验算（on-demand，跑闸B：_solve_one + _machine_verify，只跑一题）。index = 1-based。
+ * 判决仍只读 sympy verdict（铁律不破）；跑完该题 tier 变真实验算结果，清掉 manual 待验算语义。
+ */
+export function reverifyVariantItem(
+  threadId: string,
+  index: number
+): Promise<VariantArtifact | null> {
+  return postEdit('/agent/variant/reverify', { thread_id: threadId, index })
 }
 
 // ---------------------------------------------------------------------------

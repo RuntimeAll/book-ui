@@ -10,7 +10,8 @@
 //   - 卡片快捷键（换数字/换场景/答疑，需要 LLM 生成）仍走 utterance → chat SSE（铁律 1）
 // 旧后端（无 artifact 帧）→ 空态引导，左栏完全可用（向后兼容兜底）。
 // ---------------------------------------------------------------------------
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import Sortable from 'sortablejs'
 import type { VariantArtifact, VariantArtifactItem } from '@/api/variant'
 import VariantCard from './VariantCard.vue'
 
@@ -20,12 +21,20 @@ const props = defineProps<{
   sending: boolean
   /** 是否已有初始出题 utterance（决定「换一批」可用性） */
   canRegenerate: boolean
+  /** 正在重新验算的题 index（1-based）；该卡显示 loading 态 */
+  reverifyingIndex?: number | null
 }>()
 
 const emit = defineEmits<{
   (e: 'utterance', text: string): void
   (e: 'regenerate'): void
   (e: 'persist'): void
+  /** 拖动排序：order = 1-based 全排列（按当前渲染序的 index 序列）；宿主调 reorderVariant */
+  (e: 'reorder', order: number[]): void
+  /** 内容编辑：宿主调 editVariantItem */
+  (e: 'edit', payload: { index: number; stem?: string; answer?: string; solution?: string }): void
+  /** 重新验算：宿主调 reverifyVariantItem */
+  (e: 'reverify', index: number): void
 }>()
 
 // ---------------------------------------------------------------------------
@@ -120,6 +129,94 @@ const pendingCount = computed(() => {
   return total > live ? total - live : 0
 })
 
+// ---------------------------------------------------------------------------
+// 拖动排序（sortablejs，手柄拖拽，移动端友好）。
+//   - 仅在「定稿态」(非 partial、非 sending) 启用；增量上屏期禁用（避免拖到一半被帧重排）。
+//   - drop 后按新 DOM 顺序读各卡 data-seq → 映射成「新序对应的原 index 序列」= 1-based
+//     全排列；乐观更新本地 mergedItems，调 emit('reorder')，失败由宿主回滚（重发 artifact）。
+//   - 已收录(persisted)题也可拖（排序不改收录态）；单题时无意义但不禁用（order=[1] 合法）。
+// ---------------------------------------------------------------------------
+const listEl = ref<HTMLElement | null>(null)
+let sortable: Sortable | null = null
+
+// 可拖拽条件：有题、非发送中、非增量帧期（定稿/恢复才稳定）
+const draggable = computed(
+  () => items.value.length > 1 && !props.sending && props.artifact?.partial !== true
+)
+
+function onDrop() {
+  const root = listEl.value
+  if (!root) return
+  // 读 drop 后的 DOM 顺序：每张卡的 data-seq（= 拖前的 item.seq），映射回当时的 index
+  const seqByOrder: number[] = []
+  root.querySelectorAll<HTMLElement>('[data-card-seq]').forEach((el) => {
+    const s = Number(el.dataset.cardSeq)
+    if (Number.isFinite(s)) seqByOrder.push(s)
+  })
+  const cur = items.value
+  // seq → 该题拖前的 1-based index（按拖前 seq 升序 = item.index 顺序）
+  const idxBySeq = new Map<number, number>(cur.map((it) => [it.seq, it.index]))
+  const order = seqByOrder.map((s) => idxBySeq.get(s)).filter((n): n is number => typeof n === 'number')
+  // 校验：长度齐 + 全排列（每个 1..N 恰一次），否则放弃（让 Vue 按既有 items 重渲回原序）
+  const n = cur.length
+  const valid =
+    order.length === n &&
+    new Set(order).size === n &&
+    order.every((v) => v >= 1 && v <= n)
+  if (!valid || order.every((v, i) => v === i + 1)) {
+    // 非法或无变化 → 强制按原 items 重渲（撤销 sortable 的 DOM 改动）
+    forceRerender()
+    return
+  }
+  // 乐观更新：按新顺序重排本地 items 并重编 index/seq（与 BE _reorder_items 同义：seq 跟新位）
+  const reordered = order.map((origIdx, i) => {
+    const it = cur.find((c) => c.index === origIdx)!
+    return { ...it, index: i + 1, seq: i + 1 }
+  })
+  mergedItems.value = reordered
+  emit('reorder', order)
+}
+
+// 撤销 sortable 的就地 DOM 改动：v-for 的 :key 不变时 Vue 不会重排已被 sortable 移动的节点，
+// 故清空再 nextTick 重填，强制按 mergedItems 现序重建。
+function forceRerender() {
+  const snapshot = mergedItems.value
+  mergedItems.value = []
+  void nextTick(() => {
+    mergedItems.value = snapshot
+  })
+}
+
+function initSortable() {
+  if (sortable || !listEl.value) return
+  sortable = Sortable.create(listEl.value, {
+    handle: '.drag-handle',
+    animation: 160,
+    ghostClass: 'card-ghost',
+    chosenClass: 'card-chosen',
+    // 占位卡 / 空态等非题卡不可拖（只认带 data-card-seq 的真实卡）
+    draggable: '[data-card-seq]',
+    filter: '.pending-card,.skeleton-card',
+    onEnd: onDrop,
+  })
+}
+
+watch(
+  draggable,
+  (on) => {
+    void nextTick(() => {
+      if (on) initSortable()
+      if (sortable) sortable.option('disabled', !on)
+    })
+  },
+  { immediate: true }
+)
+
+onBeforeUnmount(() => {
+  sortable?.destroy()
+  sortable = null
+})
+
 function persistAll() {
   if (props.sending || items.value.length === 0 || allPersisted.value) return
   emit('persist')
@@ -162,18 +259,37 @@ function regenerate() {
     </header>
 
     <!-- 卡片列 -->
-    <div class="canvas-body">
+    <div ref="listEl" class="canvas-body">
       <template v-if="items.length > 0 || pendingCount > 0">
         <!-- P2b：按 seq 原位 merge，剔除题（_dropped）走 is-dropping 退场过渡后由计时移除 -->
-        <VariantCard
+        <!-- 题组编辑器：每卡包一层拖拽行（data-card-seq = drop 后读新序的键 + .drag-handle 拖手柄） -->
+        <div
           v-for="it in items"
           :key="it.seq"
-          :item="it"
-          :sending="sending"
-          :checking="checking"
+          class="card-wrap"
           :class="{ 'is-dropping': dropping.has(it.seq) }"
-          @utterance="(t: string) => emit('utterance', t)"
-        />
+          :data-card-seq="it.seq"
+        >
+          <button
+            v-if="draggable"
+            type="button"
+            class="drag-handle"
+            title="拖动调整题序"
+            aria-label="拖动调整题序"
+          >
+            ⠿
+          </button>
+          <VariantCard
+            class="card-body"
+            :item="it"
+            :sending="sending"
+            :checking="checking"
+            :reverifying="reverifyingIndex === it.index"
+            @utterance="(t: string) => emit('utterance', t)"
+            @edit="(p) => emit('edit', p)"
+            @reverify="(i: number) => emit('reverify', i)"
+          />
+        </div>
         <!-- PRD-C-012 P2：增量帧期的「生成中」占位卡（题号顺延已完成题，定稿帧到达即消失） -->
         <div
           v-for="n in pendingCount"
@@ -294,8 +410,53 @@ function regenerate() {
   gap: 14px;
 }
 
+/* 拖拽行：手柄 + 卡片横排（手柄居中、卡片占满剩余宽） */
+.card-wrap {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+.card-wrap > .card-body {
+  flex: 1;
+  min-width: 0;
+}
+/* 拖手柄：默认低调，hover 转 grab；移动端 touch 可拖 */
+.drag-handle {
+  flex-shrink: 0;
+  align-self: center;
+  width: 22px;
+  padding: 6px 0;
+  border: none;
+  background: none;
+  color: #c0c6cf;
+  font-size: 15px;
+  line-height: 1;
+  cursor: grab;
+  border-radius: 6px;
+  touch-action: none;
+  user-select: none;
+}
+.drag-handle:hover {
+  color: #1e8a8a; /* teal-600 */
+  background: #e6f2f2;
+}
+.drag-handle:active {
+  cursor: grabbing;
+}
+/* sortable 拖拽态：占位幽灵 + 抬起卡 */
+.card-ghost {
+  opacity: 0.4;
+}
+.card-ghost > .card-body {
+  border: 1px dashed #7b6cf0;
+  background: #f5f8f8;
+}
+.card-chosen > .card-body {
+  box-shadow: 0 6px 18px rgba(29, 42, 46, 0.12);
+}
+
 /* P2b 剔除题退场过渡：淡出 + 收高（与 scheduleDropRemoval 320ms 兜底对齐） */
-.canvas-body > :deep(.is-dropping) {
+.canvas-body > .is-dropping {
   opacity: 0;
   transform: translateX(12px);
   max-height: 0;
