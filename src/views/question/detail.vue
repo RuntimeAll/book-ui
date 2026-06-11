@@ -125,7 +125,9 @@ async function handleBasketToggle() {
 }
 
 // ── 答案/解析折叠 ─────────────────────────────────────────────
-const answerExpanded = ref(false)
+// 2026-06-11 用户拍板：答案默认展开（老师看题先看答案是主流程，点开一次是多余动作）；
+// 解析/相似题推荐仍默认收起（内容长非必看，要默认开再调）。
+const answerExpanded = ref(true)
 const explainExpanded = ref(false)
 const similarExpanded = ref(false)
 
