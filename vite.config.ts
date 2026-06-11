@@ -8,10 +8,10 @@ import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 
 // ---------------------------------------------------------------------------
 // V1 卡（题库去原网站化）：proxy 全本地，删 misikt fallback + cookie 注入。
-// 所有 /api/* → http://localhost:8080（book-server），axios baseURL='/api'
+// 所有 /api/* → BOOK_SERVER_TARGET（book-server，端口见下方端口归属注释），axios baseURL='/api'
 //   → 客户端 path 形如 '/teacher/qd/note/123'
 //   → vite proxy 收到 '/api/teacher/qd/note/123'
-//   → rewrite 掉 /api → 转发 'http://localhost:8080/teacher/qd/note/123'
+//   → rewrite 掉 /api → 转发 '<BOOK_SERVER_TARGET>/teacher/qd/note/123'
 //
 // 18+ 端点（详见 PRD §3.1）全走本地 — 无白名单/fallback 分支。
 // ---------------------------------------------------------------------------
@@ -25,6 +25,14 @@ const BOOK_SERVER_TARGET = 'http://localhost:8080'
 //    走同源避免浏览器直连跨端口 CORS。ai-orchestrator 返回裸 JSON（非 misikt envelope），
 //    所以聊天调用独立封装（src/api/chat），不复用 /api 那套 misikt 拦截器。
 const AI_ORCHESTRATOR_TARGET = 'http://localhost:8092'
+
+// 🔴 PRD-C-009：举一反三 agent 跑在 agent-service-toolkit（LangGraph/FastAPI）—— 与
+//    ai-orchestrator(:8092) 是两个独立 Python 服务。前端调 /agent/variant/stream → vite proxy
+//    rewrite 掉 /agent → 转 <AI_TOOLKIT_TARGET>/variant/stream（toolkit 原生 SSE 协议：
+//    data:{type:token|message|...} + data:[DONE]）。同源绕 CORS；toolkit 未设 AUTH_SECRET 故免鉴权。
+//    与 /ai(:8092)、/api 三条调用链互不复用拦截器（src/api/variant 独立封装）。
+//    🔴 端口归属：A 线副本(codeplace-A/agent-service-toolkit)=:8095 / C 线=:8093，跨分支合并以目标分支线为准。
+const AI_TOOLKIT_TARGET = 'http://localhost:8095'
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -52,11 +60,21 @@ export default defineConfig({
         secure: false,
         rewrite: (p) => p.replace(/^\/api/, ''),
       },
-      '/ai': {
+      // 🔴 用正则 `^/ai/`（带尾斜杠）而非裸 `/ai` 前缀 —— 否则 vite 前缀匹配会把 SPA 路由
+      //    /ai-assistant、/ai-variant 也吞进 proxy（/ai-variant → 转 :8092 → 404 detail:Not Found）。
+      //    `^/ai/` 只命中 /ai/chat 这类真接口，不误伤 /ai-* 页面路由（直连/刷新也不再 404）。
+      '^/ai/': {
         target: AI_ORCHESTRATOR_TARGET,
         changeOrigin: true,
         secure: false,
         rewrite: (p) => p.replace(/^\/ai/, ''),
+      },
+      // 🔴 PRD-C-009 举一反三 agent（toolkit :8093）。同样用 `^/agent/` 防误吞未来 /agent-* 路由。
+      '^/agent/': {
+        target: AI_TOOLKIT_TARGET,
+        changeOrigin: true,
+        secure: false,
+        rewrite: (p) => p.replace(/^\/agent/, ''),
       },
     },
   },

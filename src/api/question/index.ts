@@ -85,6 +85,8 @@ export interface QuestionPageParams {
   keyWord?: string
   notTaskQuestion?: number
   notUsedQuestion?: number
+  /** PRD-C-009「我的题库」：true=只看当前登录老师自己的题（owner 由后端 LoginHelper 定）。空/false=全量。 */
+  mine?: boolean
 }
 
 // 题目详情（GET /teacher/question/{id} 返）

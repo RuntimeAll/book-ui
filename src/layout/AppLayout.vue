@@ -56,9 +56,11 @@ interface MenuItem {
 const allMenuItems: MenuItem[] = [
   { label: '首页', path: '/home' },
   { label: 'AI 助手', path: '/ai-assistant' },                  // 🔴 PRD-C-004/005 老师 vibe 聊天入口（2026-06-05 让位真首页后从 /home 下移至此）
+  { label: '举一反三', path: '/ai-variant' },                   // 🔴 PRD-C-009 图片变式 agent 入口（toolkit :8093）
   { label: '我的工作台', path: '/workspace' },                  // U-3 教师工作台聚合页
   { label: '卷库', path: '/papers/index' },
   { label: '题库', path: '/question/index' },
+  { label: '我的题库', path: '/my-question' },           // 🔴 PRD-C-009 只看自己的题（举一反三跑出 + 上传）
   // 资料库：用户 2026-06-04 拍板「暂时隐藏不做开发」→ 菜单隐藏，路由 /materials/index 保留备用。
   // { label: '资料库', path: '/materials/index' },
   // 管理控制台：纯占位无业务（原 PRD-A-005「按角色显隐」示范页），用户 2026-06-04 拍板移除（菜单+路由一并清）。

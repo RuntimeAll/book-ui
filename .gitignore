@@ -29,3 +29,7 @@ playwright-report/
 **/secrets.json
 **/credentials*.json
 **/password*.json
+
+# dev server 日志（后台起 vite 的输出落盘）
+vite.out.log
+vite.err.log

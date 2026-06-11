@@ -46,6 +46,12 @@ const router = createRouter({
           name: 'QuestionDetail',
           component: () => import('@/views/question/detail.vue'),
         },
+        // PRD-C-009「我的题库」——只看当前登录老师自己的题（mine:true），复用题库详情页
+        {
+          path: '/my-question',
+          name: 'MyQuestion',
+          component: () => import('@/views/my-question/index.vue'),
+        },
         // PRD-A-007 — misikt 式两栏组卷工作台（新建态 + 编辑态同页两入口）
         // 新建态（无 id）：数据源 = useQuestionBasket，动作"创建试卷"
         // 编辑态（带 id）：加载 paper detail，动作"保存修改"
@@ -94,6 +100,13 @@ const router = createRouter({
           path: '/ai-assistant',
           name: 'AiAssistant',
           component: () => import('@/views/ai-compose/index.vue'),
+        },
+        // 🔴 举一反三（PRD-C-009）= 图片变式 agent 入口。拍题 → 贴 OSS 图链 → 自动出代表性变式
+        //    （2 普通 1 难）→ 对话式编辑 → 入个人题库。调 toolkit :8093 variant agent（vite proxy /agent）。
+        {
+          path: '/ai-variant',
+          name: 'AiVariant',
+          component: () => import('@/views/variant/index.vue'),
         },
         // U 卡 段④ — 教师我的工作台聚合页
         {

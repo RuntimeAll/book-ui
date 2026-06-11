@@ -11,6 +11,7 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
+    AiStageRail: typeof import('./src/components/AiStageRail.vue')['default']
     BaseButton: typeof import('./src/components/BaseButton/index.vue')['default']
     ContentWrap: typeof import('./src/components/ContentWrap/index.vue')['default']
     ElAlert: typeof import('element-plus/es')['ElAlert']
@@ -38,6 +39,7 @@ declare module 'vue' {
     ElMain: typeof import('element-plus/es')['ElMain']
     ElOption: typeof import('element-plus/es')['ElOption']
     ElPagination: typeof import('element-plus/es')['ElPagination']
+    ElPopover: typeof import('element-plus/es')['ElPopover']
     ElRadio: typeof import('element-plus/es')['ElRadio']
     ElRadioGroup: typeof import('element-plus/es')['ElRadioGroup']
     ElRate: typeof import('element-plus/es')['ElRate']
@@ -55,6 +57,7 @@ declare module 'vue' {
     FreeTagList: typeof import('./src/components/business/FreeTagList/index.vue')['default']
     Highlight: typeof import('./src/components/Highlight/index.vue')['default']
     Icon: typeof import('./src/components/Icon/index.vue')['default']
+    MarkdownMath: typeof import('./src/components/MarkdownMath.vue')['default']
     PaperBasketFab: typeof import('./src/components/business/PaperBasketFab/index.vue')['default']
     PaperLibrary: typeof import('./src/components/business/PaperLibrary/index.vue')['default']
     PaperPreview: typeof import('./src/components/business/PaperPreview/index.vue')['default']
