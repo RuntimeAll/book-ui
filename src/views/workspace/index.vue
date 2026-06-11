@@ -27,6 +27,10 @@ import ExportRecords from './ExportRecords.vue'
 const router = useRouter()
 const userStore = useUserStore()
 
+// 🔴 2026-06-11 用户反馈"工作台默认没有展开项"：el-tabs 没绑 v-model 而 pane 带显式 name，
+// 默认 modelValue='' 匹配不到任何 pane → 全空白。绑定后默认打开「概览」。
+const activeTab = ref('overview')
+
 // section 1 — 我创建的卷
 const myPapers = ref<PaperListItem[]>([])
 const myPapersLoading = ref(false)
@@ -239,7 +243,7 @@ onMounted(async () => {
     </header>
 
     <!-- 页签主体 -->
-    <el-tabs class="workspace-tabs">
+    <el-tabs v-model="activeTab" class="workspace-tabs">
       <!-- 页签 1：概览 (我创建的卷 + 我的收藏) -->
       <el-tab-pane label="概览" name="overview">
         <main class="sections-grid">
