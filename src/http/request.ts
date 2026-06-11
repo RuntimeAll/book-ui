@@ -116,8 +116,12 @@ instance.interceptors.response.use(
       return Promise.reject(new Error('未登录 (401)'))
     }
     // 500 / 其他业务错误
-    ElMessage.error(data.message || '系统内部错误')
-    return Promise.reject(new Error(data.message || '系统内部错误'))
+    // 🔴 PRD-A-014 G7 踩出：misikt envelope 错误用 message 字段，但 RuoYi 原生异常体（如
+    // ServiceException 并发拒绝）是 {code:500, msg:...} —— 只认 message 会把"已有导出任务正在进行"
+    // 这类可操作文案吞成泛化"系统内部错误"。两种 envelope 都兜。
+    const errMsg = data.message || (data as unknown as { msg?: string }).msg || '系统内部错误'
+    ElMessage.error(errMsg)
+    return Promise.reject(new Error(errMsg))
   },
   (error) => {
     // PRD-A-013 T5 M-10 — 列表竞态防护：上一个请求被 AbortController 主动 cancel，
