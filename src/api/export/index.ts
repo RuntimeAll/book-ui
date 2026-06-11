@@ -8,19 +8,18 @@ import request from '@/http/request'
 
 // ── 类型定义 ─────────────────────────────────────────────────────────────────
 
-/** 卷型：学生卷 / 教师卷（含答案解析）/ 学生卷+答案页附后 */
-export type ExportVariant = 'student' | 'teacher' | 'student_answers_appended'
-
 /** POST /teacher/export/paper 请求体 */
 export interface SubmitExportPayload {
   /** 卷 ID（可选，整卷导出时传；自选题时不传） */
   paperId?: string
   /** 导出题目顺序（来自预览） */
   ids: string[]
-  /** 导出文件名（不含扩展名） */
+  /** 导出文件名（不含扩展名，= 预览页可编辑标题） */
   fileName: string
-  /** 卷型 */
-  variant: ExportVariant
+  /** 随题附答案图（同预览「显示答案」勾选；2026-06-11 去卷型改版，导出=所见即所得） */
+  showAnswer: boolean
+  /** 随题附解析图（同预览「显示解析」勾选） */
+  showExplain: boolean
   /** 是否加水印 */
   watermark: boolean
 }
@@ -92,9 +91,17 @@ export const getExportRecordPage = (params: { pageNum?: number; pageSize?: numbe
   request.get<ExportRecordPage, ExportRecordPage>('/teacher/export/record/page', { params })
 
 /**
- * 重试失败/过期记录（发起新任务）
+ * 重试失败记录（发起新任务）
  * POST /teacher/export/record/{id}/retry
  * 仅本人记录可 retry，越权 404/403
  */
 export const retryExport = (recordId: string) =>
   request.post<SubmitExportResp, SubmitExportResp>(`/teacher/export/record/${recordId}/retry`)
+
+/**
+ * 删除导出记录（2026-06-11 去过期改版：不再 7 天过期，用户自管；删除连 OSS 文件一起删）
+ * DELETE /teacher/export/record/{id}
+ * 仅本人记录可删；进行中（排队/生成中）任务 BE 拒绝
+ */
+export const deleteExportRecord = (recordId: string) =>
+  request.delete<void, void>(`/teacher/export/record/${recordId}`)

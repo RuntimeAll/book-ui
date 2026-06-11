@@ -5,7 +5,8 @@
  * 职责：
  *   - 分页拉取当前用户的导出记录（GET /teacher/export/record/page）
  *   - 四态：排队中(灰) / 生成中(转圈+进度%) / 已完成([下载]青色) / 失败(红,hover见原因,[重试])
- *   - status='2' 且 expireAt < now → 显示"已过期"+[重新导出]（调 retryExport）
+ *   - 删除：已完成/失败记录可删（确认弹窗），删除连 OSS 文件一起删（BE 处理）
+ *     （2026-06-11 用户拍板去掉 7 天过期：文件留存到用户自己删，不再有"已过期/重新导出"态）
  *   - 轮询：页签激活 && document.visibilityState==='visible' && 列表存在 status∈{'0','1'} → 3s 轮询
  *   - 完成通知：轮询发现某条 '1'→'2' 翻转 → ElNotification "《文件名》已生成 [立即下载]"
  *   - 重试成功后列表头部出现新记录（刷新第一页）
@@ -19,11 +20,12 @@ import {
   onActivated,
   onDeactivated,
 } from 'vue'
-import { ElNotification, ElMessage } from 'element-plus'
-import { Loading, Download, RefreshRight, Clock } from '@element-plus/icons-vue'
+import { ElNotification, ElMessage, ElMessageBox } from 'element-plus'
+import { Loading, Download, RefreshRight, Delete } from '@element-plus/icons-vue'
 import {
   getExportRecordPage,
   retryExport,
+  deleteExportRecord,
   type ExportRecordPageItem,
   type ExportRecordStatus,
 } from '@/api/export'
@@ -60,14 +62,7 @@ function formatFileSize(bytes: number | null | undefined): string {
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`
 }
 
-function isExpired(record: ExportRecordPageItem): boolean {
-  if (record.status !== '2') return false
-  if (!record.expireAt) return false
-  return new Date(record.expireAt).getTime() < Date.now()
-}
-
 function statusLabel(record: ExportRecordPageItem): string {
-  if (isExpired(record)) return '已过期'
   switch (record.status) {
     case '0': return '排队中'
     case '1': return `生成中 ${record.progress ?? 0}%`
@@ -78,7 +73,6 @@ function statusLabel(record: ExportRecordPageItem): string {
 }
 
 function statusType(record: ExportRecordPageItem): '' | 'success' | 'warning' | 'danger' | 'info' {
-  if (isExpired(record)) return 'info'
   switch (record.status) {
     case '0': return 'info'
     case '1': return 'warning'
@@ -99,7 +93,7 @@ async function fetchRecords(silent = false) {
     // 检测 '1'→'2' 翻转，发站内通知
     for (const rec of newList) {
       const prev = prevStatusMap.value[rec.recordId]
-      if (prev === '1' && rec.status === '2' && !isExpired(rec) && rec.fileUrl) {
+      if (prev === '1' && rec.status === '2' && rec.fileUrl) {
         // 任务完成通知
         ElNotification({
           title: '导出完成',
@@ -160,6 +154,31 @@ async function handleRetry(record: ExportRecordPageItem) {
     await fetchRecords()
   } catch {
     // 错误已由 http/request.ts 拦截器弹 toast
+  }
+}
+
+// ── 删除（2026-06-11 去过期改版：用户自管，删除连 OSS 文件一起删）──────────────
+
+async function handleDelete(record: ExportRecordPageItem) {
+  try {
+    await ElMessageBox.confirm(
+      `删除后《${record.fileName}》的 PDF 文件将一并从云端移除，无法恢复。确定删除？`,
+      '删除导出记录',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+    )
+  } catch {
+    return // 用户取消
+  }
+  try {
+    await deleteExportRecord(record.recordId)
+    ElMessage.success('已删除')
+    // 当前页删空且不是第一页 → 回退一页
+    if (records.value.length === 1 && pageNum.value > 1) {
+      pageNum.value--
+    }
+    await fetchRecords()
+  } catch {
+    // 错误已由拦截器弹 toast（如"任务进行中不能删除"）
   }
 }
 
@@ -298,12 +317,6 @@ onDeactivated(() => {
               <span v-if="record.status === '2'" class="export-item__size">
                 {{ formatFileSize(record.fileSize) }}
               </span>
-
-              <!-- 过期时间 -->
-              <span v-if="record.expireAt && record.status === '2' && !isExpired(record)" class="export-item__expire">
-                <el-icon><Clock /></el-icon>
-                {{ new Date(record.expireAt).toLocaleDateString() }} 过期
-              </span>
             </div>
           </div>
 
@@ -312,9 +325,9 @@ onDeactivated(() => {
 
           <!-- 操作按钮 -->
           <div class="export-item__actions">
-            <!-- 已完成且未过期 → 下载 -->
+            <!-- 已完成 → 下载 -->
             <el-button
-              v-if="record.status === '2' && !isExpired(record) && record.fileUrl"
+              v-if="record.status === '2' && record.fileUrl"
               type="primary"
               size="small"
               link
@@ -322,17 +335,6 @@ onDeactivated(() => {
               @click="handleDownload(record)"
             >
               下载
-            </el-button>
-
-            <!-- 已过期 → 重新导出 -->
-            <el-button
-              v-if="isExpired(record)"
-              type="primary"
-              size="small"
-              link
-              @click="handleRetry(record)"
-            >
-              重新导出
             </el-button>
 
             <!-- 失败 → 重试 -->
@@ -345,6 +347,18 @@ onDeactivated(() => {
               @click="handleRetry(record)"
             >
               重试
+            </el-button>
+
+            <!-- 已完成/失败 → 删除（连 OSS 文件；进行中 BE 拒绝故不展示） -->
+            <el-button
+              v-if="record.status === '2' || record.status === '3'"
+              type="danger"
+              size="small"
+              link
+              :icon="Delete"
+              @click="handleDelete(record)"
+            >
+              删除
             </el-button>
           </div>
         </li>
@@ -436,14 +450,6 @@ onDeactivated(() => {
 .export-item__size {
   font-size: 12px;
   color: #86909c;
-}
-
-.export-item__expire {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  font-size: 12px;
-  color: #a8abb2;
 }
 
 .export-item__errtip {

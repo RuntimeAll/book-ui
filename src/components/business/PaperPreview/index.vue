@@ -6,8 +6,8 @@
 //             → 按 freeTags[0].name 分组（"其他"段末尾）→ v-html 渲染 → typesetPaperPreview
 //   段⑤ PDF 工艺：本组件不实现，按钮 click handler stub（开发组长波 3 自接手）
 // ────────────────────────────────────────────────────────────────────────────
-import { ref, computed, nextTick, watch, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ref, computed, nextTick, watch, onMounted, onUnmounted } from 'vue'
+import { ElMessage, ElNotification } from 'element-plus'
 import { Download } from '@element-plus/icons-vue'
 import {
   questionListByIds,
@@ -19,8 +19,9 @@ import { exportPaperToPdf } from '@/utils/pdf-export'
 import { proxyImage } from '@/utils/image-proxy'
 import { useUserStore } from '@/store/user'
 import { getCurrentUser } from '@/api/user'
-// PRD-A-014 T2 — 导出配置弹窗（异步导出入口，旧 handleExportPdf 保留不删）
-import ExportConfigDialog from '@/components/business/ExportConfigDialog/index.vue'
+// PRD-A-014 异步导出 API（2026-06-11 用户拍板去掉导出配置弹窗：导出直接用页面状态——
+// 标题可编辑=文件名、显示答案/解析勾选=导出内容、水印开关；点导出即提交+原地赛跑轮询）
+import { submitExport, getExportRecord, type ExportRecordVO } from '@/api/export'
 
 const props = defineProps<{
   visible: boolean
@@ -73,14 +74,6 @@ const watermarkText = computed(() => {
   return phone ? `${name}  ${phone}` : name
 })
 
-// ── 导出配置弹窗 ─────────────────────────────────────────────────────────────
-// PRD-A-014 T2：「导出 PDF」按钮改为先弹配置弹窗（旧 handleExportPdf 入口切走，保留函数）
-const exportDialogVisible = ref(false)
-
-function openExportDialog() {
-  exportDialogVisible.value = true
-}
-
 // ── 状态 ────────────────────────────────────────────────────────────────────
 const loading = ref(false)
 const exporting = ref(false)
@@ -98,10 +91,12 @@ const today = (() => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 })()
 
-// 🔴 2026-06-11 用户反馈"导出文件名跟标题对不上"：标题与导出文件名曾各自兜底（标题直显 prop、
-// 文件名 || '未命名草稿'），prop 为空时俩值分叉。收口成同一个 displayName —— 弹窗标题显示什么，
-// 导出的 .pdf 就叫什么，永远一致。
-const displayName = computed(() => (props.paperName || '').trim() || '未命名草稿')
+// 🔴 2026-06-11 用户两次拍板收口：①标题与导出文件名同源（显示什么导出就叫什么）；
+// ②导出配置弹窗整个去掉 → 标题升级为 header 里可直接编辑的 input，编辑结果即导出文件名。
+const fileName = ref('')
+
+// 水印开关（header 控制台，默认开；导出与预览水印层同走此开关）
+const watermark = ref(true)
 
 
 // 按 basket ids 入参顺序 reorder（兜底 BE 不保序场景；BE 走 FIND_IN_SET 已保序，此处冗余兜底）
@@ -192,6 +187,8 @@ watch(
     // 打开时同步外部传入的初始勾选态（外部未传则保持内部已有值）
     if (props.initialShowAnswer !== undefined) showAnswer.value = props.initialShowAnswer
     if (props.initialShowExplain !== undefined) showExplain.value = props.initialShowExplain
+    // 标题（=导出文件名）每次打开重置为卷名，用户可在 header 直接改
+    fileName.value = (props.paperName || '').trim() || '未命名草稿'
     const idsKey = props.ids.join(',')
     if (idsKey === lastLoadedIds.value && questions.value.length > 0) {
       // 同一组 ids 已加载过 — 跳过 fetch，只重 typeset 一次（防上次切走 MathJax 残留）
@@ -232,7 +229,7 @@ async function handleExportPdf() {
       await nextTick()
       await new Promise((r) => setTimeout(r, 80))
     }
-    const filename = displayName.value
+    const filename = fileName.value.trim() || '未命名草稿'
     await exportPaperToPdf({
       root: previewRoot.value,
       filename,
@@ -246,6 +243,134 @@ async function handleExportPdf() {
   } finally {
     exporting.value = false
     exportProgress.value = ''
+  }
+}
+
+// ── PRD-A-014 异步导出（2026-06-11 弹窗去除版：导出直接用页面状态） ─────────────
+// 赛跑窗口：提交 → 1s 间隔轮询 ≤10 次；10s 内 done → 直接下载；超时 → 转后台 + 通知去向；
+// 失败 → 错误提示。轮询不因关预览中断（用户发起的导出照常送达）。
+
+const MAX_POLL = 10        // 最多 10 次 = 10 秒
+const POLL_INTERVAL = 1000 // 1 秒
+
+let pollTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearPoll() {
+  if (pollTimer !== null) {
+    clearTimeout(pollTimer)
+    pollTimer = null
+  }
+}
+
+onUnmounted(clearPoll)
+
+/** 触发浏览器下载 */
+function triggerDownload(fileUrl: string, name: string) {
+  const a = document.createElement('a')
+  a.href = fileUrl
+  a.download = name.endsWith('.pdf') ? name : `${name}.pdf`
+  a.target = '_blank'
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+}
+
+/** 把 estimatedSeconds 换算成人话 */
+function humanizeSeconds(secs: number): string {
+  if (secs <= 0) return '稍后'
+  if (secs < 60) return `约 ${secs} 秒`
+  return `约 ${Math.round(secs / 60)} 分钟`
+}
+
+function finishExportState() {
+  exporting.value = false
+  exportProgress.value = ''
+}
+
+/** 轮询单条记录直到 done/failed/超次数（超时转后台通知） */
+function pollRecord(recordId: string, estimatedSeconds: number, name: string) {
+  let count = 0
+
+  const doOnePoll = async () => {
+    count++
+    let record: ExportRecordVO | null = null
+    try {
+      record = await getExportRecord(recordId)
+    } catch (e) {
+      // 网络抖动：继续轮询，但不超总次数
+      console.warn('[PaperPreview] export poll failed', e)
+    }
+
+    if (record?.status === '2') {
+      clearPoll()
+      finishExportState()
+      triggerDownload(record.fileUrl!, name)
+      ElMessage.success(`PDF 已生成：${name}.pdf`)
+      return
+    }
+
+    if (record?.status === '3') {
+      clearPoll()
+      finishExportState()
+      ElMessage.error(`导出失败：${record.errorMsg || '未知错误'}`)
+      return
+    }
+
+    if (count >= MAX_POLL) {
+      // 10s 未完 → 转后台，通知去向
+      clearPoll()
+      finishExportState()
+      ElNotification({
+        title: `《${name}》正在后台生成`,
+        message: `预计 ${humanizeSeconds(estimatedSeconds)}，完成后请前往 我的工作台→导出记录 下载。`,
+        type: 'info',
+        duration: 0,
+        onClick: () => {
+          import('@/router').then(({ default: router }) => {
+            router.push('/workspace')
+          })
+        },
+      })
+      return
+    }
+
+    pollTimer = setTimeout(doOnePoll, POLL_INTERVAL)
+  }
+
+  // 第一次延迟 1s 再查（刚提交立刻查大概率还在排队）
+  pollTimer = setTimeout(doOnePoll, POLL_INTERVAL)
+}
+
+/** 「导出 PDF」直接提交异步任务（无弹窗，所见即所得） */
+async function handleAsyncExport() {
+  if (exporting.value) return
+  const name = fileName.value.trim()
+  if (!name) {
+    ElMessage.warning('请先填写试卷标题（即导出文件名）')
+    return
+  }
+  if (props.ids.length === 0 || groups.value.length === 0) {
+    ElMessage.warning('暂无试题数据，无法导出')
+    return
+  }
+
+  exporting.value = true
+  exportProgress.value = '提交中…'
+  try {
+    const resp = await submitExport({
+      paperId: props.paperId,
+      ids: props.ids,
+      fileName: name,
+      showAnswer: showAnswer.value,
+      showExplain: showExplain.value,
+      watermark: watermark.value,
+    })
+    exportProgress.value = '生成中…'
+    pollRecord(resp.recordId, resp.estimatedSeconds, name)
+  } catch (e) {
+    // BE 业务错误（如并发 1 限制）拦截器已弹 toast，此处只收尾状态
+    console.error('[PaperPreview] submitExport failed', e)
+    finishExportState()
   }
 }
 </script>
@@ -265,20 +390,32 @@ async function handleExportPdf() {
     <template #header>
       <div class="pp-header">
         <div class="pp-header-left">
-          <span class="pp-paper-name">{{ displayName }}</span>
+          <!-- 2026-06-11 弹窗去除：标题直接可编辑，编辑结果即导出文件名（所见即所得） -->
+          <el-input
+            v-model="fileName"
+            class="pp-name-input"
+            maxlength="100"
+            placeholder="试卷标题（即导出文件名）"
+            :disabled="exporting"
+          />
           <span class="pp-date">{{ today }}</span>
         </div>
         <div class="pp-header-right">
           <el-checkbox v-model="showAnswer">显示答案</el-checkbox>
           <el-checkbox v-model="showExplain">显示解析</el-checkbox>
+          <span class="pp-wm-switch">
+            <span class="pp-wm-label">水印</span>
+            <el-switch v-model="watermark" size="small" />
+          </span>
           <el-divider direction="vertical" />
           <span v-if="exporting" class="pp-export-progress">{{ exportProgress }}</span>
-          <!-- PRD-A-014 T2：入口改为先弹导出配置弹窗（旧 handleExportPdf 保留不删） -->
+          <!-- 2026-06-11 弹窗去除：导出直接用页面当前状态提交异步任务（赛跑窗口） -->
           <el-button
             type="primary"
             :icon="Download"
+            :loading="exporting"
             :disabled="loading || groups.length === 0"
-            @click="openExportDialog"
+            @click="handleAsyncExport"
           >
             导出 PDF
           </el-button>
@@ -287,8 +424,9 @@ async function handleExportPdf() {
     </template>
 
     <div v-loading="loading" element-loading-text="试题加载中..." class="pp-body">
-      <!-- PRD-A-014 T2 §5 — 预览水印层：absolute 平铺，pointer-events:none，常显（与导出水印开关无关） -->
-      <div class="pp-watermark" aria-hidden="true">
+      <!-- PRD-A-014 §5 — 预览水印层：absolute 平铺，pointer-events:none。
+           2026-06-11 起跟 header 水印开关联动（开关即时反馈，导出同走此值）。 -->
+      <div v-if="watermark" class="pp-watermark" aria-hidden="true">
         <span
           v-for="n in 40"
           :key="n"
@@ -365,14 +503,6 @@ async function handleExportPdf() {
     </div>
 
   </el-dialog>
-
-  <!-- PRD-A-014 T2 — 导出配置弹窗 -->
-  <ExportConfigDialog
-    v-model:visible="exportDialogVisible"
-    :paper-name="displayName"
-    :paper-id="props.paperId"
-    :ids="props.ids"
-  />
 </template>
 
 <style scoped>
@@ -403,11 +533,29 @@ async function handleExportPdf() {
 
 .pp-header-left {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 16px;
 }
 
-.pp-paper-name {
+/* 标题输入框：平时看着像标题（无边框），hover/聚焦露出可编辑态 */
+.pp-name-input {
+  width: 340px;
+}
+
+.pp-name-input :deep(.el-input__wrapper) {
+  box-shadow: none;
+  background: transparent;
+  padding-left: 0;
+}
+
+.pp-name-input:hover :deep(.el-input__wrapper),
+.pp-name-input :deep(.el-input__wrapper.is-focus) {
+  box-shadow: 0 0 0 1px #dcdfe6 inset;
+  background: #fff;
+  padding-left: 11px;
+}
+
+.pp-name-input :deep(.el-input__inner) {
   font-size: 18px;
   font-weight: 600;
   color: #1d2129;
@@ -420,7 +568,19 @@ async function handleExportPdf() {
 
 .pp-header-right {
   display: flex;
+  align-items: center;
   gap: 16px;
+}
+
+.pp-wm-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pp-wm-label {
+  font-size: 14px;
+  color: #606266;
 }
 
 .pp-body {
