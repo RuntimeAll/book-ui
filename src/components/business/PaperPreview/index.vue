@@ -6,7 +6,7 @@
 //             → 按 freeTags[0].name 分组（"其他"段末尾）→ v-html 渲染 → typesetPaperPreview
 //   段⑤ PDF 工艺：本组件不实现，按钮 click handler stub（开发组长波 3 自接手）
 // ────────────────────────────────────────────────────────────────────────────
-import { ref, nextTick, watch } from 'vue'
+import { ref, computed, nextTick, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Download } from '@element-plus/icons-vue'
 import {
@@ -54,6 +54,11 @@ const today = (() => {
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 })()
+
+// 🔴 2026-06-11 用户反馈"导出文件名跟标题对不上"：标题与导出文件名曾各自兜底（标题直显 prop、
+// 文件名 || '未命名草稿'），prop 为空时俩值分叉。收口成同一个 displayName —— 弹窗标题显示什么，
+// 导出的 .pdf 就叫什么，永远一致。
+const displayName = computed(() => (props.paperName || '').trim() || '未命名草稿')
 
 
 // 按 basket ids 入参顺序 reorder（兜底 BE 不保序场景；BE 走 FIND_IN_SET 已保序，此处冗余兜底）
@@ -156,11 +161,6 @@ watch(
   },
 )
 
-// ── 按钮交互 ────────────────────────────────────────────────────────────────
-function handleClose() {
-  emit('update:visible', false)
-}
-
 // 段⑤ jsPDF + html2canvas 工艺管线（开发组长波 3 自接手 — utils/pdf-export.ts）
 // 工艺铁律：① await MathJax typeset ② await all <img> onload ③ html2canvas scale=2 ④ jsPDF a4 分页 ⑤ save
 async function handleExportPdf() {
@@ -189,7 +189,7 @@ async function handleExportPdf() {
       await nextTick()
       await new Promise((r) => setTimeout(r, 80))
     }
-    const filename = (props.paperName || '未命名草稿').trim()
+    const filename = displayName.value
     await exportPaperToPdf({
       root: previewRoot.value,
       filename,
@@ -217,15 +217,28 @@ async function handleExportPdf() {
     class="paper-preview-dialog"
     @update:model-value="(v: boolean) => emit('update:visible', v)"
   >
+    <!-- 🔴 2026-06-11 用户反馈"导出按钮太下面几乎找不到"：原导出按钮在 footer，长卷要滚到最底。
+         收口=导出/进度并入顶部控制台（与显示答案/解析同排），header 固定、正文区独立滚动（见 style flex）。 -->
     <template #header>
       <div class="pp-header">
         <div class="pp-header-left">
-          <span class="pp-paper-name">{{ paperName }}</span>
+          <span class="pp-paper-name">{{ displayName }}</span>
           <span class="pp-date">{{ today }}</span>
         </div>
         <div class="pp-header-right">
           <el-checkbox v-model="showAnswer">显示答案</el-checkbox>
           <el-checkbox v-model="showExplain">显示解析</el-checkbox>
+          <el-divider direction="vertical" />
+          <span v-if="exporting" class="pp-export-progress">{{ exportProgress }}</span>
+          <el-button
+            type="primary"
+            :icon="Download"
+            :loading="exporting"
+            :disabled="loading || groups.length === 0"
+            @click="handleExportPdf"
+          >
+            {{ exporting ? '导出中…' : '导出 PDF' }}
+          </el-button>
         </div>
       </div>
     </template>
@@ -300,28 +313,25 @@ async function handleExportPdf() {
       </div>
     </div>
 
-    <template #footer>
-      <div class="pp-footer">
-        <span v-if="exporting" class="pp-export-progress">{{ exportProgress }}</span>
-        <el-button :disabled="exporting" @click="handleClose">取消</el-button>
-        <el-button
-          type="primary"
-          :icon="Download"
-          :loading="exporting"
-          :disabled="loading || groups.length === 0"
-          @click="handleExportPdf"
-        >
-          {{ exporting ? '导出中…' : '导出 PDF' }}
-        </el-button>
-      </div>
-    </template>
   </el-dialog>
 </template>
 
 <style scoped>
+/* 🔴 header 固定顶部 + 正文独立滚动：导出控制台永远可见，长卷不再把按钮顶出视野 */
+.paper-preview-dialog {
+  display: flex;
+  flex-direction: column;
+}
+
+.paper-preview-dialog :deep(.el-dialog__header) {
+  flex-shrink: 0;
+}
+
 .paper-preview-dialog :deep(.el-dialog__body) {
   padding: 0;
   background: #f5f7fa;
+  flex: 1;
+  overflow-y: auto;
 }
 
 .pp-header {
@@ -510,16 +520,8 @@ async function handleExportPdf() {
   font-size: 13px;
 }
 
-.pp-footer {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  gap: 12px;
-}
-
 .pp-export-progress {
   font-size: 12px;
   color: #1E8A8A;
-  margin-right: auto;
 }
 </style>
