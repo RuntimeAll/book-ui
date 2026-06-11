@@ -17,6 +17,7 @@ import { computed } from 'vue'
 import { Edit, Star, ShoppingCart, Key } from '@element-plus/icons-vue'
 import Icon from '@/components/Icon/index.vue'
 import FreeTagList from '@/components/business/FreeTagList/index.vue'
+import MarkdownMath from '@/components/MarkdownMath.vue'
 import type { QuestionItem } from '@/api/question/index'
 
 type ActionKey = 'draft' | 'favorite' | 'basket' | 'detail'
@@ -140,7 +141,8 @@ function getQuestionTypeTag(type: number): 'success' | 'warning' | 'info' | 'pri
         referrerpolicy="no-referrer"
         @error="(e: Event) => ((e.target as HTMLImageElement).style.display = 'none')"
       />
-      <span v-else-if="question.stemText" class="stem-text">{{ question.stemText }}</span>
+      <!-- 富文本渲染：与变式编辑器同一个 MarkdownMath（公式/排版一致，不再裸露 $...$） -->
+      <MarkdownMath v-else-if="question.stemText" class="stem-text" :content="question.stemText" />
       <span v-else class="stem-placeholder">（题干加载中）</span>
     </div>
 
@@ -298,8 +300,8 @@ function getQuestionTypeTag(type: number): 'success' | 'warning' | 'info' | 'pri
   background: #f8f9fa;
 }
 
+/* 字号由 MarkdownMath 的 --md-font-size 驱动（随字号档位缩放），此处不再写死 font-size */
 .stem-text {
-  font-size: 14px;
   color: #1d2129;
   line-height: 1.7;
 }

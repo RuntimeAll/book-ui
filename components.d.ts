@@ -54,6 +54,7 @@ declare module 'vue' {
     ElTooltip: typeof import('element-plus/es')['ElTooltip']
     ElTree: typeof import('element-plus/es')['ElTree']
     FavoriteFolderDrawer: typeof import('./src/components/FavoriteFolderDrawer/index.vue')['default']
+    FontSizeSwitch: typeof import('./src/components/business/FontSizeSwitch/index.vue')['default']
     FreeTagList: typeof import('./src/components/business/FreeTagList/index.vue')['default']
     Highlight: typeof import('./src/components/Highlight/index.vue')['default']
     Icon: typeof import('./src/components/Icon/index.vue')['default']

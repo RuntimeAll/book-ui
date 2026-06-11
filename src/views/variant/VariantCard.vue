@@ -770,7 +770,7 @@ function knob(text: string) {
   color: #176e6e; /* teal-700 */
 }
 .choice-content :deep(.md-math) {
-  font-size: 14px;
+  font-size: var(--md-font-size, 14px);
 }
 .choice-content :deep(p) {
   margin: 0;

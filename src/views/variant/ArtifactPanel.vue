@@ -14,6 +14,11 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import Sortable from 'sortablejs'
 import type { VariantArtifact, VariantArtifactItem } from '@/api/variant'
 import VariantCard from './VariantCard.vue'
+import FontSizeSwitch from '@/components/business/FontSizeSwitch/index.vue'
+import { useFontScale } from '@/composables/useFontScale'
+
+// 题面展示字号（小/中/大）—— 与个人题库共用同一状态，注入 --md-font-size 级联给卡片 MarkdownMath
+const { cssVars: fontVars } = useFontScale()
 
 const props = defineProps<{
   artifact: VariantArtifact | null
@@ -229,12 +234,13 @@ function regenerate() {
 </script>
 
 <template>
-  <section class="artifact-panel" data-testid="variant-artifact-panel">
+  <section class="artifact-panel" data-testid="variant-artifact-panel" :style="fontVars">
     <!-- 画布头：标题 + 守恒/配方徽章 + 画布级动作（右上） -->
     <header class="canvas-head">
       <div class="head-line">
         <h2 class="canvas-title">变式题组<template v-if="items.length"> · {{ items.length }} 道</template></h2>
         <span class="head-spacer" />
+        <FontSizeSwitch class="head-font-switch" />
         <el-button
           size="small"
           :disabled="sending || !canRegenerate"
@@ -362,6 +368,9 @@ function regenerate() {
 }
 .head-spacer {
   flex: 1;
+}
+.head-font-switch {
+  margin-right: 4px;
 }
 /* 老师拍板动作 = teal（不是紫）：右栏不出现紫色实心按钮 */
 .persist-btn {

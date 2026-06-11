@@ -19,6 +19,7 @@ import {
   addFavorite,
   removeFavorite,
   type QuestionItem,
+  type QuestionDetail,
   type QuestionNote,
   type QuestionSource,
   type SimilarQuestion,
@@ -26,7 +27,13 @@ import {
 import FreeTagList from '@/components/business/FreeTagList/index.vue'
 import SketchPad from '@/components/business/SketchPad/index.vue'
 import DetailSidebar from './components/DetailSidebar.vue'
+import MarkdownMath from '@/components/MarkdownMath.vue'
+import FontSizeSwitch from '@/components/business/FontSizeSwitch/index.vue'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
+import { useFontScale } from '@/composables/useFontScale'
+
+// 题面展示字号（小/中/大）—— 与变式编辑器共用同一状态，注入 --md-font-size 级联给 MarkdownMath
+const { cssVars: fontVars } = useFontScale()
 
 // ── 路由 ────────────────────────────────────────────────────
 const route = useRoute()
@@ -44,7 +51,7 @@ const sketchVisible = ref(false)
 const basket = useQuestionBasket()
 
 // ── 题目数据 ─────────────────────────────────────────────────
-const question = ref<QuestionItem | null>(null)
+const question = ref<QuestionDetail | null>(null)
 const loading = ref(false)
 
 async function loadQuestion() {
@@ -272,7 +279,7 @@ watch(questionId, async () => {
 </script>
 
 <template>
-  <div class="detail-page">
+  <div class="detail-page" :style="fontVars">
     <!-- 顶部导航栏 -->
     <div class="detail-topbar">
       <el-button link @click="goBack" class="back-btn">
@@ -280,6 +287,8 @@ watch(questionId, async () => {
         <span>返回题库</span>
       </el-button>
       <span class="topbar-title">题目详情</span>
+      <span class="topbar-spacer" />
+      <FontSizeSwitch />
     </div>
 
     <div v-if="loading" class="detail-loading">
@@ -362,7 +371,8 @@ watch(questionId, async () => {
             referrerpolicy="no-referrer"
             @error="(e: Event) => ((e.target as HTMLImageElement).style.display='none')"
           />
-          <p v-else-if="question.stemText" class="stem-text">{{ question.stemText }}</p>
+          <!-- 富文本渲染：与变式编辑器同一个 MarkdownMath（公式/排版/字号一致） -->
+          <MarkdownMath v-else-if="question.stemText" class="stem-text" :content="question.stemText" />
           <p v-else class="stem-placeholder">（题干数据暂无）</p>
         </div>
 
@@ -411,7 +421,9 @@ watch(questionId, async () => {
               referrerpolicy="no-referrer"
               @error="(e: Event) => ((e.target as HTMLImageElement).style.display='none')"
             />
-            <span v-else class="no-content">暂无答案图片</span>
+            <!-- 无答案图但有文本答案（如变式生成题）→ 富文本渲染，与编辑器一致 -->
+            <MarkdownMath v-else-if="question.answer" :content="question.answer" />
+            <span v-else class="no-content">暂无答案</span>
           </div>
         </div>
 
@@ -430,7 +442,9 @@ watch(questionId, async () => {
               referrerpolicy="no-referrer"
               @error="(e: Event) => ((e.target as HTMLImageElement).style.display='none')"
             />
-            <span v-else class="no-content">暂无解析图片</span>
+            <!-- 无解析图但有文本解析（如变式生成题）→ 富文本渲染 -->
+            <MarkdownMath v-else-if="question.explain" :content="question.explain" />
+            <span v-else class="no-content">暂无解析</span>
           </div>
         </div>
 
@@ -463,7 +477,7 @@ watch(questionId, async () => {
                 alt="相似题"
                 referrerpolicy="no-referrer"
               />
-              <span v-else class="similar-text">{{ sq.stemText }}</span>
+              <MarkdownMath v-else class="similar-text" :content="sq.stemText || ''" />
             </div>
           </div>
         </div>
@@ -526,6 +540,9 @@ watch(questionId, async () => {
   font-size: 16px;
   font-weight: 600;
   color: #1d2129;
+}
+.topbar-spacer {
+  flex: 1;
 }
 
 .detail-loading,
@@ -649,11 +666,10 @@ watch(questionId, async () => {
   display: block;
 }
 
+/* 字号由 MarkdownMath 的 --md-font-size 驱动（随字号档位缩放）；markdown 自带换行，去掉 pre-wrap */
 .stem-text {
-  font-size: 15px;
   line-height: 1.7;
   color: #1d2129;
-  white-space: pre-wrap;
 }
 
 .stem-placeholder {
@@ -765,8 +781,8 @@ watch(questionId, async () => {
   height: auto;
 }
 
+/* 相似题文本也走统一字号变量（与主题面一致缩放） */
 .similar-text {
-  font-size: 13px;
   color: #4e5969;
 }
 

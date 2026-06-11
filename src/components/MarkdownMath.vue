@@ -38,7 +38,9 @@ const rendered = computed(() => md.render(normalizeMath(props.content || '')))
 
 <style scoped>
 .md-math {
-  font-size: 14px;
+  /* 字号走 --md-font-size（useFontScale 注入），未设变量处回落 14px（聊天气泡等不受影响）。
+     标题/code/katex 等用 em 相对此基准，整体随档位等比缩放。 */
+  font-size: var(--md-font-size, 14px);
   line-height: 1.7;
   color: #1d2129;
   word-break: break-word;
@@ -51,13 +53,13 @@ const rendered = computed(() => md.render(normalizeMath(props.content || '')))
   line-height: 1.4;
 }
 .md-math :deep(h1) {
-  font-size: 17px;
+  font-size: 1.21em;
 }
 .md-math :deep(h2) {
-  font-size: 16px;
+  font-size: 1.14em;
 }
 .md-math :deep(h3) {
-  font-size: 15px;
+  font-size: 1.07em;
   color: #4080ff;
 }
 .md-math :deep(p) {
@@ -84,7 +86,7 @@ const rendered = computed(() => md.render(normalizeMath(props.content || '')))
   background: #f0f2f5;
   border-radius: 4px;
   padding: 1px 5px;
-  font-size: 13px;
+  font-size: 0.93em;
 }
 .md-math :deep(.katex) {
   font-size: 1.04em;

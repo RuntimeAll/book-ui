@@ -19,9 +19,14 @@ import ContentWrap from '@/components/ContentWrap/index.vue'
 import SearchWrap from '@/components/SearchWrap/index.vue'
 import QuestionCard from '@/components/business/QuestionCard/index.vue'
 import SketchPad from '@/components/business/SketchPad/index.vue'
+import FontSizeSwitch from '@/components/business/FontSizeSwitch/index.vue'
+import { useFontScale } from '@/composables/useFontScale'
 
 // ── 路由 ────────────────────────────────────────────────────
 const router = useRouter()
+
+// 题面展示字号（小/中/大）—— 全局共用同一状态，注入 --md-font-size 级联给列表卡 MarkdownMath
+const { cssVars: fontVars } = useFontScale()
 
 // ── 试题栏（全局 singleton composable，FAB+dialog 由 AppLayout 挂的 <QuestionBasket /> 渲染） ──
 const basket = useQuestionBasket()
@@ -279,7 +284,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="question-page">
+  <div class="question-page" :style="fontVars">
     <el-container style="height: 100%; min-height: calc(100vh - 60px);">
 
       <!-- ══ 左侧目录树（子任务 A）- ContentWrap 包裹，sticky 280px ══ -->
@@ -401,6 +406,7 @@ onMounted(async () => {
               共 {{ total }} 题
             </el-tag>
           </div>
+          <FontSizeSwitch />
         </div>
 
         <!-- 题目列表 -->
