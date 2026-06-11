@@ -127,9 +127,15 @@ export type BasketItem = QuestionItem
 
 /**
  * 懒加载章节树（实际 misikt 一次返整棵树）
+ *
+ * mine=true（个人题库场景）：BE 过滤 mine_visible='0' 的目录（连同子树）；
+ * 公共题库页不传 → 整树照常。排序两页共用 biz_subject.sort（V21 起顶层按年级回填）。
  */
-export const lazyTree = (parentId: string | number = 0) =>
-  request.post<SubjectNode[], SubjectNode[]>('/teacher/question/lazyTree', { parentId })
+export const lazyTree = (parentId: string | number = 0, mine?: boolean) =>
+  request.post<SubjectNode[], SubjectNode[]>('/teacher/question/lazyTree', {
+    parentId,
+    ...(mine ? { mine: true } : {}),
+  })
 
 /**
  * 分页拉题列表（⚠️ 入参 pageIndex 不是 pageNum）
