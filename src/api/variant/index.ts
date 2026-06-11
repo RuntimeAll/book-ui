@@ -82,6 +82,8 @@ export interface VariantArtifactItem {
   level: string
   /** check.verify 或 check.review（证明类只有 review 键，如 proof_needs_human） */
   verify: string | null
+  /** 4d 外显层级（PRD-C-012 _apply_visibility）：verified/self_ok/proof/silent/both_low；旧线程恢复可能缺 */
+  tier: string | null
   /** gene.gate（平行度闸） */
   gene: string | null
   persisted: boolean
@@ -119,6 +121,7 @@ function pickArtifact(msg: ToolkitChatMessage): VariantArtifact | null {
       difficulty: typeof o.difficulty === 'number' ? o.difficulty : Number(o.difficulty) || 0,
       level: typeof o.level === 'string' && o.level ? o.level : 'normal',
       verify: typeof o.verify === 'string' && o.verify ? o.verify : null,
+      tier: typeof o.tier === 'string' && o.tier ? o.tier : null,
       gene: typeof o.gene === 'string' && o.gene ? o.gene : null,
       persisted: o.persisted === true,
     })

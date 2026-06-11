@@ -6,10 +6,12 @@
 // 卡片快捷键 = utterance：换数字 / 换场景 / 答疑全部 emit('utterance', 预设句)，
 // 由宿主走【现有 chat SSE 通道】发给 agent（铁律 1，零新增结构化编辑端点）。
 //
-// 验证徽章语义（verify=check.verify|check.review；⚠ 必须比 ✓ 醒目）：
-//   sympy_pass → ✓ 验证可靠（green-600）；unverified → ⚠ 未程序验算（amber-500）；
-//   fail_after_regen → ⚠ 验算未过（红）；proof_needs_human → 人审（violet）。
-// gene=warn → 平行度存疑（amber）；gene=pass → 平行度 ✓（teal，弱化）。
+// 验证徽章语义（PRD-C-012 4d「只说好、不说坏，除非双闸都不高」，2026-06-11 用户拍板）：
+// 唯一依据 = item.tier（BE _apply_visibility 矩阵产出）：
+//   verified → ✓ 程序验算通过（green）；self_ok → ✓ 已独立复算一致（green）；
+//   proof → ℹ 转人工复核（violet，中性）；silent → 无徽章；both_low → ⚠ 需重点核对（amber）。
+// 旧线程恢复无 tier → 按「只说好」兜底：仅 sympy_pass/proof 外显，其余沉默。
+// gene 徽章只保留正面（pass → 平行度 ✓）；warn 沉默（双闸低已由 ⚠ 承担）。
 // persisted=true → 已收录（入库后 BE 重发快照帧驱动）。
 // ---------------------------------------------------------------------------
 import { computed, ref } from 'vue'
@@ -27,22 +29,22 @@ const emit = defineEmits<{ (e: 'utterance', text: string): void }>()
 const showSolution = ref(false)
 
 const verifyBadge = computed(() => {
+  const t = props.item.tier
+  if (t === 'verified') return { cls: 'vb-green', text: '✓ 程序验算通过' }
+  if (t === 'self_ok') return { cls: 'vb-green', text: '✓ 已独立复算一致' }
+  if (t === 'proof') return { cls: 'vb-violet', text: 'ℹ 转人工复核' }
+  if (t === 'both_low') return { cls: 'vb-amber', text: '⚠ 需重点核对' }
+  if (t === 'silent') return null
+  // 旧数据无 tier：按「只说好」兜底——只外显正面/中性，其余沉默
   const v = props.item.verify
-  if (!v) return null
-  if (v === 'sympy_pass') return { cls: 'vb-green', text: '✓ 验证可靠' }
-  if (v === 'unverified') return { cls: 'vb-amber', text: '⚠ 未程序验算' }
-  if (v === 'fail_after_regen') return { cls: 'vb-red', text: '⚠ 验算未过' }
-  if (v === 'proof_needs_human') return { cls: 'vb-violet', text: '人审' }
-  // 未知值兜底：原样外显并按告警色处理（宽松向前兼容）
-  return { cls: 'vb-amber', text: `⚠ ${v}` }
+  if (v === 'sympy_pass') return { cls: 'vb-green', text: '✓ 程序验算通过' }
+  if (v === 'proof_needs_human') return { cls: 'vb-violet', text: 'ℹ 转人工复核' }
+  return null
 })
 
 const geneBadge = computed(() => {
-  const g = props.item.gene
-  if (!g) return null
-  if (g === 'warn') return { cls: 'gb-amber', text: '⚠ 平行度存疑' }
-  if (g === 'pass') return { cls: 'gb-teal', text: '平行度 ✓' }
-  return { cls: 'gb-amber', text: `平行度 ${g}` }
+  // 4d：只说好——warn 等负面值一律沉默（双闸低由 verifyBadge 的 ⚠ 承担）
+  return props.item.gene === 'pass' ? { cls: 'gb-teal', text: '平行度 ✓' } : null
 })
 
 const levelText = computed(() => {
