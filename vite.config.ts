@@ -16,7 +16,15 @@ import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 // 18+ 端点（详见 PRD §3.1）全走本地 — 无白名单/fallback 分支。
 // ---------------------------------------------------------------------------
 
+// 🔴 端口归属（跨分支合并时以目标分支线为准）：master = A 线 → BE :8080 / dev :5173；
+//    master-ai = C 线 → BE :8090 / dev :8091。目录+端口双隔离。
 const BOOK_SERVER_TARGET = 'http://localhost:8080'
+
+// 🔴 PRD-C-004：AI 编排服务 ai-orchestrator（Python/FastAPI, :8092）。
+//    前端调 /ai/chat → vite proxy rewrite 掉 /ai → 转 http://localhost:8092/chat。
+//    走同源避免浏览器直连跨端口 CORS。ai-orchestrator 返回裸 JSON（非 misikt envelope），
+//    所以聊天调用独立封装（src/api/chat），不复用 /api 那套 misikt 拦截器。
+const AI_ORCHESTRATOR_TARGET = 'http://localhost:8092'
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -43,6 +51,12 @@ export default defineConfig({
         changeOrigin: true,
         secure: false,
         rewrite: (p) => p.replace(/^\/api/, ''),
+      },
+      '/ai': {
+        target: AI_ORCHESTRATOR_TARGET,
+        changeOrigin: true,
+        secure: false,
+        rewrite: (p) => p.replace(/^\/ai/, ''),
       },
     },
   },

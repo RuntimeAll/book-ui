@@ -19,7 +19,7 @@ export interface PaperTreeNode {
   children?: PaperTreeNode[]  // 叶节点不返该字段
 }
 
-// page list 元素（misikt 字节级对齐 — 见 02-be-summary §4.2）
+// page list 元素（misikt 字节级对齐 — 见 02-be-summary §4.2；PRD-B-013 已删 hgScore/directoryName/frameTextContentId）
 // PRD-A-013 T2 — id / createUser 雪花 string；业务字段（questionCount/score/suggestTime/paperType/status/sort）保留 number。
 export interface PaperListItem {
   id: string
