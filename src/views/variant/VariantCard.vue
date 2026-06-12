@@ -698,6 +698,10 @@ function submitRevise() {
           <div class="dna-top">
             <span class="dna-note">老师可改任意一维 · 你说了算</span>
           </div>
+          <!-- 组级 vs 单题级维度作用域说明（PRD-C-014 上线硬条件）：守恒维改全组，题型/难度仅本题 -->
+          <p class="dna-scope-hint">
+            考点 / 考察类型 / 标签 / 场景为整组共享维度，修改将对全组生效；题型与难度仅作用于本题
+          </p>
 
           <div class="dna-grid">
             <!-- 主考点（T3：知识点树单选） -->
@@ -1286,6 +1290,13 @@ function submitRevise() {
   background: #e7f3f1;
   border-radius: 999px;
   padding: 2px 10px;
+}
+/* 组级 vs 单题级维度作用域说明（小号灰，轻量不抢） */
+.dna-scope-hint {
+  margin: -4px 0 11px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #9fb0ad; /* ink-300 */
 }
 /* 维度网格：标签列 + 值列（窄屏单列） */
 .dna-grid {

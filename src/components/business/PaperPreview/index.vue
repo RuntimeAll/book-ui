@@ -468,6 +468,11 @@ async function handleAsyncExport() {
                   alt="题干图"
                   class="stem-img"
                 />
+                <!-- 纯文本题（AI 变式 / 举一反三入库）无题干图，但有 stemText → 提示「功能未覆盖」而非「系统故障」 -->
+                <span v-else-if="q.stemText" class="pp-q-textonly">
+                  AI 生成题为纯文本题，PDF 图片导出暂不支持（文本渲染开发中）；可在线查看或在组卷工作台使用
+                </span>
+                <!-- 真题确实缺图（图与文本皆空）→ 保留运维提示 -->
                 <span v-else class="pp-q-missing">该题缺题干图（请联系管理员补图）</span>
               </div>
 
@@ -764,6 +769,16 @@ async function handleAsyncExport() {
   border: 1px dashed #ff9000;
   border-radius: 4px;
   color: #ff9000;
+  font-size: 13px;
+}
+/* 纯文本题（AI 变式）导出暂不支持：信息提示而非错误红，弱化为中性灰蓝 */
+.pp-q-textonly {
+  display: inline-block;
+  padding: 6px 10px;
+  background: #f4f6f8;
+  border: 1px dashed #c0c8d0;
+  border-radius: 4px;
+  color: #5b6770;
   font-size: 13px;
 }
 
