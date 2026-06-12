@@ -27,8 +27,8 @@ import {
 import FreeTagList from '@/components/business/FreeTagList/index.vue'
 import SketchPad from '@/components/business/SketchPad/index.vue'
 import DetailSidebar from './components/DetailSidebar.vue'
-import MarkdownMath from '@/components/MarkdownMath.vue'
 import FontSizeSwitch from '@/components/business/FontSizeSwitch/index.vue'
+import QuestionContent from '@/components/business/QuestionContent/index.vue'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
 import { useFontScale } from '@/composables/useFontScale'
 
@@ -131,7 +131,9 @@ async function handleBasketToggle() {
 }
 
 // ── 答案/解析折叠 ─────────────────────────────────────────────
-const answerExpanded = ref(false)
+// 2026-06-11 用户拍板：答案默认展开（老师看题先看答案是主流程，点开一次是多余动作）；
+// 解析/相似题推荐仍默认收起（内容长非必看，要默认开再调）。
+const answerExpanded = ref(true)
 const explainExpanded = ref(false)
 const similarExpanded = ref(false)
 
@@ -361,19 +363,13 @@ watch(questionId, async () => {
           </div>
         </div>
 
-        <!-- 题干图 -->
+        <!-- 题干（富文本/图片/占位统一走 QuestionContent） -->
         <div class="stem-area">
-          <img
-            v-if="question.stemImg"
-            :src="question.stemImg"
-            class="stem-img"
+          <QuestionContent
+            :text="question.stemText"
+            :img-url="question.stemImg"
             alt="题干"
-            referrerpolicy="no-referrer"
-            @error="(e: Event) => ((e.target as HTMLImageElement).style.display='none')"
           />
-          <!-- 富文本渲染：与变式编辑器同一个 MarkdownMath（公式/排版/字号一致） -->
-          <MarkdownMath v-else-if="question.stemText" class="stem-text" :content="question.stemText" />
-          <p v-else class="stem-placeholder">（题干数据暂无）</p>
         </div>
 
         <!-- 来源行 + freeTags + 问AI（misikt 风格：来源 + 多个 freeTag 同一行）-->
@@ -413,17 +409,12 @@ watch(questionId, async () => {
           </div>
           <div v-if="answerExpanded" class="collapse-body">
             <div class="answer-label">【答案】</div>
-            <img
-              v-if="question.answerImg"
-              :src="question.answerImg"
-              class="answer-img"
+            <!-- 答案（富文本/图片统一走 QuestionContent；answer=文本字段 answerImg=图字段）-->
+            <QuestionContent
+              :text="(question as { answer?: string | null }).answer"
+              :img-url="question.answerImg"
               alt="答案"
-              referrerpolicy="no-referrer"
-              @error="(e: Event) => ((e.target as HTMLImageElement).style.display='none')"
             />
-            <!-- 无答案图但有文本答案（如变式生成题）→ 富文本渲染，与编辑器一致 -->
-            <MarkdownMath v-else-if="question.answer" :content="question.answer" />
-            <span v-else class="no-content">暂无答案</span>
           </div>
         </div>
 
@@ -434,17 +425,12 @@ watch(questionId, async () => {
             <span class="collapse-arrow" :class="{ 'expanded': explainExpanded }">▼</span>
           </div>
           <div v-if="explainExpanded" class="collapse-body">
-            <img
-              v-if="question.explainImg"
-              :src="question.explainImg"
-              class="explain-img"
+            <!-- 解析（富文本/图片统一走 QuestionContent；explain=文本字段 explainImg=图字段）-->
+            <QuestionContent
+              :text="(question as { explain?: string | null }).explain"
+              :img-url="question.explainImg"
               alt="解析"
-              referrerpolicy="no-referrer"
-              @error="(e: Event) => ((e.target as HTMLImageElement).style.display='none')"
             />
-            <!-- 无解析图但有文本解析（如变式生成题）→ 富文本渲染 -->
-            <MarkdownMath v-else-if="question.explain" :content="question.explain" />
-            <span v-else class="no-content">暂无解析</span>
           </div>
         </div>
 
@@ -470,14 +456,11 @@ watch(questionId, async () => {
               :key="sq.id"
               class="similar-item"
             >
-              <img
-                v-if="sq.stemImg"
-                :src="sq.stemImg"
-                class="similar-img"
+              <QuestionContent
+                :text="sq.stemText"
+                :img-url="sq.stemImg"
                 alt="相似题"
-                referrerpolicy="no-referrer"
               />
-              <MarkdownMath v-else class="similar-text" :content="sq.stemText || ''" />
             </div>
           </div>
         </div>

@@ -8,17 +8,17 @@ import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 
 // ---------------------------------------------------------------------------
 // V1 卡（题库去原网站化）：proxy 全本地，删 misikt fallback + cookie 注入。
-// 所有 /api/* → http://localhost:8090（C 线 book-server），axios baseURL='/api'
+// 所有 /api/* → BOOK_SERVER_TARGET（book-server，端口见下方端口归属注释），axios baseURL='/api'
 //   → 客户端 path 形如 '/teacher/qd/note/123'
 //   → vite proxy 收到 '/api/teacher/qd/note/123'
-//   → rewrite 掉 /api → 转发 'http://localhost:8090/teacher/qd/note/123'
+//   → rewrite 掉 /api → 转发 '<BOOK_SERVER_TARGET>/teacher/qd/note/123'
 //
 // 18+ 端点（详见 PRD §3.1）全走本地 — 无白名单/fallback 分支。
 // ---------------------------------------------------------------------------
 
-// 🔴 C 线（AI 编排）独立 FE：proxy 指向 C 线后端 :8090（master-ai，含 AI 组卷/落库接口），
-//    dev 端口 8091（贴着 C BE 8090）。与 A 线 book-ui(:5173→:8080) 目录+端口双隔离。
-const BOOK_SERVER_TARGET = 'http://localhost:8090'
+// 🔴 端口归属（跨分支合并时以目标分支线为准）：master = A 线 → BE :8080 / dev :5173；
+//    master-ai = C 线 → BE :8090 / dev :8091。目录+端口双隔离。
+const BOOK_SERVER_TARGET = 'http://localhost:8080'
 
 // 🔴 PRD-C-004：AI 编排服务 ai-orchestrator（Python/FastAPI, :8092）。
 //    前端调 /ai/chat → vite proxy rewrite 掉 /ai → 转 http://localhost:8092/chat。
@@ -26,12 +26,13 @@ const BOOK_SERVER_TARGET = 'http://localhost:8090'
 //    所以聊天调用独立封装（src/api/chat），不复用 /api 那套 misikt 拦截器。
 const AI_ORCHESTRATOR_TARGET = 'http://localhost:8092'
 
-// 🔴 PRD-C-009：举一反三 agent 跑在 agent-service-toolkit（LangGraph/FastAPI, :8093）—— 与
+// 🔴 PRD-C-009：举一反三 agent 跑在 agent-service-toolkit（LangGraph/FastAPI）—— 与
 //    ai-orchestrator(:8092) 是两个独立 Python 服务。前端调 /agent/variant/stream → vite proxy
-//    rewrite 掉 /agent → 转 http://localhost:8093/variant/stream（toolkit 原生 SSE 协议：
+//    rewrite 掉 /agent → 转 <AI_TOOLKIT_TARGET>/variant/stream（toolkit 原生 SSE 协议：
 //    data:{type:token|message|...} + data:[DONE]）。同源绕 CORS；toolkit 未设 AUTH_SECRET 故免鉴权。
-//    与 /ai(:8092)、/api(:8090) 三条调用链互不复用拦截器（src/api/variant 独立封装）。
-const AI_TOOLKIT_TARGET = 'http://localhost:8093'
+//    与 /ai(:8092)、/api 三条调用链互不复用拦截器（src/api/variant 独立封装）。
+//    🔴 端口归属：A 线副本(codeplace-A/agent-service-toolkit)=:8095 / C 线=:8093，跨分支合并以目标分支线为准。
+const AI_TOOLKIT_TARGET = 'http://localhost:8095'
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -51,7 +52,7 @@ export default defineConfig({
     },
   },
   server: {
-    port: 8091,
+    port: 5173,
     proxy: {
       '/api': {
         target: BOOK_SERVER_TARGET,

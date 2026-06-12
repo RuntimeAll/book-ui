@@ -61,7 +61,8 @@ const treeLoading = ref(false)
 async function loadTree() {
   treeLoading.value = true
   try {
-    const result = await lazyTree(0)
+    // mine=true：个人题库目录树过滤 mine_visible='0'（V21 显隐字段，全局生效）
+    const result = await lazyTree(0, true)
     if (Array.isArray(result)) {
       treeData.value = result
     } else if (result && typeof result === 'object') {

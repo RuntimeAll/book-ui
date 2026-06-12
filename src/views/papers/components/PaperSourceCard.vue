@@ -13,6 +13,7 @@
  */
 import { Check, ShoppingCart, Edit, Star, InfoFilled } from '@element-plus/icons-vue'
 import FreeTagList from '@/components/business/FreeTagList/index.vue'
+import QuestionContent from '@/components/business/QuestionContent/index.vue'
 import type { PaperSourceQuestion } from '@/api/question/index'
 
 defineProps<{
@@ -113,18 +114,13 @@ function getQuestionScore(q: PaperSourceQuestion): number | null {
           {{ getQuestionScore(q) }} 分
         </span>
       </div>
+      <!-- 题干（富文本/图片/占位统一走 QuestionContent） -->
       <div class="q-stem-body">
-        <img
-          v-if="q.stemImg"
-          :src="q.stemImg"
-          class="q-stem-img"
+        <QuestionContent
+          :text="q.stemText"
+          :img-url="q.stemImg"
           alt="题干"
-          referrerpolicy="no-referrer"
-          loading="lazy"
-          @error="(e: Event) => ((e.target as HTMLImageElement).style.display='none')"
         />
-        <p v-else-if="q.stemText" class="q-stem-text">{{ q.stemText }}</p>
-        <p v-else class="q-stem-placeholder">（题目 ID: {{ q.id }}）</p>
       </div>
     </div>
 

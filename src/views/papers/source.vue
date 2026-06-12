@@ -23,6 +23,7 @@ import FavoriteFolderDrawer from '@/components/FavoriteFolderDrawer/index.vue'
 // （FreeTagList/QuestionCard 共享组件随之迁入子组件，父组件不再直接引用）
 import PaperSourceCard from './components/PaperSourceCard.vue'
 import AddFromBasketDialog from './components/AddFromBasketDialog.vue'
+import QuestionContent from '@/components/business/QuestionContent/index.vue'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
 import { useUserStore } from '@/store/user'
 import { getCurrentUser } from '@/api/user'
@@ -595,18 +596,13 @@ watch(paperId, async () => {
                   {{ getQuestionTypeLabel(row.questionType) }}
                 </span>
               </div>
+              <!-- 题干（富文本/图片/占位统一走 QuestionContent） -->
               <div class="q-stem-body">
-                <img
-                  v-if="row.stemImg"
-                  :src="row.stemImg"
-                  class="q-stem-img"
+                <QuestionContent
+                  :text="row.stemText"
+                  :img-url="row.stemImg"
                   alt="题干"
-                  referrerpolicy="no-referrer"
-                  loading="lazy"
-                  @error="(e: Event) => ((e.target as HTMLImageElement).style.display='none')"
                 />
-                <p v-else-if="row.stemText" class="q-stem-text">{{ row.stemText }}</p>
-                <p v-else class="q-stem-placeholder">（题目 ID: {{ row.id }}）</p>
               </div>
             </div>
 
