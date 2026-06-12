@@ -7,6 +7,7 @@ import {
   fetchVariantArtifact,
   fetchVariantHistory,
   persistVariantGroup,
+  persistVariantOne,
   reorderVariant,
   reverifyVariantItem,
   streamVariant,
@@ -15,15 +16,20 @@ import {
 import type {
   ToolkitChatMessage,
   VariantArtifact,
+  VariantArtifactItem,
   VariantStage,
   VariantStreamHandle,
 } from '@/api/variant'
+import { useQuestionBasket } from '@/composables/useQuestionBasket'
+import type { QuestionItem } from '@/api/question/index'
 import MarkdownMath from '@/components/MarkdownMath.vue'
 import AiStageRail from '@/components/AiStageRail.vue'
 import ArtifactPanel from './ArtifactPanel.vue'
 
 // 登录老师身份：入库 owner 走透传 token（agent_config.ruoyi_token），落老师本人个人题库。
 const userStore = useUserStore()
+// PRD-C-014 T2：试题篮（全局 singleton composable，与库内列表共用计数/LS）—— 透明入库后加篮、计数+1。
+const basket = useQuestionBasket()
 
 // ---------------------------------------------------------------------------
 // PRD-C-009/C-011 — 图片举一反三 agent（toolkit :8093 variant agent，/agent proxy）。
@@ -82,6 +88,9 @@ const currentRail = ref<RailItem | null>(null)
 const artifact = ref<VariantArtifact | null>(null)
 // 题组编辑器：正在重新验算的题 index（1-based），驱动该卡 loading 态
 const reverifyingIndex = ref<number | null>(null)
+// PRD-C-014 T1/T2：正在「收录入库」/「加入试题篮」的题 index（1-based），驱动该卡按钮 loading
+const persistingIndex = ref<number | null>(null)
+const basketingIndex = ref<number | null>(null)
 const streamRef = ref<HTMLElement | null>(null)
 
 const currentRailEmpty = computed(
@@ -523,6 +532,86 @@ async function onReverify(index: number) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// PRD-C-014 §3.1 — 单题入库（T1）+ 试题篮透明入库（T2）。
+//   T1 收录入库：调 persist-one → 该卡 persisted=true（artifact 整量替换后保持）。
+//   T2 加入试题篮：始终可点；未入库先 persist-one 拿 id 再加篮，已入库直接加篮。
+//   入库/加篮都是确定性单题动作，不进对话流、不绕 LLM 分类器（与「全部入库」直连同一模式）。
+// ---------------------------------------------------------------------------
+
+/** 取当前 artifact 里某题（1-based index） */
+function findItem(index: number): VariantArtifactItem | undefined {
+  return artifact.value?.items.find((it) => it.index === index)
+}
+
+/** 把变式题映射成试题篮所需的最小 QuestionItem（qtype 文本 → questionType 数值） */
+function toBasketItem(id: string, item: VariantArtifactItem): QuestionItem {
+  const qt = item.qtype || ''
+  const questionType = /选择|单选|多选/.test(qt) ? 1 : /填空/.test(qt) ? 4 : 5
+  const d = Math.round(item.difficulty)
+  return {
+    id,
+    questionType,
+    difficult: d > 0 ? d : null,
+    stemImg: null,
+    stemText: item.stem || `题目 ID: ${id}`,
+  }
+}
+
+/** T1：单题「收录入库」。已收录卡重复点不重复发（按钮已禁用 + 这里再守一道）。 */
+async function onPersistOne(index: number) {
+  if (persistingIndex.value !== null || basketingIndex.value !== null || sending.value) return
+  const item = findItem(index)
+  if (!item || item.persisted) return
+  persistingIndex.value = index
+  try {
+    const res = await persistVariantOne(threadId.value, index, userStore.accessToken)
+    if (res.artifact) artifact.value = res.artifact // 整量替换 → 该卡 persisted=true 持久
+    if (res.ok) ElMessage.success('已收录入库')
+    else ElMessage.warning('入库未确认成功，请稍后在「我的题库」核对')
+  } catch (e) {
+    ElMessage.error(`收录入库失败：${e instanceof Error ? e.message : String(e)}`)
+  } finally {
+    persistingIndex.value = null
+  }
+}
+
+/**
+ * T2：单题「加入试题篮」（透明入库）。
+ *   未入库 → 先 persist-one 拿题 id → 加篮 → toast「已收录并加入试题篮」+ 计数+1。
+ *   已入库 → 直接加篮 → toast「已加入试题篮」。
+ *   任一步失败 → 篮不计数（add silent 模式 await BE，失败 throw）+ 报错气泡，不静默、不弹确认框。
+ */
+async function onAddToBasket(index: number) {
+  if (basketingIndex.value !== null || persistingIndex.value !== null || sending.value) return
+  const item = findItem(index)
+  if (!item) return
+  basketingIndex.value = index
+  try {
+    let id = ''
+    let firstPersist = false
+    if (item.persisted) {
+      // 已入库：直接拿当前会话该题在库 id —— persist-one 幂等（防重簿记），直接复用它取 id。
+      const res = await persistVariantOne(threadId.value, index, userStore.accessToken)
+      if (res.artifact) artifact.value = res.artifact
+      id = res.id
+    } else {
+      const res = await persistVariantOne(threadId.value, index, userStore.accessToken)
+      if (res.artifact) artifact.value = res.artifact
+      id = res.id
+      firstPersist = true
+    }
+    if (!id) throw new Error('入库未返回题目 ID')
+    // silent 模式：await BE 加篮，成功才本地计数；失败 throw → 落到 catch（篮不计数 + 报错）
+    await basket.add(toBasketItem(id, item), { silent: true })
+    ElMessage.success(firstPersist ? '已收录并加入试题篮' : '已加入试题篮')
+  } catch (e) {
+    ElMessage.error(`加入试题篮失败：${e instanceof Error ? e.message : String(e)}`)
+  } finally {
+    basketingIndex.value = null
+  }
+}
+
 /** 换一批：重发初始出题 utterance（整组重新出，agent 重新分析母题） */
 function regenerate() {
   if (sending.value || !firstComposeMessage) return
@@ -828,12 +917,16 @@ onBeforeUnmount(() => {
       :sending="sending"
       :can-regenerate="!!firstComposeMessage || !!motherImg"
       :reverifying-index="reverifyingIndex"
+      :persisting-index="persistingIndex"
+      :basketing-index="basketingIndex"
       @utterance="sendUtterance"
       @regenerate="regenerate"
       @persist="persistAll"
       @reorder="onReorder"
       @edit="onEditItem"
       @reverify="onReverify"
+      @persist-one="onPersistOne"
+      @add-to-basket="onAddToBasket"
     />
 
     <!-- P10：点开看大图（简易遮罩，点遮罩关闭；不引新依赖） -->

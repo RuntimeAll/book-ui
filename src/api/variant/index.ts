@@ -393,6 +393,53 @@ export async function persistVariantGroup(
   }
 }
 
+/** 单题入库直连返回（PRD-C-014 §3.1 T1）。 */
+export interface VariantPersistOneResult {
+  ok: boolean
+  /** 入库落地的题目 ID（雪花，全工程 string；用于「加入试题篮」） */
+  id: string
+  artifact: VariantArtifact | null
+}
+
+/**
+ * 单题「收录入库」（PRD-C-014 §3.1 T1）：与 persistVariantGroup 同 base / 同直连模式
+ * （/agent proxy，无 misikt envelope），只入当前题组里指定的一道题。
+ *   - 入参 {thread_id, index(1-based), ruoyi_token}；BE 按 thread_id 取 checkpointer 题组，
+ *     只跑该题的 persist（防重簿记/血缘逻辑与全部入库同一段代码）。
+ *   - 回 {ok, id, artifact}；artifact 整量替换右栏，被入库题 persisted=true（按钮置「已收录」）。
+ *   - 该端点并行开发中（B3 批次按此契约写，联调期再对）。
+ */
+export async function persistVariantOne(
+  threadId: string,
+  index: number,
+  ruoyiToken: string
+): Promise<VariantPersistOneResult> {
+  const res = await fetch('/agent/variant/persist-one', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ thread_id: threadId, index, ruoyi_token: ruoyiToken }),
+  })
+  if (!res.ok) {
+    const detail = await res
+      .json()
+      .then((d: { detail?: string; error?: string }) => d.detail || d.error)
+      .catch(() => '')
+    throw new Error(detail || `/variant/persist-one ${res.status}`)
+  }
+  const data = (await res.json()) as { ok?: boolean; id?: unknown; artifact?: unknown }
+  // id 雪花全工程 string（铁则：禁 number 截尾）—— BE 返 string，这里再 String() 兜底
+  const id = data.id === null || data.id === undefined ? '' : String(data.id)
+  return {
+    ok: data.ok === true,
+    id,
+    artifact: pickArtifact({
+      type: 'custom',
+      content: '',
+      custom_data: { artifact: data.artifact as Record<string, unknown> },
+    }),
+  }
+}
+
 /** 取会话当前题组快照（重建右栏卡片栅）。无题组返回 items=[]。 */
 export async function fetchVariantArtifact(threadId: string): Promise<VariantArtifact | null> {
   const res = await fetch('/agent/variant/artifact', {

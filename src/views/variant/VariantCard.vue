@@ -36,6 +36,10 @@ const props = defineProps<{
   checking?: boolean
   /** 本卡正在重新验算（单题 LLM+sympy，几秒）→ 验算按钮 loading + 卡片轻禁用 */
   reverifying?: boolean
+  /** PRD-C-014 T1：本卡正在「收录入库」（调 persist-one）→ 按钮 loading */
+  persisting?: boolean
+  /** PRD-C-014 T2：本卡正在「加入试题篮」（透明入库：可能含 persist-one + 篮 add）→ 按钮 loading */
+  basketing?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -44,6 +48,10 @@ const emit = defineEmits<{
   (e: 'edit', payload: { index: number; stem?: string; answer?: string; solution?: string }): void
   /** 重新验算（宿主调 reverifyVariantItem） */
   (e: 'reverify', index: number): void
+  /** PRD-C-014 T1：单题「收录入库」（宿主调 persistVariantOne） */
+  (e: 'persist-one', index: number): void
+  /** PRD-C-014 T2：单题「加入试题篮」（宿主透明入库：未入库先 persist-one 再加篮，已入库直接加篮） */
+  (e: 'add-to-basket', index: number): void
 }>()
 
 const showSolution = ref(false)
@@ -535,6 +543,31 @@ function knob(text: string) {
         </div>
       </div>
 
+      <!-- 入库行：收录入库（T1）+ 加入试题篮（T2，始终可点） -->
+      <footer class="bank-row">
+        <!-- T1：已收录 → 按钮置「已收录」禁用态（重复点不重复发）；未收录 → teal 实心「收录入库」 -->
+        <button
+          type="button"
+          class="bank-btn is-persist"
+          :class="{ 'is-done': item.persisted }"
+          :disabled="item.persisted || persisting || basketing || sending"
+          @click="!item.persisted && emit('persist-one', item.index)"
+        >
+          <template v-if="item.persisted">✓ 已收录</template>
+          <template v-else-if="persisting">收录中…</template>
+          <template v-else>收录入库</template>
+        </button>
+        <!-- T2：加入试题篮 —— 始终可点（不因已入库置灰），透明入库由宿主决定 persist-one + 加篮 -->
+        <button
+          type="button"
+          class="bank-btn is-basket"
+          :disabled="basketing || persisting || sending"
+          @click="emit('add-to-basket', item.index)"
+        >
+          {{ basketing ? '加入中…' : '加入试题篮' }}
+        </button>
+      </footer>
+
       <!-- 旋钮行：编辑 + （手动编辑后）重新验算 + 卡片快捷键 utterance -->
       <footer class="knob-row">
         <button
@@ -807,6 +840,54 @@ function knob(text: string) {
   margin: 0;
   font-size: 12px;
   color: #86909c;
+}
+
+/* 入库行（T1/T2）：与旋钮行同栏宽，按钮略强于旋钮（入库是主动作） */
+.bank-row {
+  display: flex;
+  gap: 8px;
+}
+.bank-btn {
+  font-size: 13px;
+  border-radius: 8px;
+  padding: 4px 14px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.bank-btn:disabled {
+  cursor: not-allowed;
+}
+/* 收录入库：teal 实心（老师拍板色系，与右栏「全部入库」一致语汇） */
+.bank-btn.is-persist {
+  color: #fff;
+  background: #1e8a8a; /* teal-600 */
+  border-color: #1e8a8a;
+}
+.bank-btn.is-persist:hover:not(:disabled) {
+  background: #176e6e;
+  border-color: #176e6e;
+}
+.bank-btn.is-persist:disabled:not(.is-done) {
+  background: #b9d8d8;
+  border-color: #b9d8d8;
+}
+/* 已收录态：弱化为 violet-50 描边（与卡片 is-persisted 弱高亮呼应），非禁用灰 */
+.bank-btn.is-persist.is-done {
+  color: #5b4fd6; /* violet-700 */
+  background: #f2f0fe; /* violet-50 */
+  border-color: #c8c0f7;
+}
+/* 加入试题篮：teal 描边（始终可点；不抢实心入库的视觉权重） */
+.bank-btn.is-basket {
+  color: #176e6e; /* teal-700 */
+  background: #fff;
+  border-color: #b9d8d8;
+}
+.bank-btn.is-basket:hover:not(:disabled) {
+  background: #e6f2f2; /* teal-50 */
+}
+.bank-btn.is-basket:disabled {
+  opacity: 0.55;
 }
 
 .knob-row {

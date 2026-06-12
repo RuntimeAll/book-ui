@@ -160,11 +160,27 @@ async function syncFromServer() {
 }
 
 // ── actions ──────────────────────────────────────────────────
-async function add(q: QuestionItem): Promise<void> {
+/**
+ * 加入试题栏。
+ * @param opts.silent 抑制默认「已加入试题栏」toast（PRD-C-014 T2：举一反三透明入库要自定义
+ *   文案「已收录并加入试题篮」/「已加入试题篮」，由调用方自行 toast；篮 API 失败需调用方感知
+ *   → silent 模式下 await BE add 并在失败时 throw，调用方据此「篮不计数 + 报错气泡」）。
+ */
+async function add(q: QuestionItem, opts?: { silent?: boolean }): Promise<void> {
   if (_togglingIds.has(q.id)) return
   if (_basketIds.value.has(q.id)) return
   _togglingIds.add(q.id)
   try {
+    if (opts?.silent) {
+      // 透明入库（T2）：先 await BE add，成功才本地计数 + 由调用方自定义 toast；失败 throw 回调用方。
+      await apiAddBasket(q.id)
+      const newSet = new Set(_basketIds.value)
+      newSet.add(q.id)
+      _basketIds.value = newSet
+      _cache.set(q.id, q)
+      syncToStorage()
+      return
+    }
     const newSet = new Set(_basketIds.value)
     newSet.add(q.id)
     _basketIds.value = newSet
@@ -301,7 +317,7 @@ export interface UseQuestionBasket {
   basketIds: Readonly<Ref<Set<string>>>
   count: ComputedRef<number>
   items: ComputedRef<QuestionItem[]>
-  add: (q: QuestionItem) => Promise<void>
+  add: (q: QuestionItem, opts?: { silent?: boolean }) => Promise<void>
   /** 批量加入（过滤已在篮 + 单条汇总 toast），返回实际新增数 */
   addMany: (questions: QuestionItem[]) => Promise<number>
   /** 批量移除（只移在篮内 + 单条汇总 toast），返回实际移除数 */

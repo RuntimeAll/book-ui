@@ -28,6 +28,10 @@ const props = defineProps<{
   canRegenerate: boolean
   /** 正在重新验算的题 index（1-based）；该卡显示 loading 态 */
   reverifyingIndex?: number | null
+  /** PRD-C-014 T1：正在「收录入库」的题 index（1-based）；该卡入库按钮 loading */
+  persistingIndex?: number | null
+  /** PRD-C-014 T2：正在「加入试题篮」的题 index（1-based）；该卡加篮按钮 loading */
+  basketingIndex?: number | null
 }>()
 
 const emit = defineEmits<{
@@ -40,6 +44,10 @@ const emit = defineEmits<{
   (e: 'edit', payload: { index: number; stem?: string; answer?: string; solution?: string }): void
   /** 重新验算：宿主调 reverifyVariantItem */
   (e: 'reverify', index: number): void
+  /** PRD-C-014 T1：单题收录入库（宿主调 persistVariantOne） */
+  (e: 'persist-one', index: number): void
+  /** PRD-C-014 T2：单题加入试题篮（宿主透明入库） */
+  (e: 'add-to-basket', index: number): void
 }>()
 
 // ---------------------------------------------------------------------------
@@ -291,9 +299,13 @@ function regenerate() {
             :sending="sending"
             :checking="checking"
             :reverifying="reverifyingIndex === it.index"
+            :persisting="persistingIndex === it.index"
+            :basketing="basketingIndex === it.index"
             @utterance="(t: string) => emit('utterance', t)"
             @edit="(p) => emit('edit', p)"
             @reverify="(i: number) => emit('reverify', i)"
+            @persist-one="(i: number) => emit('persist-one', i)"
+            @add-to-basket="(i: number) => emit('add-to-basket', i)"
           />
         </div>
         <!-- PRD-C-012 P2：增量帧期的「生成中」占位卡（题号顺延已完成题，定稿帧到达即消失） -->
