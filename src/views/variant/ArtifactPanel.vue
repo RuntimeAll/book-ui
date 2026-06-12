@@ -14,6 +14,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import Sortable from 'sortablejs'
 import type { VariantArtifact, VariantArtifactItem } from '@/api/variant'
 import VariantCard from './VariantCard.vue'
+import KpTreeDialog from './KpTreeDialog.vue'
 import FontSizeSwitch from '@/components/business/FontSizeSwitch/index.vue'
 import { useFontScale } from '@/composables/useFontScale'
 
@@ -48,7 +49,38 @@ const emit = defineEmits<{
   (e: 'persist-one', index: number): void
   /** PRD-C-014 T2：单题加入试题篮（宿主透明入库） */
   (e: 'add-to-basket', index: number): void
+  /** PRD-C-014 T3：DNA 列表选编辑（宿主调 editVariantDna） */
+  (
+    e: 'edit-dna',
+    payload: {
+      index: number
+      field: 'main_kp' | 'secondary_kps' | 'qtype' | 'exam_type' | 'tags' | 'difficulty'
+      value: { id: string; name: string } | Array<{ id: string; name: string }> | string | string[] | number
+    }
+  ): void
+  /** PRD-C-014 T4：点击-说话 vibe（宿主调 reviseVariantItem） */
+  (e: 'revise', payload: { index: number; target: 'skeleton' | 'scene' | 'whole'; instruction: string }): void
+  /** PRD-C-014 G13 ⑤：头部主考点可改（组级守恒锚，宿主走 chat 通道重锚定） */
+  (e: 'edit-header-kp', value: { id: string; name: string }): void
+  /** PRD-C-014 G13 ⑤：头部年级可改 */
+  (e: 'edit-header-grade', value: string): void
 }>()
+
+// G13 ⑤：头部主考点（知识点树弹层）/ 年级（下拉）可改
+const headerKpDialog = ref(false)
+const gradePopover = ref(false)
+const GRADE_OPTIONS = [
+  '七年级上', '七年级下', '八年级上', '八年级下', '九年级上', '九年级下',
+  '高一上', '高一下', '高二上', '高二下', '高三',
+]
+function onPickHeaderKp(value: { id: string; name: string }) {
+  emit('edit-header-kp', value)
+  headerKpDialog.value = false
+}
+function pickGrade(g: string) {
+  gradePopover.value = false
+  emit('edit-header-grade', g)
+}
 
 // ---------------------------------------------------------------------------
 // PRD-C-013 P2b 逐题上屏 — 按 seq 原位 merge（不再整组重渲）。
@@ -265,12 +297,32 @@ function regenerate() {
           {{ allPersisted ? '已全部收录' : '全部入库' }}
         </el-button>
       </div>
+      <!-- G13 ⑤：头部「主考点 / 年级」固定显示且可改（点 ✎ 调知识点树 / 年级下拉） -->
       <div v-if="artifact" class="head-badges">
-        <span v-if="artifact.header.kp" class="keep-badge">主考点 ✓ {{ artifact.header.kp }}</span>
-        <span v-if="artifact.header.grade" class="keep-badge">年级 ✓ {{ artifact.header.grade }}</span>
+        <button type="button" class="keep-badge editable" :disabled="sending" @click="headerKpDialog = true">
+          主考点 <b>{{ artifact.header.kp || '未锚定' }}</b><span class="edit-pen">✎</span>
+        </button>
+        <el-popover :visible="gradePopover" placement="bottom-start" :width="220" trigger="manual">
+          <template #reference>
+            <button type="button" class="keep-badge editable" :disabled="sending" @click="gradePopover = !gradePopover">
+              年级 <b>{{ artifact.header.grade || '未定' }}</b><span class="edit-pen">✎</span>
+            </button>
+          </template>
+          <div class="grade-pop">
+            <span v-for="g in GRADE_OPTIONS" :key="g" class="grade-opt" @click="pickGrade(g)">{{ g }}</span>
+          </div>
+        </el-popover>
         <span v-if="artifact.header.recipe" class="recipe-badge">{{ artifact.header.recipe }}</span>
       </div>
     </header>
+
+    <!-- G13 ⑤：头部主考点的知识点树弹层（组级守恒锚） -->
+    <KpTreeDialog
+      v-model="headerKpDialog"
+      mode="single"
+      title="选择整组主考点"
+      @pick="onPickHeaderKp"
+    />
 
     <!-- 卡片列 -->
     <div ref="listEl" class="canvas-body">
@@ -306,6 +358,8 @@ function regenerate() {
             @reverify="(i: number) => emit('reverify', i)"
             @persist-one="(i: number) => emit('persist-one', i)"
             @add-to-basket="(i: number) => emit('add-to-basket', i)"
+            @edit-dna="(p) => emit('edit-dna', p)"
+            @revise="(p) => emit('revise', p)"
           />
         </div>
         <!-- PRD-C-012 P2：增量帧期的「生成中」占位卡（题号顺延已完成题，定稿帧到达即消失） -->
@@ -353,8 +407,8 @@ function regenerate() {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: #f5f8f8; /* bg-50 */
-  border-radius: 12px;
+  background: #fbfaf6; /* 暖纸白 paper（v3 设计语言） */
+  border-radius: 16px;
   overflow: hidden;
 }
 
@@ -364,8 +418,8 @@ function regenerate() {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  border-bottom: 1px solid #e3e9e9;
-  background: #f5f8f8;
+  border-bottom: 1px solid #e7e3da;
+  background: #fbfaf6;
 }
 .head-line {
   display: flex;
@@ -408,11 +462,54 @@ function regenerate() {
 }
 .keep-badge {
   font-size: 12px;
-  color: #176e6e; /* teal-700 */
-  background: #e6f2f2; /* teal-50 */
-  border-radius: 6px;
-  padding: 2px 10px;
-  font-weight: 600;
+  color: #385350; /* ink-700 */
+  background: #fff;
+  border: 1px solid #e7e3da;
+  border-radius: 999px;
+  padding: 4px 11px;
+  font-weight: 500;
+}
+.keep-badge b {
+  color: #0f6e6e; /* teal-700 */
+  margin: 0 2px;
+  font-weight: 700;
+}
+.keep-badge.editable {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+}
+.keep-badge.editable:hover:not(:disabled) {
+  background: #e7f3f1;
+  border-color: #7fc0bd;
+}
+.keep-badge.editable:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.edit-pen {
+  margin-left: 5px;
+  color: #1e8a8a;
+  font-size: 11px;
+}
+.grade-pop {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.grade-opt {
+  font-size: 12px;
+  color: #385350;
+  background: #f7faf9;
+  border: 1px solid #e7e3da;
+  border-radius: 8px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.grade-opt:hover {
+  background: #e7f3f1;
+  border-color: #7fc0bd;
+  color: #0f6e6e;
 }
 .recipe-badge {
   font-size: 12px;

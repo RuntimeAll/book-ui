@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'v
 import { ElMessage } from 'element-plus'
 import { useUserStore } from '@/store/user'
 import {
+  editVariantDna,
   editVariantItem,
   fetchVariantArtifact,
   fetchVariantHistory,
@@ -10,9 +11,11 @@ import {
   persistVariantOne,
   reorderVariant,
   reverifyVariantItem,
+  reviseVariantItem,
   streamVariant,
   uploadMotherImage,
 } from '@/api/variant'
+import type { DnaEditValue } from '@/api/variant'
 import type {
   ToolkitChatMessage,
   VariantArtifact,
@@ -533,6 +536,54 @@ async function onReverify(index: number) {
 }
 
 // ---------------------------------------------------------------------------
+// PRD-C-014 T3/T4 — DNA 逐维编辑。
+//   T3 列表选编辑（零 LLM）：edit-dna，整量替换右栏（被改卡置 manual_edited 徽章）。
+//   T4 点击-说话（生成维 / 整卡重做）：revise（跑 LLM，几秒），同样整量替换。
+// 都是确定性/单题动作，不进对话流。失败报错气泡不静默（ElMessage.error）。
+// ---------------------------------------------------------------------------
+
+/** T3：DNA 列表选编辑（知识点树 / 枚举 / 标签 / 点星）。 */
+async function onEditDna(payload: {
+  index: number
+  field: 'main_kp' | 'secondary_kps' | 'qtype' | 'exam_type' | 'tags' | 'difficulty'
+  value: DnaEditValue
+}) {
+  if (sending.value) return
+  try {
+    const a = await editVariantDna(threadId.value, payload.index, payload.field, payload.value)
+    if (a) artifact.value = a
+    ElMessage.success('已更新（你说了算）')
+  } catch (e) {
+    ElMessage.error(`更新失败：${e instanceof Error ? e.message : String(e)}`)
+  }
+}
+
+/** T4：点击-说话 vibe（skeleton/scene/whole）。reverifyingIndex 复用驱动该卡 loading。 */
+async function onRevise(payload: {
+  index: number
+  target: 'skeleton' | 'scene' | 'whole'
+  instruction: string
+}) {
+  if (sending.value || reverifyingIndex.value !== null) return
+  reverifyingIndex.value = payload.index
+  try {
+    const a = await reviseVariantItem(
+      threadId.value,
+      payload.index,
+      payload.target,
+      payload.instruction,
+      userStore.accessToken
+    )
+    if (a) artifact.value = a
+    ElMessage.success(payload.target === 'whole' ? '已重做这题' : '已按你说的改')
+  } catch (e) {
+    ElMessage.error(`修改失败：${e instanceof Error ? e.message : String(e)}`)
+  } finally {
+    reverifyingIndex.value = null
+  }
+}
+
+// ---------------------------------------------------------------------------
 // PRD-C-014 §3.1 — 单题入库（T1）+ 试题篮透明入库（T2）。
 //   T1 收录入库：调 persist-one → 该卡 persisted=true（artifact 整量替换后保持）。
 //   T2 加入试题篮：始终可点；未入库先 persist-one 拿 id 再加篮，已入库直接加篮。
@@ -610,6 +661,21 @@ async function onAddToBasket(index: number) {
   } finally {
     basketingIndex.value = null
   }
+}
+
+/**
+ * G13 ⑤：头部「主考点 / 年级」可改 —— 这是【组级守恒锚】（影响整组），非单题维。
+ * T3/T4 的 edit-dna/revise 都是单题端点，无组级头部端点契约 → 走【既有 chat 通道】发一句
+ * 受约束指令（同 thread_id，agent 据此整组重锚定/重出）。这是组级改动唯一已落地的安全路径。
+ * 🔴 联调点：若后续 BE 提供组级 set-header 直连端点，这两处可改直连（零 LLM）。
+ */
+function onEditHeaderKp(kp: { id: string; name: string }) {
+  if (sending.value) return
+  dispatch(`把整组主考点改成「${kp.name}」，按新主考点重新出这组变式`, `主考点 → ${kp.name}`)
+}
+function onEditHeaderGrade(grade: string) {
+  if (sending.value || !grade) return
+  dispatch(`把整组年级改成「${grade}」，按新年级重新出这组变式`, `年级 → ${grade}`)
 }
 
 /** 换一批：重发初始出题 utterance（整组重新出，agent 重新分析母题） */
@@ -927,6 +993,10 @@ onBeforeUnmount(() => {
       @reverify="onReverify"
       @persist-one="onPersistOne"
       @add-to-basket="onAddToBasket"
+      @edit-dna="onEditDna"
+      @revise="onRevise"
+      @edit-header-kp="onEditHeaderKp"
+      @edit-header-grade="onEditHeaderGrade"
     />
 
     <!-- P10：点开看大图（简易遮罩，点遮罩关闭；不引新依赖） -->
@@ -940,31 +1010,33 @@ onBeforeUnmount(() => {
 <style scoped>
 /* DESIGN token：bg-50 #F5F8F8 / card #FFF / border #E3E9E9 / ink-900 #1D2A2E
    violet-600 #7B6CF0（AI 在场）/ teal-600 #1E8A8A（老师拍板） */
+/* G13 ① v3 设计语言：深青 #0F6E6E + 暖纸白 #FBFAF6 + 暖琥珀 #B8741A（还原语言非逐像素） */
 .variant-page {
   display: flex;
-  gap: 12px;
+  gap: 22px;
   height: 100%;
   min-height: 600px;
-  background: #f5f8f8; /* bg-50 */
-  padding: 12px;
+  background: #fbfaf6; /* 暖纸白 paper */
+  padding: 16px;
   box-sizing: border-box;
 }
 
-/* 左栏 ~420px（min 360 不塌），右栏自适应（min-width:0 防内容撑破） */
+/* G13 ⑥：左命题搭子 ~380px / 右变式 flex */
 .variant-chat {
-  flex: 0 1 420px;
-  min-width: 360px;
+  flex: 0 0 380px;
+  min-width: 340px;
   display: flex;
   flex-direction: column;
   background: #fff;
-  border: 1px solid #e3e9e9;
-  border-radius: 12px;
+  border: 1px solid #e7e3da; /* line */
+  border-radius: 16px;
   overflow: hidden;
 }
 .variant-artifact {
   flex: 1;
   min-width: 0;
-  border: 1px solid #e3e9e9;
+  border: 1px solid #e7e3da;
+  border-radius: 16px;
 }
 
 /* 小屏（<1024px）上下堆叠，各自内部滚动 */

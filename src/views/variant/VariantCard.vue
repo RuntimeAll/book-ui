@@ -16,8 +16,10 @@
 // ---------------------------------------------------------------------------
 import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import type { VariantArtifactItem } from '@/api/variant'
+import { EXAM_TYPES, QTYPE_OPTIONS, type VariantArtifactItem } from '@/api/variant'
+import { tagsByKp as fetchTagsByKp } from '@/api/question'
 import MarkdownMath from '@/components/MarkdownMath.vue'
+import KpTreeDialog from './KpTreeDialog.vue'
 import {
   normalizeStem,
   parseChoiceStem,
@@ -52,6 +54,24 @@ const emit = defineEmits<{
   (e: 'persist-one', index: number): void
   /** PRD-C-014 T2：单题「加入试题篮」（宿主透明入库：未入库先 persist-one 再加篮，已入库直接加篮） */
   (e: 'add-to-basket', index: number): void
+  /**
+   * PRD-C-014 T3：DNA 列表选编辑（零 LLM，平台数据源）。宿主调 editVariantDna(field, value)。
+   * value 类型随 field：main_kp={id,name} / secondary_kps=[{id,name}] / qtype|exam_type=string
+   *   / tags=string[] / difficulty=number。
+   */
+  (
+    e: 'edit-dna',
+    payload: {
+      index: number
+      field: 'main_kp' | 'secondary_kps' | 'qtype' | 'exam_type' | 'tags' | 'difficulty'
+      value: { id: string; name: string } | Array<{ id: string; name: string }> | string | string[] | number
+    }
+  ): void
+  /**
+   * PRD-C-014 T4：点击-说话 vibe（生成维 / 整卡重做）。宿主调 reviseVariantItem(target, instruction)。
+   * target ∈ skeleton | scene | whole。
+   */
+  (e: 'revise', payload: { index: number; target: 'skeleton' | 'scene' | 'whole'; instruction: string }): void
 }>()
 
 const showSolution = ref(false)
@@ -264,16 +284,147 @@ const difficultyStars = computed(() => {
   }
 })
 
-const levelText = computed(() => {
-  const lv = props.item.level
-  if (lv === 'hard') return '提高'
-  if (lv === 'normal') return '常规'
-  return lv
-})
-
 function knob(text: string) {
   if (props.sending) return
   emit('utterance', text)
+}
+
+// ---------------------------------------------------------------------------
+// PRD-C-014 T2 — 题目 DNA 面板（默认收起 = 🧬 chip；点开展开全维，老师可逐维改）。
+// ---------------------------------------------------------------------------
+const dnaOpen = ref(false)
+const dna = computed(() => props.item.dna)
+
+// 难度档位中文（与 22-SSOT §2 四档 rubric 对齐，难度 1-4） — 星级旁不再放层级文字（G13 ④）
+const DIFFICULTY_LABEL = ['', '送分', '常规', '多步综合', '压轴']
+function difficultyLabel(n: number): string {
+  const r = Math.round(n)
+  return r >= 1 && r <= 4 ? DIFFICULTY_LABEL[r] : ''
+}
+
+// 题型/考察类型枚举（DNA 面板下拉）
+const qtypeOptions = QTYPE_OPTIONS
+const examTypeOptions = EXAM_TYPES
+
+// ---- T3：主考点 / 副考点（知识点树弹层）----
+const kpDialog = ref<false | 'main' | 'secondary'>(false)
+const kpDialogMode = computed<'single' | 'multi'>(() =>
+  kpDialog.value === 'secondary' ? 'multi' : 'single'
+)
+function openKpDialog(which: 'main' | 'secondary') {
+  if (props.sending) return
+  kpDialog.value = which
+}
+function onPickMainKp(value: { id: string; name: string }) {
+  emit('edit-dna', { index: props.item.index, field: 'main_kp', value })
+  kpDialog.value = false
+}
+function onPickSecondaryKps(value: Array<{ id: string; name: string }>) {
+  emit('edit-dna', { index: props.item.index, field: 'secondary_kps', value })
+  kpDialog.value = false
+}
+
+// ---- T3：题型 / 考察类型（枚举下拉，选即提交）----
+function onPickQtype(v: string) {
+  if (!v || v === props.item.qtype) return
+  emit('edit-dna', { index: props.item.index, field: 'qtype', value: v })
+}
+function onPickExamType(v: string) {
+  if (!v || v === dna.value.examType) return
+  emit('edit-dna', { index: props.item.index, field: 'exam_type', value: v })
+}
+
+// ---- T3：难度点星覆盖（1-4，老师覆盖优先级最高）----
+function onPickDifficulty(n: number) {
+  if (props.sending) return
+  if (n < 1 || n > 4) return
+  if (Math.round(props.item.difficulty) === n) return
+  emit('edit-dna', { index: props.item.index, field: 'difficulty', value: n })
+}
+
+// ---- T3：标签多选弹层（候选 = tagsByKp（按主考点）+ 手输补充）----
+const tagPopover = ref(false)
+const tagCandidates = ref<string[]>([])
+const tagLoading = ref(false)
+const tagDraft = ref<string[]>([]) // 当前编辑中的标签集合（含已选 + 候选勾选）
+const tagInput = ref('') // 手输补充框
+
+async function openTagPopover() {
+  if (props.sending) return
+  tagDraft.value = [...dna.value.tags]
+  tagPopover.value = true
+  // 候选按当前主考点 id 取（无 id → 跳过，仅手输）
+  const kpId = dna.value.mainKpId
+  if (!kpId) {
+    tagCandidates.value = []
+    return
+  }
+  tagLoading.value = true
+  try {
+    const raw = await fetchTagsByKp(kpId, 50)
+    tagCandidates.value = normalizeTagList(raw)
+  } catch {
+    tagCandidates.value = [] // 候选拉取失败不阻塞，仍可手输（不静默崩）
+  } finally {
+    tagLoading.value = false
+  }
+}
+
+/** 宽松归一候选标签：吃 string[] 或 {name}[] */
+function normalizeTagList(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  const out: string[] = []
+  for (const x of raw) {
+    if (typeof x === 'string' && x.trim()) out.push(x.trim())
+    else if (x && typeof x === 'object') {
+      const n = (x as Record<string, unknown>).name
+      if (typeof n === 'string' && n.trim()) out.push(n.trim())
+    }
+  }
+  return out
+}
+
+function toggleTag(tag: string) {
+  const i = tagDraft.value.indexOf(tag)
+  if (i >= 0) tagDraft.value.splice(i, 1)
+  else tagDraft.value.push(tag)
+}
+function addManualTag() {
+  const t = tagInput.value.trim()
+  if (!t) return
+  if (!tagDraft.value.includes(t)) tagDraft.value.push(t)
+  tagInput.value = ''
+}
+function removeDraftTag(tag: string) {
+  tagDraft.value = tagDraft.value.filter((t) => t !== tag)
+}
+function saveTags() {
+  emit('edit-dna', { index: props.item.index, field: 'tags', value: [...tagDraft.value] })
+  tagPopover.value = false
+}
+
+// ---- T4：点击-说话 vibe（生成维 skeleton/scene + 整卡 whole）----
+const reviseTarget = ref<null | 'skeleton' | 'scene' | 'whole'>(null)
+const reviseInput = ref('')
+function openRevise(target: 'skeleton' | 'scene' | 'whole') {
+  if (props.sending || props.reverifying) return
+  reviseTarget.value = target
+  reviseInput.value = ''
+}
+function cancelRevise() {
+  reviseTarget.value = null
+  reviseInput.value = ''
+}
+function submitRevise() {
+  const instruction = reviseInput.value.trim()
+  if (!instruction) {
+    ElMessage.warning('说一句「哪里不对、想怎么改」再提交')
+    return
+  }
+  const target = reviseTarget.value
+  if (!target) return
+  emit('revise', { index: props.item.index, target, instruction })
+  cancelRevise()
 }
 </script>
 
@@ -282,16 +433,23 @@ function knob(text: string) {
     class="variant-card"
     :class="{ 'is-persisted': item.persisted, 'is-editing': editing, 'is-reverifying': reverifying }"
   >
-    <!-- 卡头：题号圆 + 题型/难度/层级徽章 + 验证角标（右上） -->
+    <!-- 卡头：题号圆 + 题型 + 可点星级（难度覆盖） + 验证角标（右上）
+         G13 ④：星级旁不放层级文字标签（常规/提高/压轴字样删） -->
     <header class="card-head">
       <span class="seq">{{ item.index }}</span>
       <span v-if="item.qtype" class="meta-tag">{{ item.qtype }}</span>
-      <span v-if="difficultyStars" class="diff-stars" :title="difficultyStars.title">
-        <span v-for="n in difficultyStars.full" :key="`f${n}`" class="star is-full">★</span>
-        <span v-for="n in difficultyStars.empty" :key="`e${n}`" class="star is-empty">☆</span>
+      <!-- 可点星级：点第 n 颗 = 把难度覆盖成 n（1-4），老师覆盖优先级最高 -->
+      <span v-if="difficultyStars" class="diff-stars" :title="`${difficultyStars.title}（点星可改）`">
+        <span
+          v-for="n in 4"
+          :key="`s${n}`"
+          class="star is-click"
+          :class="n <= Math.round(item.difficulty) ? 'is-full' : 'is-empty'"
+          @click="onPickDifficulty(n)"
+        >{{ n <= Math.round(item.difficulty) ? '★' : '☆' }}</span>
       </span>
-      <span class="meta-tag" :class="item.level === 'hard' ? 'is-hard' : ''">{{ levelText }}</span>
       <span class="head-spacer" />
+      <span v-if="item.manualEdited" class="manual-tag" title="本题有维度被手动编辑过">✎ 手动编辑</span>
       <span v-if="item.persisted" class="persisted-tag">已收录</span>
       <span v-if="geneBadge" class="gene-badge" :class="geneBadge.cls">{{ geneBadge.text }}</span>
       <!-- 重新验算中：徽章位展示 loading 态 -->
@@ -529,6 +687,199 @@ function knob(text: string) {
         <MarkdownMath v-else :content="item.stem" />
       </div>
 
+      <!-- ============ 🧬 题目 DNA（G13 ③：默认收起 = 图标 chip；点开展开全维，逐维可改） ============ -->
+      <div class="dna-zone">
+        <button type="button" class="dna-chip" :class="{ open: dnaOpen }" @click="dnaOpen = !dnaOpen">
+          <span class="dna-spiral">🧬</span>题目 DNA
+          <span class="dna-caret">{{ dnaOpen ? '▴' : '▾' }}</span>
+        </button>
+
+        <div v-if="dnaOpen" class="dna-panel">
+          <div class="dna-top">
+            <span class="dna-note">老师可改任意一维 · 你说了算</span>
+          </div>
+
+          <div class="dna-grid">
+            <!-- 主考点（T3：知识点树单选） -->
+            <span class="dna-k">主考点</span>
+            <span class="dna-v">
+              <button type="button" class="kp-pill" :disabled="sending" @click="openKpDialog('main')">
+                {{ dna.mainKp || '未标 · 点选' }}<span class="pill-edit">✎</span>
+              </button>
+            </span>
+
+            <!-- 副考点（T3：知识点树多选 ≤3） -->
+            <span class="dna-k">副考点</span>
+            <span class="dna-v">
+              <template v-if="dna.secondaryKps.length">
+                <span v-for="kp in dna.secondaryKps" :key="kp" class="kp-pill sec">{{ kp }}</span>
+              </template>
+              <button type="button" class="dna-min-btn" :disabled="sending" @click="openKpDialog('secondary')">
+                {{ dna.secondaryKps.length ? '改' : '＋ 选副考点' }}
+              </button>
+            </span>
+
+            <!-- 题型（T3：枚举下拉） -->
+            <span class="dna-k">题型</span>
+            <span class="dna-v">
+              <el-select
+                :model-value="item.qtype || ''"
+                size="small"
+                placeholder="选题型"
+                class="dna-select"
+                :disabled="sending"
+                @change="onPickQtype"
+              >
+                <el-option v-for="q in qtypeOptions" :key="q" :label="q" :value="q" />
+              </el-select>
+            </span>
+
+            <!-- 考察类型（T3：闭集 10 下拉） -->
+            <span class="dna-k">考察类型</span>
+            <span class="dna-v">
+              <el-select
+                :model-value="dna.examType || ''"
+                size="small"
+                placeholder="选考察类型"
+                class="dna-select"
+                :disabled="sending"
+                @change="onPickExamType"
+              >
+                <el-option v-for="t in examTypeOptions" :key="t" :label="t" :value="t" />
+              </el-select>
+            </span>
+
+            <!-- 难度（T3：点星覆盖，与卡头星级同源；这里给文字档位） -->
+            <span class="dna-k">难度</span>
+            <span class="dna-v dna-diff">
+              <span class="diff-stars-inline">
+                <span
+                  v-for="n in 4"
+                  :key="`ds${n}`"
+                  class="star is-click"
+                  :class="n <= Math.round(item.difficulty) ? 'is-full' : 'is-empty'"
+                  @click="onPickDifficulty(n)"
+                >{{ n <= Math.round(item.difficulty) ? '★' : '☆' }}</span>
+              </span>
+              <span class="diff-label">{{ difficultyLabel(item.difficulty) }}（{{ Math.round(item.difficulty) }}）</span>
+            </span>
+
+            <!-- 场景（T4：点击-说话改） -->
+            <span class="dna-k">场景</span>
+            <span class="dna-v dna-full">
+              <span class="dna-text">{{ dna.scene || '未标' }}</span>
+              <button type="button" class="dna-min-btn" :disabled="sending || reverifying" @click="openRevise('scene')">
+                说一句改
+              </button>
+              <div v-if="reviseTarget === 'scene'" class="revise-box">
+                <el-input
+                  v-model="reviseInput"
+                  type="textarea"
+                  :autosize="{ minRows: 1, maxRows: 3 }"
+                  resize="none"
+                  placeholder="哪里不对、想换成什么场景？（如：换成行程问题）"
+                  @keyup.enter.exact.prevent="submitRevise"
+                />
+                <div class="revise-actions">
+                  <button type="button" class="revise-cancel" @click="cancelRevise">取消</button>
+                  <button type="button" class="revise-go" @click="submitRevise">提交</button>
+                </div>
+              </div>
+            </span>
+
+            <!-- 解法骨架（T4：点击-说话改；【】包最难步） -->
+            <span class="dna-k">解法骨架</span>
+            <span class="dna-v dna-full">
+              <span class="dna-text skel"><MarkdownMath :content="dna.skeleton || '未标'" /></span>
+              <button type="button" class="dna-min-btn" :disabled="sending || reverifying" @click="openRevise('skeleton')">
+                说一句改
+              </button>
+              <div v-if="reviseTarget === 'skeleton'" class="revise-box">
+                <el-input
+                  v-model="reviseInput"
+                  type="textarea"
+                  :autosize="{ minRows: 1, maxRows: 3 }"
+                  resize="none"
+                  placeholder="哪里不对、想怎么改解法？（如：用整体代入，别拆开算）"
+                  @keyup.enter.exact.prevent="submitRevise"
+                />
+                <div class="revise-actions">
+                  <button type="button" class="revise-cancel" @click="cancelRevise">取消</button>
+                  <button type="button" class="revise-go" @click="submitRevise">提交</button>
+                </div>
+              </div>
+            </span>
+
+            <!-- 难点（展示·克制，基础题为空；改随骨架/整卡 revise 联动） -->
+            <span class="dna-k">难点</span>
+            <span class="dna-v dna-full">
+              <template v-if="dna.hardPoints.length">
+                <span v-for="hp in dna.hardPoints" :key="hp" class="hard-pill">{{ hp }}</span>
+              </template>
+              <span v-else class="dna-muted">无（基础题 · 宁空不凑）</span>
+            </span>
+
+            <!-- 标签（T3：多选弹层 = tagsByKp 候选 + 手输补充） -->
+            <span class="dna-k">标签</span>
+            <span class="dna-v dna-full">
+              <template v-if="dna.tags.length">
+                <span v-for="t in dna.tags" :key="t" class="ftag">{{ t }}</span>
+              </template>
+              <span v-else class="dna-muted">未标</span>
+              <el-popover
+                :visible="tagPopover"
+                placement="bottom-start"
+                :width="300"
+                trigger="manual"
+              >
+                <template #reference>
+                  <button type="button" class="dna-min-btn" :disabled="sending" @click="openTagPopover">
+                    {{ dna.tags.length ? '改标签' : '＋ 加标签' }}
+                  </button>
+                </template>
+                <div class="tag-pop">
+                  <p class="tag-pop-title">已选（点 ✕ 移除）</p>
+                  <div class="tag-pop-chosen">
+                    <span v-for="t in tagDraft" :key="t" class="ftag is-chosen" @click="removeDraftTag(t)">
+                      {{ t }} ✕
+                    </span>
+                    <span v-if="!tagDraft.length" class="dna-muted">暂无</span>
+                  </div>
+                  <div class="tag-pop-input">
+                    <el-input
+                      v-model="tagInput"
+                      size="small"
+                      placeholder="手输标签，回车补充"
+                      @keyup.enter.prevent="addManualTag"
+                    />
+                    <el-button size="small" @click="addManualTag">加</el-button>
+                  </div>
+                  <p class="tag-pop-title">候选（按主考点）</p>
+                  <div v-loading="tagLoading" class="tag-pop-cands">
+                    <span
+                      v-for="c in tagCandidates"
+                      :key="c"
+                      class="ftag is-cand"
+                      :class="{ 'is-picked': tagDraft.includes(c) }"
+                      @click="toggleTag(c)"
+                    >
+                      {{ c }}
+                    </span>
+                    <span v-if="!tagLoading && !tagCandidates.length" class="dna-muted">
+                      无候选（可手输补充）
+                    </span>
+                  </div>
+                  <div class="tag-pop-actions">
+                    <el-button size="small" @click="tagPopover = false">取消</el-button>
+                    <el-button size="small" type="primary" @click="saveTags">保存</el-button>
+                  </div>
+                </div>
+              </el-popover>
+            </span>
+          </div>
+        </div>
+      </div>
+
       <!-- 解析折叠（默认收起，内含答案 + 解析） -->
       <div class="solution-block">
         <button type="button" class="solution-toggle" @click="showSolution = !showSolution">
@@ -611,27 +962,81 @@ function knob(text: string) {
         >
           答疑
         </button>
+        <!-- T4：整卡级「重做这题」（target=whole，如「太简单了难一点」） -->
+        <button
+          type="button"
+          class="knob-btn is-redo"
+          :disabled="sending || reverifying"
+          @click="openRevise('whole')"
+        >
+          重做这题
+        </button>
       </footer>
+
+      <!-- T4：整卡重做的内联输入（whole；与维级 revise 共用 reviseInput，target 区分） -->
+      <div v-if="reviseTarget === 'whole'" class="revise-box whole-revise">
+        <el-input
+          v-model="reviseInput"
+          type="textarea"
+          :autosize="{ minRows: 1, maxRows: 3 }"
+          resize="none"
+          placeholder="这题想怎么重做？（如：太简单了，难一点 / 换个考法）"
+          @keyup.enter.exact.prevent="submitRevise"
+        />
+        <div class="revise-actions">
+          <button type="button" class="revise-cancel" @click="cancelRevise">取消</button>
+          <button type="button" class="revise-go" @click="submitRevise">重做</button>
+        </div>
+      </div>
     </template>
+
+    <!-- T3：知识点树弹层（主考点单选 / 副考点多选，与 dnaOpen 无关，按需挂载） -->
+    <KpTreeDialog
+      :model-value="kpDialog !== false"
+      :mode="kpDialogMode"
+      :title="kpDialog === 'secondary' ? '选择副考点（≤3）' : '选择主考点'"
+      :max="3"
+      :preselected="[]"
+      @update:model-value="(v: boolean) => { if (!v) kpDialog = false }"
+      @pick="onPickMainKp"
+      @pick-multi="onPickSecondaryKps"
+    />
   </article>
 </template>
 
 <style scoped>
 /* DESIGN token：card #FFF / border #E3E9E9 / ink-900 #1D2A2E / teal-600 #1E8A8A
    green-600 #0E9F6E / amber-500 #E0A23C / violet-600 #7B6CF0 / violet-50 #F2F0FE */
+/* G13 ②：卡片解剖顺序 = 顶部色条 → 题号/题型/星级 → 题干 → 选项 → 🧬 DNA chip → 解析 → 旋钮 */
 .variant-card {
+  position: relative;
   background: #fff;
-  border: 1px solid #e3e9e9;
-  border-radius: 14px;
-  padding: 14px 16px;
+  border: 1px solid #e7e3da;
+  border-radius: 16px;
+  padding: 16px 18px;
   display: flex;
   flex-direction: column;
   gap: 10px;
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(22, 48, 47, 0.05), 0 2px 8px rgba(22, 48, 47, 0.04);
   container-type: inline-size; /* 编辑态双栏的 @container 查询锚点 */
 }
+/* 顶部色条（深青渐变；已收录卡转 violet） */
+.variant-card::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 3px;
+  background: linear-gradient(90deg, #1e8a8a, #7fc0bd);
+}
 .variant-card.is-persisted {
-  background: #f2f0fe; /* violet-50：已收录态弱高亮 */
-  border-color: #7b6cf0;
+  background: #efecfb; /* violet-50：已收录态弱高亮 */
+  border-color: #6d5fd0;
+}
+.variant-card.is-persisted::before {
+  background: linear-gradient(90deg, #6d5fd0, #b3a7f0);
 }
 
 .card-head {
@@ -678,10 +1083,27 @@ function knob(text: string) {
   cursor: default;
 }
 .star.is-full {
-  color: #e0a23c; /* amber-500 */
+  color: #b8741a; /* amber-600（v3 暖琥珀） */
 }
 .star.is-empty {
-  color: #d4dede;
+  color: #d9d3c6;
+}
+/* 可点星级（难度覆盖）：hover 提示可改 */
+.star.is-click {
+  cursor: pointer;
+}
+.star.is-click:hover {
+  color: #b8741a;
+}
+
+/* 手动编辑徽章（任一 DNA 维被改过） */
+.manual-tag {
+  font-size: 12px;
+  color: #5b6770;
+  background: #eef1f3;
+  border: 1px solid #d4dede;
+  border-radius: 6px;
+  padding: 1px 8px;
 }
 
 /* 验证角标：⚠ 比 ✓ 醒目（实底白字 + ⚠ 加粗） */
@@ -807,6 +1229,293 @@ function knob(text: string) {
 }
 .choice-content :deep(p) {
   margin: 0;
+}
+
+/* ============ 🧬 题目 DNA（v3 设计语言：深青 + 暖纸白 + 暖琥珀） ============ */
+.dna-zone {
+  margin-top: 4px;
+}
+/* 收起态 = 图标 chip（深青 teal-50 底 + teal-700 字） */
+.dna-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #0f6e6e; /* teal-700 */
+  background: #e7f3f1; /* teal-50 */
+  border: 1px solid #cfe6e3;
+  border-radius: 999px;
+  padding: 5px 13px 5px 11px;
+  cursor: pointer;
+  transition: 0.15s;
+}
+.dna-chip:hover {
+  background: #dcefec;
+  border-color: #7fc0bd;
+}
+.dna-chip.open {
+  background: #fff;
+  border-color: #7fc0bd;
+}
+.dna-spiral {
+  font-size: 13px;
+}
+.dna-caret {
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+/* 展开态面板 */
+.dna-panel {
+  margin-top: 11px;
+  background: #f7faf9;
+  border: 1px solid #e7e3da; /* line */
+  border-radius: 12px;
+  padding: 13px 15px;
+}
+.dna-top {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 11px;
+}
+.dna-note {
+  font-size: 11.5px;
+  color: #0f6e6e;
+  background: #e7f3f1;
+  border-radius: 999px;
+  padding: 2px 10px;
+}
+/* 维度网格：标签列 + 值列（窄屏单列） */
+.dna-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px 14px;
+  font-size: 13px;
+  align-items: baseline;
+}
+.dna-k {
+  color: #6b817e; /* ink-500 */
+  white-space: nowrap;
+}
+.dna-v {
+  color: #16302f; /* ink-900 */
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.dna-v.dna-full {
+  flex-direction: row;
+}
+.dna-text {
+  flex: 1;
+  min-width: 0;
+}
+.dna-text.skel :deep(p) {
+  margin: 0;
+  display: inline;
+}
+.dna-diff {
+  gap: 10px;
+}
+.diff-stars-inline {
+  display: inline-flex;
+  letter-spacing: -1px;
+  font-size: 14px;
+}
+.diff-label {
+  font-size: 12px;
+  color: #6b817e;
+}
+.dna-muted {
+  color: #9fb0ad; /* ink-300 */
+  font-size: 12.5px;
+}
+
+/* 知识点药丸：主考点实心深青、副考点描边 */
+.kp-pill {
+  font-size: 12px;
+  background: #0f6e6e; /* teal-700 */
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  padding: 3px 11px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.kp-pill:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.kp-pill .pill-edit {
+  font-size: 10px;
+  opacity: 0.85;
+}
+.kp-pill.sec {
+  background: #fff;
+  color: #0f6e6e;
+  border: 1px solid #7fc0bd;
+  cursor: default;
+}
+.hard-pill {
+  font-size: 12px;
+  background: #fbeed6; /* amber-100 */
+  color: #b8741a;
+  border-radius: 5px;
+  padding: 1px 8px;
+  font-weight: 600;
+}
+.ftag {
+  font-size: 12px;
+  background: #f4f1ea;
+  color: #385350;
+  border: 1px solid #e9e3d6;
+  border-radius: 999px;
+  padding: 2px 9px;
+  display: inline-block;
+}
+/* 骨架最难步高亮（BE 用【】包裹，这里也给视觉提示，由 MarkdownMath 渲染纯文本则保留括号） */
+.dna-text.skel :deep(.hard) {
+  background: #fbeed6;
+  color: #b8741a;
+  border-radius: 5px;
+  padding: 0 6px;
+  font-weight: 600;
+}
+/* DNA 维级小动作按钮（选副考点 / 说一句改 / 加标签） */
+.dna-min-btn {
+  font-size: 12px;
+  color: #0f6e6e;
+  background: #fff;
+  border: 1px solid #7fc0bd;
+  border-radius: 8px;
+  padding: 2px 10px;
+  cursor: pointer;
+}
+.dna-min-btn:hover:not(:disabled) {
+  background: #e7f3f1;
+}
+.dna-min-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* DNA 维下拉（题型/考察类型）紧凑 */
+.dna-select {
+  width: 150px;
+}
+
+/* T4：点击-说话内联输入框 */
+.revise-box {
+  flex-basis: 100%;
+  margin-top: 8px;
+  background: #fff;
+  border: 1px solid #efecfb;
+  border-radius: 10px;
+  padding: 8px;
+}
+.revise-box.whole-revise {
+  margin-top: 4px;
+}
+.revise-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+.revise-cancel,
+.revise-go {
+  font-size: 12px;
+  border-radius: 8px;
+  padding: 3px 12px;
+  cursor: pointer;
+}
+.revise-cancel {
+  color: #5b6770;
+  background: #fff;
+  border: 1px solid #e7e3da;
+}
+.revise-go {
+  color: #fff;
+  background: #6d5fd0; /* violet-600：AI 在场（生成维） */
+  border: 1px solid #6d5fd0;
+}
+.revise-go:hover {
+  background: #5447b8;
+}
+
+/* 标签多选弹层 */
+.tag-pop-title {
+  margin: 8px 0 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #385350;
+}
+.tag-pop-title:first-child {
+  margin-top: 0;
+}
+.tag-pop-chosen,
+.tag-pop-cands {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 22px;
+}
+.tag-pop-cands {
+  max-height: 140px;
+  overflow-y: auto;
+}
+.ftag.is-chosen {
+  background: #e7f3f1;
+  color: #0f6e6e;
+  border-color: #7fc0bd;
+  cursor: pointer;
+}
+.ftag.is-cand {
+  cursor: pointer;
+}
+.ftag.is-cand.is-picked {
+  background: #e7f3f1;
+  color: #0f6e6e;
+  border-color: #7fc0bd;
+}
+.tag-pop-input {
+  display: flex;
+  gap: 6px;
+  margin: 6px 0;
+}
+.tag-pop-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+  border-top: 1px dashed #e7e3da;
+  padding-top: 8px;
+}
+
+/* 整卡重做按钮：violet 描边（AI 生成动作） */
+.knob-btn.is-redo {
+  color: #5447b8;
+  border-color: #cfc7f3;
+}
+.knob-btn.is-redo:hover:not(:disabled) {
+  background: #efecfb;
+  border-color: #6d5fd0;
+}
+
+@container (max-width: 460px) {
+  .dna-grid {
+    grid-template-columns: 1fr;
+    gap: 4px 0;
+  }
+  .dna-k {
+    margin-top: 6px;
+    font-weight: 600;
+  }
 }
 
 .solution-block {

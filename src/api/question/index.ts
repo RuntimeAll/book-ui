@@ -352,6 +352,19 @@ export const questionListByIds = (ids: string[]) =>
   })
 
 /**
+ * PRD-C-014 T3 — 按主知识点取候选自由标签池（DNA 标签维多选弹层的候选来源）。
+ * GET /teacher/question/tagsByKp?kpId={当前主考点}&limit=50
+ *   - 走 /api → :8090 misikt envelope（request 拦截器已解包，拿到 response 内层）。
+ *   - kpId = 当前题主考点知识点 id；limit 默认 50。
+ *   - 端点开发中（B4 批次按此契约写）：BE 返候选标签名数组（按复用度/相关度排序）。
+ *     宽松解包：返 string[] 或 {name}[] 都吃；解析不出回空数组（前端仅作候选提示，可手输补充）。
+ */
+export const tagsByKp = (kpId: string, limit = 50) =>
+  request.get<unknown, unknown>('/teacher/question/tagsByKp', {
+    params: { kpId, limit },
+  })
+
+/**
  * 获取我的备注（V1：BE 返单对象或 null）
  * GET /teacher/qd/note/{questionId}
  * PRD-A-013 T2 — questionId 雪花 string

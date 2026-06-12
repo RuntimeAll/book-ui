@@ -71,6 +71,31 @@ function pickStage(msg: ToolkitChatMessage): VariantStage | null {
 // 帧落在 type=custom 消息的 custom_data.artifact 上，snapshot 全量语义（FE 整量替换）。
 // ---------------------------------------------------------------------------
 
+/**
+ * PRD-C-014 T2/T3 — DNA 维度（题目 DNA 面板展示 + 逐维编辑的数据源）。
+ * 字段对齐 22-题目维度 SSOT §1：随 facts/item 从 BE artifact 帧流到前端。
+ * 🔴 现状容差：B4 批次时 BE 的 _artifact_payload 不一定全带这些键 —— pickArtifact 对每个
+ *    DNA 维都做存在性兜底（缺失 → null / 空数组），DNA 面板对空维显「未标」占位、仍可编辑补。
+ */
+export interface VariantDna {
+  /** 主考点（知识点名，可改 → field=main_kp，知识点树选叶子回写） */
+  mainKp: string | null
+  /** 主考点知识点 id（树选叶子时回写；tagsByKp 候选标签按它取） */
+  mainKpId: string | null
+  /** 副考点 ×0~3（知识点名数组，field=secondary_kps） */
+  secondaryKps: string[]
+  /** 考察类型（闭集 10，见 EXAM_TYPES；field=exam_type） */
+  examType: string | null
+  /** 解法骨架（结构步骤，【】包最难步；点击-说话改 → revise target=skeleton） */
+  skeleton: string | null
+  /** 难点（半开放·克制，基础题为空；展示用，编辑随骨架/整卡 revise 联动） */
+  hardPoints: string[]
+  /** 标签 ×3~6（自由标签，field=tags，多选弹层 + 手输补充） */
+  tags: string[]
+  /** 场景（"纯代数" 或一句话场景；点击-说话改 → revise target=scene） */
+  scene: string | null
+}
+
 /** artifact 快照 — 单题（契约与 BE _artifact_payload 严格一致） */
 export interface VariantArtifactItem {
   index: number
@@ -103,11 +128,41 @@ export interface VariantArtifactItem {
    * 注：BE 字段白名单已挡 manual_edited/from_edit 不外漏入库，故 FE 仅消费 tier='manual'。
    */
   /**
+   * PRD-C-014 T2：本题 DNA 维度（主/副考点·题型·考察类型·难度·骨架·难点·场景·标签）。
+   * 来源 = artifact 帧里随 item 流来的 dna 字段（或散键，pickArtifact 兼容两种形态）。
+   */
+  dna: VariantDna
+  /**
+   * PRD-C-014 T2/T3：本题任一 DNA 维被老师手动改过（BE edit-dna 置位）→ 卡显「手动编辑」徽章。
+   * 兼容老 manual_edited 键；无则按 tier==='manual' 兜底（内容编辑也算改过）。
+   */
+  manualEdited: boolean
+  /**
    * PRD-C-013 P2b：BE 后续帧标记本题被剔除（闸链判废）。true → ArtifactPanel 触发退场过渡后移除。
    * 增量 merge 语义专用；定稿帧不应再带 _dropped 的题。
    */
   _dropped?: boolean
 }
+
+/**
+ * PRD-C-014 §1 / 22-SSOT §1 — 考察类型闭集 10 种（DNA 面板「考察类型」维的下拉枚举）。
+ * 顺序与 SSOT 一致；DNA 值不在此集时下拉仍可显示原值（兼容存量/异常值），但选只能选这 10。
+ */
+export const EXAM_TYPES = [
+  '概念辨析',
+  '直接计算',
+  '公式套用',
+  '性质判定',
+  '证明推理',
+  '应用建模',
+  '作图',
+  '探究归纳',
+  '阅读理解迁移',
+  '纠错',
+] as const
+
+/** PRD-C-014 §1 — 题型枚举（DNA 面板「题型」维下拉；与库值 1/4/5 语义对齐） */
+export const QTYPE_OPTIONS = ['选择', '填空', '解答'] as const
 
 /** artifact 快照 — 画布头 */
 export interface VariantArtifactHeader {
@@ -130,6 +185,46 @@ export interface VariantArtifact {
   expectedTotal?: number
 }
 
+// 宽松取字符串（null/空 → null）
+function str(v: unknown): string | null {
+  return typeof v === 'string' && v.trim() ? v : null
+}
+// 宽松取字符串数组（元素取 name 或自身字符串；非数组 → []）
+function strArr(v: unknown): string[] {
+  if (!Array.isArray(v)) return []
+  const out: string[] = []
+  for (const x of v) {
+    if (typeof x === 'string' && x.trim()) out.push(x.trim())
+    else if (x && typeof x === 'object') {
+      const n = (x as Record<string, unknown>).name ?? (x as Record<string, unknown>).knowledgeName
+      if (typeof n === 'string' && n.trim()) out.push(n.trim())
+    }
+  }
+  return out
+}
+
+/**
+ * PRD-C-014 T2 — 从 item 解出 DNA 维度。兼容两种 BE 形态：
+ *   ① 嵌套：item.dna = {main_kp, secondary_kps, exam_type, skeleton, hard_points, tags, scene}
+ *   ② 散键：上述键直接散在 item 顶层（旧/过渡形态）
+ * 每维缺失 → null / 空数组（DNA 面板按「未标」占位、仍可编辑补）。
+ */
+function pickDna(o: Record<string, unknown>): VariantDna {
+  const d = (o.dna && typeof o.dna === 'object' ? o.dna : o) as Record<string, unknown>
+  return {
+    mainKp: str(d.main_kp) ?? str(d.mainKp) ?? str(d.kp),
+    mainKpId: str(d.main_kp_id) ?? str(d.mainKpId) ?? str(d.kp_id) ?? str(d.dim1_kp_id),
+    secondaryKps:
+      strArr(d.secondary_kps).length ? strArr(d.secondary_kps) : strArr(d.secondaryKps),
+    examType: str(d.exam_type) ?? str(d.examType),
+    skeleton: str(d.skeleton) ?? str(d.solution_skeleton),
+    hardPoints:
+      strArr(d.hard_points).length ? strArr(d.hard_points) : strArr(d.hardPoints),
+    tags: strArr(d.tags).length ? strArr(d.tags) : strArr(d.free_tags),
+    scene: str(d.scene) ?? str(d.scenario),
+  }
+}
+
 /** 从 custom 消息里安全抠出 artifact（镜像 pickStage 的宽松校验，结构不符返回 null） */
 function pickArtifact(msg: ToolkitChatMessage): VariantArtifact | null {
   const raw = msg.custom_data?.artifact
@@ -143,6 +238,7 @@ function pickArtifact(msg: ToolkitChatMessage): VariantArtifact | null {
     const index = typeof o.index === 'number' ? o.index : Number(o.index) || items.length + 1
     // P2b：seq = 稳定 merge 键，缺失（旧后端/旧帧）→ 回退用 index（与一期等价，单键不分叉）
     const seqRaw = typeof o.seq === 'number' ? o.seq : Number(o.seq)
+    const tier = typeof o.tier === 'string' && o.tier ? o.tier : null
     items.push({
       index,
       seq: Number.isFinite(seqRaw) && seqRaw > 0 ? seqRaw : index,
@@ -153,9 +249,14 @@ function pickArtifact(msg: ToolkitChatMessage): VariantArtifact | null {
       difficulty: typeof o.difficulty === 'number' ? o.difficulty : Number(o.difficulty) || 0,
       level: typeof o.level === 'string' && o.level ? o.level : 'normal',
       verify: typeof o.verify === 'string' && o.verify ? o.verify : null,
-      tier: typeof o.tier === 'string' && o.tier ? o.tier : null,
+      tier,
       gene: typeof o.gene === 'string' && o.gene ? o.gene : null,
       persisted: o.persisted === true,
+      // PRD-C-014 T2：DNA 维度（兼容嵌套 o.dna 或散在 item 顶层的散键）
+      dna: pickDna(o),
+      // 手动编辑标记：显式 manual_edited / manualEdited，或内容编辑兜底 tier==='manual'
+      manualEdited:
+        o.manual_edited === true || o.manualEdited === true || tier === 'manual',
       _dropped: o._dropped === true,
     })
   }
@@ -525,6 +626,74 @@ export function reverifyVariantItem(
   index: number
 ): Promise<VariantArtifact | null> {
   return postEdit('/agent/variant/reverify', { thread_id: threadId, index })
+}
+
+// ---------------------------------------------------------------------------
+// PRD-C-014 T3/T4 — DNA 逐维编辑。两条路径，都走 /agent proxy 直连（无 misikt envelope）、
+// 返回 {ok, artifact}（复用 unpackEditResult / pickArtifact 整量替换右栏）。
+//
+//   T3 列表选编辑（零 LLM，平台数据源）→ POST /agent/variant/edit-dna
+//       契约 {thread_id, index(1-based), field, value} → {ok, artifact}
+//       field ∈ main_kp | secondary_kps | qtype | exam_type | tags | difficulty
+//       value 类型随 field：
+//         main_kp        → {id, name}（知识点树选叶子；BE 据 id 绑定，name 展示）
+//         secondary_kps  → [{id, name}, …]（≤3）
+//         qtype/exam_type→ string（枚举/闭集值）
+//         tags           → string[]（多选 + 手输补充）
+//         difficulty     → number（点星 1-4，老师覆盖优先级最高）
+//
+//   T4 点击-说话 vibe（生成维）→ POST /agent/variant/revise
+//       契约 {thread_id, index, target, instruction, ruoyi_token} → {ok, artifact}
+//       target ∈ skeleton | scene | whole（whole = 整卡「重做这题」）
+//
+// 🔴 两端点均开发中，B4 批次按此契约写，联调期再对（同 persist-one 的并行开发约定）。
+// ---------------------------------------------------------------------------
+
+/** edit-dna 的 value 联合类型（随 field 变；BE 按 field 解读） */
+export type DnaEditValue =
+  | { id: string; name: string } // main_kp
+  | Array<{ id: string; name: string }> // secondary_kps
+  | string // qtype / exam_type
+  | string[] // tags
+  | number // difficulty
+
+/**
+ * T3 列表选编辑（零 LLM，平台数据源）：知识点树选叶子 / 枚举 / 标签多选 / 点星覆盖难度。
+ * BE 直改 toolkit 会话 state 对应维 + 置 manual_edited，返回新 artifact。
+ */
+export function editVariantDna(
+  threadId: string,
+  index: number,
+  field: 'main_kp' | 'secondary_kps' | 'qtype' | 'exam_type' | 'tags' | 'difficulty',
+  value: DnaEditValue
+): Promise<VariantArtifact | null> {
+  return postEdit('/agent/variant/edit-dna', {
+    thread_id: threadId,
+    index,
+    field,
+    value,
+  })
+}
+
+/**
+ * T4 点击-说话 vibe（生成维 / 整卡重做）：老师用自然语言说「哪里不对、想怎么改」，
+ * BE 跑 LLM 按 instruction 重生该维（skeleton/scene）或整题（whole），返回新 artifact。
+ * 透传登录老师 ruoyi_token（whole 重做后可能联动验算/血缘，owner 仍是老师本人）。
+ */
+export function reviseVariantItem(
+  threadId: string,
+  index: number,
+  target: 'skeleton' | 'scene' | 'whole',
+  instruction: string,
+  ruoyiToken: string
+): Promise<VariantArtifact | null> {
+  return postEdit('/agent/variant/revise', {
+    thread_id: threadId,
+    index,
+    target,
+    instruction,
+    ruoyi_token: ruoyiToken,
+  })
 }
 
 // ---------------------------------------------------------------------------
