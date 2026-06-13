@@ -9,13 +9,15 @@ import {
   fetchVariantHistory,
   persistVariantGroup,
   persistVariantOne,
+  regenVariant,
   reorderVariant,
   reverifyVariantItem,
   reviseVariantItem,
   streamVariant,
+  undoRegenVariant,
   uploadMotherImage,
 } from '@/api/variant'
-import type { DnaEditValue } from '@/api/variant'
+import type { DnaEditValue, DnaField } from '@/api/variant'
 import type {
   ToolkitChatMessage,
   VariantArtifact,
@@ -28,6 +30,7 @@ import type { QuestionItem } from '@/api/question/index'
 import MarkdownMath from '@/components/MarkdownMath.vue'
 import AiStageRail from '@/components/AiStageRail.vue'
 import ArtifactPanel from './ArtifactPanel.vue'
+import MotherBar from './MotherBar.vue'
 
 // 登录老师身份：入库 owner 走透传 token（agent_config.ruoyi_token），落老师本人个人题库。
 const userStore = useUserStore()
@@ -94,6 +97,8 @@ const reverifyingIndex = ref<number | null>(null)
 // PRD-C-014 T1/T2：正在「收录入库」/「加入试题篮」的题 index（1-based），驱动该卡按钮 loading
 const persistingIndex = ref<number | null>(null)
 const basketingIndex = ref<number | null>(null)
+// PRD-C-015 批5：正在重生的题号集合（1-based），驱动命中卡 loading + 重生按钮转圈
+const regeneratingIndexes = ref<number[]>([])
 const streamRef = ref<HTMLElement | null>(null)
 
 const currentRailEmpty = computed(
@@ -584,6 +589,104 @@ async function onRevise(payload: {
 }
 
 // ---------------------------------------------------------------------------
+// PRD-C-015 批5 — DNA 改→重生 / 撤销重生 / models 改 / 母题守恒维改 / 换图。
+//   重生：调 regenVariant（软重生维 _regen_once / 重写解析维只重写 solution，过闸B 重验，
+//         保留手改 manual 维——后端语义，FE 只发请求 + 整量替换右栏）。
+//   撤销：调 undoRegenVariant 回上一版快照。
+//   models 改：走 editVariantDna(field='models')（rewrite_solve 档，置 dirty）。
+//   母题守恒维改：走 editVariantDna(index=1, field) → 落 mother_dna.dna（组级共享）。
+// 都是确定性/单题动作，不进对话流。失败报错气泡不静默。
+// ---------------------------------------------------------------------------
+
+/** 重生：indexes 省略 = 全待重生集合（D-merge8）；命中题驱动 loading。 */
+async function runRegen(indexes?: number[]) {
+  if (sending.value || regeneratingIndexes.value.length > 0) return
+  // loading 目标：指定 indexes，否则取当前 header.regen_pending（含母题脏波及）
+  const targets =
+    indexes && indexes.length ? indexes : (artifact.value?.header.regenPending ?? [])
+  regeneratingIndexes.value = targets.length ? [...targets] : [-1] // -1 占位让按钮转圈
+  try {
+    const res = await regenVariant(threadId.value, indexes)
+    if (res.artifact) artifact.value = res.artifact
+    if (res.failed.length) {
+      const ns = res.failed.map((f) => f.index).join('、')
+      ElMessage.warning(`第 ${ns} 题重生未成功（已保留原题，可再试或撤销）`)
+    } else if (res.regenerated.length) {
+      ElMessage.success(`已重生第 ${res.regenerated.join('、')} 题（过闸B 重验）`)
+    } else {
+      ElMessage.info('没有待重生的题')
+    }
+  } catch (e) {
+    ElMessage.error(`重生失败：${e instanceof Error ? e.message : String(e)}`)
+  } finally {
+    regeneratingIndexes.value = []
+  }
+}
+
+/** 单题重生（变式卡「重生」按钮） */
+function onRegenOne(index: number) {
+  void runRegen([index])
+}
+/** 全待重生集合重生（右栏头「重生 N 题」按钮） */
+function onRegenAll() {
+  void runRegen()
+}
+
+/** 撤销重生：回上一版快照（缺口12）。 */
+async function onUndoRegen(index: number) {
+  if (sending.value || regeneratingIndexes.value.length > 0) return
+  try {
+    const a = await undoRegenVariant(threadId.value, index)
+    if (a) artifact.value = a
+    ElMessage.success(`已撤销第 ${index} 题的重生，回到上一版`)
+  } catch (e) {
+    ElMessage.error(`撤销重生失败：${e instanceof Error ? e.message : String(e)}`)
+  }
+}
+
+/** models 维改（rewrite_solve 档，走 edit-dna field='models'）。 */
+async function onEditModels(payload: {
+  index: number
+  value: Array<{ id: string; name: string }>
+}) {
+  if (sending.value) return
+  try {
+    const a = await editVariantDna(threadId.value, payload.index, 'models', payload.value)
+    if (a) artifact.value = a
+    ElMessage.success('已更新模型（改了模型=换解法，点「重生」重写解析）')
+  } catch (e) {
+    ElMessage.error(`更新模型失败：${e instanceof Error ? e.message : String(e)}`)
+  }
+}
+
+/**
+ * 母题守恒维改（块①）：副考点/考察类型/骨架/难点 → 落 mother_dna.dna（组级共享）。
+ * 走 editVariantDna(index=1, field)——BE 守恒维路由把这些维写进 mother_dna，下游变式回流 dirty。
+ */
+async function onEditMotherDna(payload: { field: DnaField; value: DnaEditValue }) {
+  if (sending.value || !artifact.value?.items.length) return
+  try {
+    const a = await editVariantDna(threadId.value, 1, payload.field, payload.value)
+    if (a) artifact.value = a
+    ElMessage.success('已更新母题守恒维（下游变式已标待重生，点「重生」按新基准重出）')
+  } catch (e) {
+    ElMessage.error(`更新母题守恒维失败：${e instanceof Error ? e.message : String(e)}`)
+  }
+}
+
+/** 老师「过」母题守恒维（非硬锁，MotherBar 内部关确认面，这里只给反馈）。 */
+function onConfirmMother() {
+  ElMessage.success('已确认母题守恒维，开始/继续出变式')
+}
+
+/** 换母题图（缺口13）：复用既有贴图流程——清画布换新 thread，提示换图=全新母题。 */
+function onSwapMotherImage() {
+  if (sending.value) return
+  resetSession()
+  ElMessage.info('换图 = 全新母题：请在左侧贴新母题图（Ctrl+V 截图或贴 URL），会重新分析 DNA')
+}
+
+// ---------------------------------------------------------------------------
 // PRD-C-014 §3.1 — 单题入库（T1）+ 试题篮透明入库（T2）。
 //   T1 收录入库：调 persist-one → 该卡 persisted=true（artifact 整量替换后保持）。
 //   T2 加入试题篮：始终可点；未入库先 persist-one 拿 id 再加篮，已入库直接加篮。
@@ -815,6 +918,20 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="variant-page">
+    <!-- PRD-C-015 批5·块④ U1：母题顶部横条（可整体折叠 ▼/▲，不占中栏）。
+         含母题题面缩略 + 🧬 母题 DNA 面板（守恒维可改 + 其余维仅展示）+ 合并确认面 + 换图入口 -->
+    <MotherBar
+      :artifact="artifact"
+      :mother-img="motherImg"
+      :sending="sending"
+      @edit-mother-dna="onEditMotherDna"
+      @confirm-mother="onConfirmMother"
+      @swap-image="onSwapMotherImage"
+      @preview="(u: string) => (previewUrl = u)"
+    />
+
+    <!-- 下方双栏：左聊天 / 右变式题组 -->
+    <div class="variant-main">
     <!-- 左栏：AI 命题搭子（对话 + 思路条 + 输入） -->
     <section class="variant-chat" data-testid="variant-chat-panel">
       <header class="chat-head">
@@ -985,6 +1102,7 @@ onBeforeUnmount(() => {
       :reverifying-index="reverifyingIndex"
       :persisting-index="persistingIndex"
       :basketing-index="basketingIndex"
+      :regenerating-indexes="regeneratingIndexes"
       @utterance="sendUtterance"
       @regenerate="regenerate"
       @persist="persistAll"
@@ -997,7 +1115,12 @@ onBeforeUnmount(() => {
       @revise="onRevise"
       @edit-header-kp="onEditHeaderKp"
       @edit-header-grade="onEditHeaderGrade"
+      @regen="onRegenOne"
+      @undo-regen="onUndoRegen"
+      @edit-models="onEditModels"
+      @regen-all="onRegenAll"
     />
+    </div>
 
     <!-- P10：点开看大图（简易遮罩，点遮罩关闭；不引新依赖） -->
     <div v-if="previewUrl" class="img-preview-mask" @click="previewUrl = ''">
@@ -1011,14 +1134,22 @@ onBeforeUnmount(() => {
 /* DESIGN token：bg-50 #F5F8F8 / card #FFF / border #E3E9E9 / ink-900 #1D2A2E
    violet-600 #7B6CF0（AI 在场）/ teal-600 #1E8A8A（老师拍板） */
 /* G13 ① v3 设计语言：深青 #0F6E6E + 暖纸白 #FBFAF6 + 暖琥珀 #B8741A（还原语言非逐像素） */
+/* PRD-C-015 批5·D-merge4：外层改纵向（顶部母题横条 + 下方双栏），双栏在 .variant-main */
 .variant-page {
   display: flex;
-  gap: 22px;
+  flex-direction: column;
   height: 100%;
   min-height: 600px;
   background: #fbfaf6; /* 暖纸白 paper */
   padding: 16px;
   box-sizing: border-box;
+}
+/* 下方双栏容器：左聊天 / 右变式题组（占满母题横条以下剩余高度） */
+.variant-main {
+  display: flex;
+  gap: 22px;
+  flex: 1;
+  min-height: 0;
 }
 
 /* G13 ⑥：左命题搭子 ~380px / 右变式 flex */
@@ -1042,8 +1173,11 @@ onBeforeUnmount(() => {
 /* 小屏（<1024px）上下堆叠，各自内部滚动 */
 @media (max-width: 1024px) {
   .variant-page {
-    flex-direction: column;
     height: auto;
+  }
+  .variant-main {
+    flex-direction: column;
+    flex: none;
   }
   .variant-chat {
     flex: none;

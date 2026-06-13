@@ -16,7 +16,15 @@
 // ---------------------------------------------------------------------------
 import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { EXAM_TYPES, QTYPE_OPTIONS, type VariantArtifactItem } from '@/api/variant'
+import {
+  EXAM_TYPES,
+  QTYPE_OPTIONS,
+  REGEN_CLASS_BADGE,
+  regenClassOf,
+  type DnaField,
+  type RegenClass,
+  type VariantArtifactItem,
+} from '@/api/variant'
 import { tagsByKp as fetchTagsByKp } from '@/api/question'
 import MarkdownMath from '@/components/MarkdownMath.vue'
 import KpTreeDialog from './KpTreeDialog.vue'
@@ -42,6 +50,8 @@ const props = defineProps<{
   persisting?: boolean
   /** PRD-C-014 T2：本卡正在「加入试题篮」（透明入库：可能含 persist-one + 篮 add）→ 按钮 loading */
   basketing?: boolean
+  /** PRD-C-015 批5：本卡正在重生（regen 待重生集合命中本题）→ 卡片 loading + 重生按钮转圈 */
+  regenerating?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -72,6 +82,12 @@ const emit = defineEmits<{
    * target ∈ skeleton | scene | whole。
    */
   (e: 'revise', payload: { index: number; target: 'skeleton' | 'scene' | 'whole'; instruction: string }): void
+  /** PRD-C-015 批5：重生本题（宿主调 regenVariant([index])，对 dirty 维按新 DNA 重出） */
+  (e: 'regen', index: number): void
+  /** PRD-C-015 批5：撤销本题重生（宿主调 undoRegenVariant，回上一版快照） */
+  (e: 'undo-regen', index: number): void
+  /** PRD-C-015 批5：models 维改（rewrite_solve 档；宿主调 editVariantDna(field='models')） */
+  (e: 'edit-models', payload: { index: number; value: Array<{ id: string; name: string }> }): void
 }>()
 
 const showSolution = ref(false)
@@ -290,6 +306,35 @@ function knob(text: string) {
 }
 
 // ---------------------------------------------------------------------------
+// PRD-C-015 批5 — DNA 改→重生四分流（徽章 + dirty 角标 + 重生/撤销）。
+// ---------------------------------------------------------------------------
+/** 本题脏维集合 = 自身改的 dirtyDims ∪ 母题守恒维波及的 motherDirtyDims（D-merge8 合并） */
+const allDirtyDims = computed(() => {
+  const s = new Set<string>([...props.item.dirtyDims, ...props.item.motherDirtyDims])
+  return s
+})
+/** 本题是否脏（有待重生维或母题脏波及）→ 禁入库 + 显「重生」按钮 */
+const isDirty = computed(() => props.item.dnaDirty || allDirtyDims.value.size > 0)
+/** 某维是否在脏集合里（FE 在该维旁打「待重生⏳」角标） */
+function dimDirty(field: DnaField): boolean {
+  return allDirtyDims.value.has(field)
+}
+/** 某维的 regen_class 徽章（标注改后行为：硬锚/软重生/重写解析/只标注） */
+function classBadge(field: DnaField): { cls: RegenClass; label: string; hint: string } {
+  const cls = regenClassOf(field)
+  return { cls, ...REGEN_CLASS_BADGE[cls] }
+}
+
+function onRegen() {
+  if (props.sending || props.regenerating || !isDirty.value) return
+  emit('regen', props.item.index)
+}
+function onUndoRegen() {
+  if (props.sending || props.regenerating || !props.item.canUndoRegen) return
+  emit('undo-regen', props.item.index)
+}
+
+// ---------------------------------------------------------------------------
 // PRD-C-014 T2 — 题目 DNA 面板（默认收起 = 🧬 chip；点开展开全维，老师可逐维改）。
 // ---------------------------------------------------------------------------
 const dnaOpen = ref(false)
@@ -403,6 +448,34 @@ function saveTags() {
   tagPopover.value = false
 }
 
+// ---- PRD-C-015 批5：models 维（解题模型 chips + 编辑弹层）----
+// 归 rewrite_solve 视觉档（改 models = 换解法 = 重写解析过闸B，置 dirty）。
+// 候选无专用接口（BE 反查池未透传到 FE）→ 弹层支持移除已有 + 手输补充（与 tags 同模式）。
+const modelPopover = ref(false)
+const modelDraft = ref<Array<{ id: string; name: string }>>([])
+const modelInput = ref('')
+function openModelPopover() {
+  if (props.sending) return
+  modelDraft.value = props.item.dna.models.map((m) => ({ ...m }))
+  modelPopover.value = true
+}
+function removeDraftModel(id: string) {
+  modelDraft.value = modelDraft.value.filter((m) => m.id !== id)
+}
+function addManualModel() {
+  const t = modelInput.value.trim()
+  if (!t) return
+  // 手输模型名：id=name（BE 归一时按名匹配词库；池外名走待命名池 ⚠，不阻断）
+  if (!modelDraft.value.some((m) => m.name === t || m.id === t)) {
+    modelDraft.value.push({ id: t, name: t })
+  }
+  modelInput.value = ''
+}
+function saveModels() {
+  emit('edit-models', { index: props.item.index, value: modelDraft.value.map((m) => ({ ...m })) })
+  modelPopover.value = false
+}
+
 // ---- T4：点击-说话 vibe（生成维 skeleton/scene + 整卡 whole）----
 const reviseTarget = ref<null | 'skeleton' | 'scene' | 'whole'>(null)
 const reviseInput = ref('')
@@ -449,6 +522,12 @@ function submitRevise() {
         >{{ n <= Math.round(item.difficulty) ? '★' : '☆' }}</span>
       </span>
       <span class="head-spacer" />
+      <!-- PRD-C-015 批5：待重生角标（dirty 题改了还没重生）→ 醒目 amber，提示先重生 -->
+      <span
+        v-if="isDirty"
+        class="dirty-tag"
+        :title="`改了 ${[...allDirtyDims].join('、')}，点「重生」按新 DNA 重出（重生前入库会被拦）`"
+      >⏳ 待重生</span>
       <span v-if="item.manualEdited" class="manual-tag" title="本题有维度被手动编辑过">✎ 手动编辑</span>
       <span v-if="item.persisted" class="persisted-tag">已收录</span>
       <span v-if="geneBadge" class="gene-badge" :class="geneBadge.cls">{{ geneBadge.text }}</span>
@@ -704,16 +783,23 @@ function submitRevise() {
           </p>
 
           <div class="dna-grid">
-            <!-- 主考点（T3：知识点树单选） -->
-            <span class="dna-k">主考点</span>
+            <!-- 主考点（hard_anchor：改→立即解冻重锚） -->
+            <span class="dna-k">
+              主考点
+              <span class="rc-badge" :class="`rc-${classBadge('main_kp').cls}`" :title="classBadge('main_kp').hint">{{ classBadge('main_kp').label }}</span>
+            </span>
             <span class="dna-v">
               <button type="button" class="kp-pill" :disabled="sending" @click="openKpDialog('main')">
                 {{ dna.mainKp || '未标 · 点选' }}<span class="pill-edit">✎</span>
               </button>
+              <span v-if="dimDirty('main_kp')" class="dim-dirty">待重生⏳</span>
             </span>
 
-            <!-- 副考点（T3：知识点树多选 ≤3） -->
-            <span class="dna-k">副考点</span>
+            <!-- 副考点（meta：只标注即时生效） -->
+            <span class="dna-k">
+              副考点
+              <span class="rc-badge" :class="`rc-${classBadge('secondary_kps').cls}`" :title="classBadge('secondary_kps').hint">{{ classBadge('secondary_kps').label }}</span>
+            </span>
             <span class="dna-v">
               <template v-if="dna.secondaryKps.length">
                 <span v-for="kp in dna.secondaryKps" :key="kp" class="kp-pill sec">{{ kp }}</span>
@@ -723,8 +809,11 @@ function submitRevise() {
               </button>
             </span>
 
-            <!-- 题型（T3：枚举下拉） -->
-            <span class="dna-k">题型</span>
+            <!-- 题型（soft_regen：改→待重生，点重生统一重出） -->
+            <span class="dna-k">
+              题型
+              <span class="rc-badge" :class="`rc-${classBadge('qtype').cls}`" :title="classBadge('qtype').hint">{{ classBadge('qtype').label }}</span>
+            </span>
             <span class="dna-v">
               <el-select
                 :model-value="item.qtype || ''"
@@ -736,10 +825,14 @@ function submitRevise() {
               >
                 <el-option v-for="q in qtypeOptions" :key="q" :label="q" :value="q" />
               </el-select>
+              <span v-if="dimDirty('qtype')" class="dim-dirty">待重生⏳</span>
             </span>
 
-            <!-- 考察类型（T3：闭集 10 下拉） -->
-            <span class="dna-k">考察类型</span>
+            <!-- 考察类型（soft_regen：改→待重生） -->
+            <span class="dna-k">
+              考察类型
+              <span class="rc-badge" :class="`rc-${classBadge('exam_type').cls}`" :title="classBadge('exam_type').hint">{{ classBadge('exam_type').label }}</span>
+            </span>
             <span class="dna-v">
               <el-select
                 :model-value="dna.examType || ''"
@@ -751,10 +844,14 @@ function submitRevise() {
               >
                 <el-option v-for="t in examTypeOptions" :key="t" :label="t" :value="t" />
               </el-select>
+              <span v-if="dimDirty('exam_type')" class="dim-dirty">待重生⏳</span>
             </span>
 
-            <!-- 难度（T3：点星覆盖，与卡头星级同源；这里给文字档位） -->
-            <span class="dna-k">难度</span>
+            <!-- 难度（soft_regen：点星覆盖，改→待重生；这里给文字档位） -->
+            <span class="dna-k">
+              难度
+              <span class="rc-badge" :class="`rc-${classBadge('difficulty').cls}`" :title="classBadge('difficulty').hint">{{ classBadge('difficulty').label }}</span>
+            </span>
             <span class="dna-v dna-diff">
               <span class="diff-stars-inline">
                 <span
@@ -766,12 +863,17 @@ function submitRevise() {
                 >{{ n <= Math.round(item.difficulty) ? '★' : '☆' }}</span>
               </span>
               <span class="diff-label">{{ difficultyLabel(item.difficulty) }}（{{ Math.round(item.difficulty) }}）</span>
+              <span v-if="dimDirty('difficulty')" class="dim-dirty">待重生⏳</span>
             </span>
 
-            <!-- 场景（T4：点击-说话改） -->
-            <span class="dna-k">场景</span>
+            <!-- 场景（soft_regen：点击-说话改 / 改→待重生） -->
+            <span class="dna-k">
+              场景
+              <span class="rc-badge" :class="`rc-${classBadge('scene').cls}`" :title="classBadge('scene').hint">{{ classBadge('scene').label }}</span>
+            </span>
             <span class="dna-v dna-full">
               <span class="dna-text">{{ dna.scene || '未标' }}</span>
+              <span v-if="dimDirty('scene')" class="dim-dirty">待重生⏳</span>
               <button type="button" class="dna-min-btn" :disabled="sending || reverifying" @click="openRevise('scene')">
                 说一句改
               </button>
@@ -791,10 +893,14 @@ function submitRevise() {
               </div>
             </span>
 
-            <!-- 解法骨架（T4：点击-说话改；【】包最难步） -->
-            <span class="dna-k">解法骨架</span>
+            <!-- 解法骨架（rewrite_solve：改→重写解析过闸B；【】包最难步） -->
+            <span class="dna-k">
+              解法骨架
+              <span class="rc-badge" :class="`rc-${classBadge('skeleton').cls}`" :title="classBadge('skeleton').hint">{{ classBadge('skeleton').label }}</span>
+            </span>
             <span class="dna-v dna-full">
               <span class="dna-text skel"><MarkdownMath :content="dna.skeleton || '未标'" /></span>
+              <span v-if="dimDirty('skeleton')" class="dim-dirty">待重生⏳</span>
               <button type="button" class="dna-min-btn" :disabled="sending || reverifying" @click="openRevise('skeleton')">
                 说一句改
               </button>
@@ -814,8 +920,54 @@ function submitRevise() {
               </div>
             </span>
 
-            <!-- 难点（展示·克制，基础题为空；改随骨架/整卡 revise 联动） -->
-            <span class="dna-k">难点</span>
+            <!-- PRD-C-015 块②：解题模型（rewrite_solve：「怎么解」轴；chips 展示 + 列表选可改） -->
+            <span class="dna-k">
+              模型
+              <span class="rc-badge" :class="`rc-${classBadge('models').cls}`" :title="classBadge('models').hint">{{ classBadge('models').label }}</span>
+            </span>
+            <span class="dna-v dna-full">
+              <template v-if="dna.models.length">
+                <span v-for="m in dna.models" :key="m.id" class="model-pill">{{ m.name || m.id }}</span>
+              </template>
+              <span v-else class="dna-muted">未标</span>
+              <span v-if="dimDirty('models')" class="dim-dirty">待重生⏳</span>
+              <el-popover :visible="modelPopover" placement="bottom-start" :width="300" trigger="manual">
+                <template #reference>
+                  <button type="button" class="dna-min-btn" :disabled="sending" @click="openModelPopover">
+                    {{ dna.models.length ? '改模型' : '＋ 加模型' }}
+                  </button>
+                </template>
+                <div class="tag-pop">
+                  <p class="tag-pop-title">已选模型（点 ✕ 移除）</p>
+                  <div class="tag-pop-chosen">
+                    <span v-for="m in modelDraft" :key="m.id" class="model-pill is-chosen" @click="removeDraftModel(m.id)">
+                      {{ m.name || m.id }} ✕
+                    </span>
+                    <span v-if="!modelDraft.length" class="dna-muted">暂无（保存=兜底概念直用 M00）</span>
+                  </div>
+                  <div class="tag-pop-input">
+                    <el-input
+                      v-model="modelInput"
+                      size="small"
+                      placeholder="手输模型名，回车补充（池外名走待审，不阻断）"
+                      @keyup.enter.prevent="addManualModel"
+                    />
+                    <el-button size="small" @click="addManualModel">加</el-button>
+                  </div>
+                  <p class="tag-pop-note">改模型 = 换解法 → 重写解析（点「重生」生效）</p>
+                  <div class="tag-pop-actions">
+                    <el-button size="small" @click="modelPopover = false">取消</el-button>
+                    <el-button size="small" type="primary" @click="saveModels">保存</el-button>
+                  </div>
+                </div>
+              </el-popover>
+            </span>
+
+            <!-- 难点（meta：只标注，基础题为空；改随骨架/整卡 revise 联动） -->
+            <span class="dna-k">
+              难点
+              <span class="rc-badge" :class="`rc-${classBadge('hard_points').cls}`" :title="classBadge('hard_points').hint">{{ classBadge('hard_points').label }}</span>
+            </span>
             <span class="dna-v dna-full">
               <template v-if="dna.hardPoints.length">
                 <span v-for="hp in dna.hardPoints" :key="hp" class="hard-pill">{{ hp }}</span>
@@ -823,8 +975,11 @@ function submitRevise() {
               <span v-else class="dna-muted">无（基础题 · 宁空不凑）</span>
             </span>
 
-            <!-- 标签（T3：多选弹层 = tagsByKp 候选 + 手输补充） -->
-            <span class="dna-k">标签</span>
+            <!-- 标签（meta：多选弹层 = tagsByKp 候选 + 手输补充） -->
+            <span class="dna-k">
+              标签
+              <span class="rc-badge" :class="`rc-${classBadge('tags').cls}`" :title="classBadge('tags').hint">{{ classBadge('tags').label }}</span>
+            </span>
             <span class="dna-v dna-full">
               <template v-if="dna.tags.length">
                 <span v-for="t in dna.tags" :key="t" class="ftag">{{ t }}</span>
@@ -898,33 +1053,60 @@ function submitRevise() {
         </div>
       </div>
 
-      <!-- 入库行：收录入库（T1）+ 加入试题篮（T2，始终可点） -->
+      <!-- PRD-C-015 批5：dirty 题入库拦截提示（致命①新不变量，前端先拦给体验，后端硬闸兜底） -->
+      <div v-if="isDirty" class="dirty-block-hint">
+        本题改了「{{ [...allDirtyDims].join('、') }}」还没重生，先点下方「重生」按新 DNA 重出，或「撤销重生」回上一版，才能入库 / 加试题篮。
+      </div>
+
+      <!-- 入库行：收录入库（T1）+ 加入试题篮（T2）—— PRD-C-015 批5：dirty 题禁用（致命①） -->
       <footer class="bank-row">
         <!-- T1：已收录 → 按钮置「已收录」禁用态（重复点不重复发）；未收录 → teal 实心「收录入库」 -->
         <button
           type="button"
           class="bank-btn is-persist"
           :class="{ 'is-done': item.persisted }"
-          :disabled="item.persisted || persisting || basketing || sending"
-          @click="!item.persisted && emit('persist-one', item.index)"
+          :disabled="item.persisted || persisting || basketing || sending || isDirty"
+          :title="isDirty ? '改了还没重生，先点「重生」或「撤销重生」' : ''"
+          @click="!item.persisted && !isDirty && emit('persist-one', item.index)"
         >
           <template v-if="item.persisted">✓ 已收录</template>
           <template v-else-if="persisting">收录中…</template>
           <template v-else>收录入库</template>
         </button>
-        <!-- T2：加入试题篮 —— 始终可点（不因已入库置灰），透明入库由宿主决定 persist-one + 加篮 -->
+        <!-- T2：加入试题篮 —— PRD-C-015 批5：dirty 题禁用（与入库同口径） -->
         <button
           type="button"
           class="bank-btn is-basket"
-          :disabled="basketing || persisting || sending"
-          @click="emit('add-to-basket', item.index)"
+          :disabled="basketing || persisting || sending || isDirty"
+          :title="isDirty ? '改了还没重生，先点「重生」或「撤销重生」' : ''"
+          @click="!isDirty && emit('add-to-basket', item.index)"
         >
           {{ basketing ? '加入中…' : '加入试题篮' }}
         </button>
       </footer>
 
-      <!-- 旋钮行：编辑 + （手动编辑后）重新验算 + 卡片快捷键 utterance -->
+      <!-- 旋钮行：编辑 + 重生/撤销重生 +（手动编辑后）重新验算 + 卡片快捷键 utterance -->
       <footer class="knob-row">
+        <!-- PRD-C-015 批5：重生（dirty 题改完点它按新 DNA 重出待重生集合，保留手改） -->
+        <button
+          v-if="isDirty"
+          type="button"
+          class="knob-btn is-regen"
+          :disabled="sending || regenerating"
+          @click="onRegen"
+        >
+          {{ regenerating ? '重生中…' : '🔄 重生' }}
+        </button>
+        <!-- PRD-C-015 批5：撤销重生（缺口12，重生过有快照才显示）→ 回上一版 -->
+        <button
+          v-if="item.canUndoRegen"
+          type="button"
+          class="knob-btn is-undo"
+          :disabled="sending || regenerating"
+          @click="onUndoRegen"
+        >
+          ↩ 撤销重生
+        </button>
         <button
           type="button"
           class="knob-btn is-edit"
@@ -1108,6 +1290,17 @@ function submitRevise() {
   border: 1px solid #d4dede;
   border-radius: 6px;
   padding: 1px 8px;
+}
+
+/* PRD-C-015 批5：待重生角标（卡头）——amber 醒目，提示先重生再入库 */
+.dirty-tag {
+  font-size: 12px;
+  color: #b8741a;
+  background: #fbeed6;
+  border: 1px solid #ecc98f;
+  border-radius: 6px;
+  padding: 1px 8px;
+  font-weight: 700;
 }
 
 /* 验证角标：⚠ 比 ✓ 醒目（实底白字 + ⚠ 加粗） */
@@ -1309,6 +1502,54 @@ function submitRevise() {
 .dna-k {
   color: #6b817e; /* ink-500 */
   white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* PRD-C-015 批5：四分流徽章（维度旁标注改后行为）。色系区分四类，hover title 给说明。 */
+.rc-badge {
+  font-size: 9.5px;
+  line-height: 1.4;
+  border-radius: 4px;
+  padding: 0 5px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: help;
+}
+.rc-hard_anchor {
+  /* 硬锚：深红描边（改=立即重锚，整组重出，最重） */
+  color: #c0392b;
+  background: #fdecea;
+  border: 1px solid #f0b8b1;
+}
+.rc-soft_regen {
+  /* 软重生：amber（改→待重生，点重生统一重出） */
+  color: #b8741a;
+  background: #fbeed6;
+  border: 1px solid #ecc98f;
+}
+.rc-rewrite_solve {
+  /* 重写解析：violet（改→重写解析过闸B，AI 在场） */
+  color: #5b4fd6;
+  background: #f2f0fe;
+  border: 1px solid #cfc7f3;
+}
+.rc-meta {
+  /* 只标注：灰（改→即时生效不重出，最轻） */
+  color: #6b817e;
+  background: #eef1f3;
+  border: 1px solid #d9dfe1;
+}
+
+/* 维级「待重生⏳」角标（该维被改、未重生） */
+.dim-dirty {
+  font-size: 10.5px;
+  color: #b8741a;
+  background: #fbeed6;
+  border-radius: 4px;
+  padding: 0 6px;
+  font-weight: 600;
 }
 .dna-v {
   color: #16302f; /* ink-900 */
@@ -1380,6 +1621,27 @@ function submitRevise() {
   border-radius: 5px;
   padding: 1px 8px;
   font-weight: 600;
+}
+/* PRD-C-015 块②：解题模型药丸（violet 系，呼应重写解析维） */
+.model-pill {
+  font-size: 12px;
+  background: #f2f0fe; /* violet-50 */
+  color: #5b4fd6; /* violet-700 */
+  border: 1px solid #cfc7f3;
+  border-radius: 999px;
+  padding: 2px 9px;
+  display: inline-block;
+}
+.model-pill.is-chosen {
+  cursor: pointer;
+}
+.tag-pop-note {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: #5b4fd6;
+  background: #f2f0fe;
+  border-radius: 6px;
+  padding: 4px 8px;
 }
 .ftag {
   font-size: 12px;
@@ -1562,6 +1824,17 @@ function submitRevise() {
   color: #86909c;
 }
 
+/* PRD-C-015 批5：dirty 题入库拦截提示条（amber 暖底，醒目但不报错色） */
+.dirty-block-hint {
+  font-size: 12px;
+  line-height: 1.6;
+  color: #92590f;
+  background: #fdf4e3;
+  border: 1px solid #ecc98f;
+  border-radius: 8px;
+  padding: 7px 11px;
+}
+
 /* 入库行（T1/T2）：与旋钮行同栏宽，按钮略强于旋钮（入库是主动作） */
 .bank-row {
   display: flex;
@@ -1647,6 +1920,25 @@ function submitRevise() {
 .knob-btn.is-reverify:hover:not(:disabled) {
   background: #f2f0fe;
   border-color: #7b6cf0;
+}
+/* PRD-C-015 批5：「重生」amber 实心（dirty 题的主动作，最醒目） */
+.knob-btn.is-regen {
+  color: #fff;
+  background: #b8741a; /* 暖琥珀（v3） */
+  border-color: #b8741a;
+  font-weight: 600;
+}
+.knob-btn.is-regen:hover:not(:disabled) {
+  background: #9a6015;
+  border-color: #9a6015;
+}
+/* 「撤销重生」：灰描边（次动作，回上一版） */
+.knob-btn.is-undo {
+  color: #5b6770;
+  border-color: #d4dede;
+}
+.knob-btn.is-undo:hover:not(:disabled) {
+  background: #f5f8f8;
 }
 
 /* ============ 编辑态：textarea + 实时预览双栏 ============ */

@@ -11,6 +11,7 @@
 // 旧后端（无 artifact 帧）→ 空态引导，左栏完全可用（向后兼容兜底）。
 // ---------------------------------------------------------------------------
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { ElMessage } from 'element-plus'
 import Sortable from 'sortablejs'
 import type { VariantArtifact, VariantArtifactItem } from '@/api/variant'
 import VariantCard from './VariantCard.vue'
@@ -33,6 +34,8 @@ const props = defineProps<{
   persistingIndex?: number | null
   /** PRD-C-014 T2：正在「加入试题篮」的题 index（1-based）；该卡加篮按钮 loading */
   basketingIndex?: number | null
+  /** PRD-C-015 批5：正在重生的题号集合（1-based）；命中的卡 loading + 重生按钮转圈。null/[]=无 */
+  regeneratingIndexes?: number[] | null
 }>()
 
 const emit = defineEmits<{
@@ -64,6 +67,14 @@ const emit = defineEmits<{
   (e: 'edit-header-kp', value: { id: string; name: string }): void
   /** PRD-C-014 G13 ⑤：头部年级可改 */
   (e: 'edit-header-grade', value: string): void
+  /** PRD-C-015 批5：重生本题（宿主调 regenVariant([index])） */
+  (e: 'regen', index: number): void
+  /** PRD-C-015 批5：撤销本题重生（宿主调 undoRegenVariant） */
+  (e: 'undo-regen', index: number): void
+  /** PRD-C-015 批5：models 维改（宿主调 editVariantDna(field='models')） */
+  (e: 'edit-models', payload: { index: number; value: Array<{ id: string; name: string }> }): void
+  /** PRD-C-015 批5：一键重生全待重生集合（宿主调 regenVariant()，indexes 省略） */
+  (e: 'regen-all'): void
 }>()
 
 // G13 ⑤：头部主考点（知识点树弹层）/ 年级（下拉）可改
@@ -158,6 +169,23 @@ watch(
 const items = computed(() => mergedItems.value)
 const allPersisted = computed(
   () => items.value.length > 0 && items.value.every((i) => i.persisted)
+)
+
+// PRD-C-015 批5：待重生集合（致命①入库拦截 + 「重生全部」按钮）。
+// 优先读 header.regen_pending（BE 权威）；缺失则从 item.dnaDirty / dirtyDims / motherDirtyDims 兜算。
+const regenPendingIndexes = computed<number[]>(() => {
+  const fromHeader = props.artifact?.header.regenPending ?? []
+  if (fromHeader.length) return fromHeader
+  return items.value
+    .filter(
+      (i) =>
+        i.dnaDirty || i.dirtyDims.length > 0 || i.motherDirtyDims.length > 0
+    )
+    .map((i) => i.index)
+})
+// 任一题脏 或 母题脏 → 整组入库被拦（与单卡 dirty 禁用同口径，前端先拦给体验）
+const hasDirty = computed(
+  () => regenPendingIndexes.value.length > 0 || props.artifact?.header.motherDirty === true
 )
 // 本组仍在增量上屏期 → 传给 VariantCard，使其把「无 tier」解读为验算中过渡态
 const checking = computed(() => props.artifact?.partial === true)
@@ -264,12 +292,24 @@ onBeforeUnmount(() => {
 
 function persistAll() {
   if (props.sending || items.value.length === 0 || allPersisted.value) return
+  // PRD-C-015 批5 致命①：有脏题 → 前端拦下（后端 persist_to_bank 也会硬拦）
+  if (hasDirty.value) {
+    const ns = regenPendingIndexes.value.join('、')
+    ElMessage.warning(`第 ${ns || '?'} 题改了还没重生，先点「重生待重生集合」或撤销，再全部入库`)
+    return
+  }
   emit('persist')
 }
 
 function regenerate() {
   if (props.sending || !props.canRegenerate) return
   emit('regenerate')
+}
+
+/** PRD-C-015 批5：一键重生全待重生集合（D-merge8，indexes 省略 = 全集合） */
+function regenAll() {
+  if (props.sending || regenPendingIndexes.value.length === 0) return
+  emit('regen-all')
 }
 </script>
 
@@ -281,6 +321,17 @@ function regenerate() {
         <h2 class="canvas-title">变式题组<template v-if="items.length"> · {{ items.length }} 道</template></h2>
         <span class="head-spacer" />
         <FontSizeSwitch class="head-font-switch" />
+        <!-- PRD-C-015 批5：待重生集合非空 → 「重生 N 题」按钮（D-merge8 一键重出全集合） -->
+        <el-button
+          v-if="regenPendingIndexes.length > 0"
+          size="small"
+          class="regen-all-btn"
+          :loading="!!(regeneratingIndexes && regeneratingIndexes.length)"
+          :disabled="sending"
+          @click="regenAll"
+        >
+          🔄 重生 {{ regenPendingIndexes.length }} 题
+        </el-button>
         <el-button
           size="small"
           :disabled="sending || !canRegenerate"
@@ -291,11 +342,21 @@ function regenerate() {
         <el-button
           size="small"
           class="persist-btn"
-          :disabled="sending || items.length === 0 || allPersisted"
+          :disabled="sending || items.length === 0 || allPersisted || hasDirty"
+          :title="hasDirty ? '有题改了还没重生，先点「重生」或撤销' : ''"
           @click="persistAll"
         >
           {{ allPersisted ? '已全部收录' : '全部入库' }}
         </el-button>
+      </div>
+      <!-- PRD-C-015 批5：母题脏 / 待重生提示条（致命①入库拦截原因外显） -->
+      <div v-if="hasDirty" class="dirty-banner">
+        <template v-if="artifact?.header.motherDirty">
+          母题守恒维改过，下游变式已标「待重生」——点上方「重生」按新基准重出，重生前不可入库。
+        </template>
+        <template v-else>
+          第 {{ regenPendingIndexes.join('、') }} 题改了还没重生，点「重生」按新 DNA 重出后才能入库。
+        </template>
       </div>
       <!-- G13 ⑤：头部「主考点 / 年级」固定显示且可改（点 ✎ 调知识点树 / 年级下拉） -->
       <div v-if="artifact" class="head-badges">
@@ -353,6 +414,7 @@ function regenerate() {
             :reverifying="reverifyingIndex === it.index"
             :persisting="persistingIndex === it.index"
             :basketing="basketingIndex === it.index"
+            :regenerating="!!(regeneratingIndexes && regeneratingIndexes.includes(it.index))"
             @utterance="(t: string) => emit('utterance', t)"
             @edit="(p) => emit('edit', p)"
             @reverify="(i: number) => emit('reverify', i)"
@@ -360,6 +422,9 @@ function regenerate() {
             @add-to-basket="(i: number) => emit('add-to-basket', i)"
             @edit-dna="(p) => emit('edit-dna', p)"
             @revise="(p) => emit('revise', p)"
+            @regen="(i: number) => emit('regen', i)"
+            @undo-regen="(i: number) => emit('undo-regen', i)"
+            @edit-models="(p) => emit('edit-models', p)"
           />
         </div>
         <!-- PRD-C-012 P2：增量帧期的「生成中」占位卡（题号顺延已完成题，定稿帧到达即消失） -->
@@ -453,6 +518,28 @@ function regenerate() {
   background: #b9d8d8;
   border-color: #b9d8d8;
   color: #fff;
+}
+
+/* PRD-C-015 批5：「重生 N 题」按钮（amber 实心，与卡内重生按钮同色语） */
+.regen-all-btn {
+  background: #b8741a;
+  border-color: #b8741a;
+  color: #fff;
+}
+.regen-all-btn:hover:not(:disabled) {
+  background: #9a6015;
+  border-color: #9a6015;
+  color: #fff;
+}
+/* PRD-C-015 批5：母题脏 / 待重生入库拦截提示条 */
+.dirty-banner {
+  font-size: 12px;
+  line-height: 1.6;
+  color: #92590f;
+  background: #fdf4e3;
+  border: 1px solid #ecc98f;
+  border-radius: 8px;
+  padding: 6px 11px;
 }
 
 .head-badges {

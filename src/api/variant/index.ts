@@ -94,6 +94,70 @@ export interface VariantDna {
   tags: string[]
   /** 场景（"纯代数" 或一句话场景；点击-说话改 → revise target=scene） */
   scene: string | null
+  /**
+   * PRD-C-015 块② — 解题模型维（双轴指纹「怎么解」轴；1~3 项，含保底 M00 概念直用）。
+   * field=models，归 rewrite_solve 视觉档（改 models=换解法=重写解析）。BE 缺失 → []。
+   */
+  models: VariantModel[]
+}
+
+// ---------------------------------------------------------------------------
+// PRD-C-015 批5 — DNA 改→重生四分流（前后端共用常量）。
+// 每个 DNA 维按 regen_class 分四类，FE 据此渲染分流徽章 + 决定改后行为：
+//   hard_anchor 【主考点/年级】 改 → 立即解冻重锚（清 items 重出，不进 dirty 攒批）
+//   soft_regen  【题型/难度/考察类型/场景】改 → 标 dna_dirty + 角标，点「重生」统一重出
+//   rewrite_solve【解法骨架/models】 改 → 重写解析（过闸B），置 dirty 直到重写完
+//   meta        【标签/副考点】 改 → 只标注即时生效，不进 dirty
+// 🔴 与 BE src/agents/variant.py REGEN_CLASS 严格对齐（批4 落）。
+// ---------------------------------------------------------------------------
+export type RegenClass = 'hard_anchor' | 'soft_regen' | 'rewrite_solve' | 'meta'
+
+/** edit-dna 的 field 全集（批5 在批1~4 基础上扩 skeleton/hard_points/models） */
+export type DnaField =
+  | 'main_kp'
+  | 'secondary_kps'
+  | 'qtype'
+  | 'exam_type'
+  | 'difficulty'
+  | 'tags'
+  | 'scene'
+  | 'grade'
+  | 'skeleton'
+  | 'hard_points'
+  | 'models'
+
+/** field → regen_class 映射（前后端共用常量，按 field 渲染四分流徽章） */
+export const REGEN_CLASS: Record<DnaField, RegenClass> = {
+  main_kp: 'hard_anchor',
+  grade: 'hard_anchor',
+  qtype: 'soft_regen',
+  difficulty: 'soft_regen',
+  exam_type: 'soft_regen',
+  scene: 'soft_regen',
+  skeleton: 'rewrite_solve',
+  models: 'rewrite_solve',
+  tags: 'meta',
+  secondary_kps: 'meta',
+  hard_points: 'meta',
+}
+
+/** 四分流徽章文案（FE 维度旁挂角标） */
+export const REGEN_CLASS_BADGE: Record<RegenClass, { label: string; hint: string }> = {
+  hard_anchor: { label: '硬锚', hint: '改→立即解冻重锚' },
+  soft_regen: { label: '软重生', hint: '改→待重生，点重生统一重出' },
+  rewrite_solve: { label: '重写解析', hint: '改→重写解析（过闸B）' },
+  meta: { label: '只标注', hint: '改→即时生效不重出' },
+}
+
+/** 取某 field 的 regen_class（未知 field 兜底 meta，不崩） */
+export function regenClassOf(field: string): RegenClass {
+  return REGEN_CLASS[field as DnaField] ?? 'meta'
+}
+
+/** 解题模型维（PRD-C-015 块② models，{id,name}；归 rewrite_solve 视觉档） */
+export interface VariantModel {
+  id: string
+  name: string
 }
 
 /** artifact 快照 — 单题（契约与 BE _artifact_payload 严格一致） */
@@ -142,6 +206,18 @@ export interface VariantArtifactItem {
    * 增量 merge 语义专用；定稿帧不应再带 _dropped 的题。
    */
   _dropped?: boolean
+  // ----- PRD-C-015 批4/批5 DNA 改→重生新键（BE _artifact_payload 透传，旧后端缺失向后兼容）-----
+  /**
+   * 批4 致命①：本题有软重生维/重写解析维改过、尚未重生 → true（标角标 + 禁入库）。
+   * 软重生维（题型/难度/考察类型/场景）+ 重写解析维（骨架/models）改置位；元数据维改不置位。
+   */
+  dnaDirty: boolean
+  /** dirty 的维列表（哪些维改了等重生；FE 在该维旁打「待重生⏳」角标） */
+  dirtyDims: string[]
+  /** 母题守恒维改波及本变式的维列表（D-merge8 回流；FE 全组打角标，与 dirtyDims 合并显示） */
+  motherDirtyDims: string[]
+  /** 本题可「撤销重生」（批4 重生前存了快照）→ true 时显示撤销入口（缺口12） */
+  canUndoRegen: boolean
 }
 
 /**
@@ -164,11 +240,39 @@ export const EXAM_TYPES = [
 /** PRD-C-014 §1 — 题型枚举（DNA 面板「题型」维下拉；与库值 1/4/5 语义对齐） */
 export const QTYPE_OPTIONS = ['选择', '填空', '解答'] as const
 
+/**
+ * PRD-C-015 块① — 母题守恒维合并确认状态（D-merge7 确定性异常门控 + 缺口5 合并闸）。
+ * BE build_mother_confirm 算（批1 就位）：flags=确定性异常标记列表（无逐维置信分）；
+ * needs_confirm=(flags 非空) ∨ (年级+主考点三锚没定死) → true 时 FE 弹合并确认面。
+ */
+export interface VariantMotherConfirm {
+  /** 确定性异常标记（FLAG_SECONDARY_KP_OOB / FLAG_EXAM_TYPE_OOB / FLAG_SKELETON_EMPTY） */
+  flags: string[]
+  /** 是否需要老师确认（异常或三锚未定）→ FE 外显合并确认面 */
+  needsConfirm: boolean
+  /** 已确认的维（老师过/改后回填，FE 据此显示已确认态） */
+  confirmedDims: string[]
+}
+
+/** 确定性异常 flag → 中文提示（FE 合并确认面外显原因） */
+export const MOTHER_CONFIRM_FLAG_LABEL: Record<string, string> = {
+  FLAG_SECONDARY_KP_OOB: '副考点越界（不在知识图谱 / 越学段）',
+  FLAG_EXAM_TYPE_OOB: '考察类型不在枚举闭集',
+  FLAG_SKELETON_EMPTY: '解法骨架为空',
+}
+
 /** artifact 快照 — 画布头 */
 export interface VariantArtifactHeader {
   recipe: string | null
   kp: string | null
   grade: string | null
+  // ----- PRD-C-015 批4/批5 header 级新键 -----
+  /** 母题守恒维改了、母题 DNA 脏（D-merge8）→ true 时下游变式全标 dirty + 禁入库 */
+  motherDirty: boolean
+  /** 待重生题号（1-based）数组；非空 → 「重生」按钮可点、入库按钮禁用（致命①前置 UX） */
+  regenPending: number[]
+  /** 母题守恒维合并确认状态（块①，弹合并确认面时读它） */
+  motherConfirm: VariantMotherConfirm | null
 }
 
 /** artifact 快照（整帧 = 当前题组全量） */
@@ -222,6 +326,55 @@ function pickDna(o: Record<string, unknown>): VariantDna {
       strArr(d.hard_points).length ? strArr(d.hard_points) : strArr(d.hardPoints),
     tags: strArr(d.tags).length ? strArr(d.tags) : strArr(d.free_tags),
     scene: str(d.scene) ?? str(d.scenario),
+    // PRD-C-015 块②：models 维（[{id,name}]；兼容嵌套 d.models 或散键，缺失 → []）
+    models: pickModels(d.models),
+  }
+}
+
+/** 宽松取数字数组（1-based 题号；非数组 → []）—— header.regen_pending 用 */
+function numArr(v: unknown): number[] {
+  if (!Array.isArray(v)) return []
+  const out: number[] = []
+  for (const x of v) {
+    const n = typeof x === 'number' ? x : Number(x)
+    if (Number.isFinite(n) && n > 0) out.push(Math.floor(n))
+  }
+  return out
+}
+
+/**
+ * PRD-C-015 块② — 从原始值解出 models（[{id,name}]）。
+ * 兼容三态：[{id,name}] / ["概念直用"] 纯名字符串 / null。缺失 → []。id 雪花全 string。
+ */
+function pickModels(v: unknown): VariantModel[] {
+  if (!Array.isArray(v)) return []
+  const out: VariantModel[] = []
+  for (const x of v) {
+    if (typeof x === 'string' && x.trim()) {
+      out.push({ id: x.trim(), name: x.trim() })
+    } else if (x && typeof x === 'object') {
+      const o = x as Record<string, unknown>
+      const id = o.id === null || o.id === undefined ? '' : String(o.id)
+      const name = str(o.name) ?? str(o.model_name) ?? id
+      if (name) out.push({ id: id || name, name })
+    }
+  }
+  return out
+}
+
+/**
+ * PRD-C-015 块① — 从原始值解出 mother_confirm（宽松；结构不符 → null）。
+ * BE 缺该键（旧后端/无母题）→ null，FE 视为「无须确认」不打扰。
+ */
+function pickMotherConfirm(v: unknown): VariantMotherConfirm | null {
+  if (!v || typeof v !== 'object') return null
+  const o = v as Record<string, unknown>
+  return {
+    flags: strArr(o.flags),
+    needsConfirm: o.needs_confirm === true || o.needsConfirm === true,
+    confirmedDims: strArr(o.confirmed_dims).length
+      ? strArr(o.confirmed_dims)
+      : strArr(o.confirmedDims),
   }
 }
 
@@ -258,6 +411,13 @@ function pickArtifact(msg: ToolkitChatMessage): VariantArtifact | null {
       manualEdited:
         o.manual_edited === true || o.manualEdited === true || tier === 'manual',
       _dropped: o._dropped === true,
+      // PRD-C-015 批4/批5：DNA 改→重生新键（旧后端缺失 → false/[]，向后兼容不坏）
+      dnaDirty: o.dna_dirty === true || o.dnaDirty === true,
+      dirtyDims: strArr(o.dirty_dims).length ? strArr(o.dirty_dims) : strArr(o.dirtyDims),
+      motherDirtyDims: strArr(o.mother_dirty_dims).length
+        ? strArr(o.mother_dirty_dims)
+        : strArr(o.motherDirtyDims),
+      canUndoRegen: o.can_undo_regen === true || o.canUndoRegen === true,
     })
   }
   const h = (a.header && typeof a.header === 'object' ? a.header : {}) as Record<string, unknown>
@@ -267,6 +427,10 @@ function pickArtifact(msg: ToolkitChatMessage): VariantArtifact | null {
       recipe: typeof h.recipe === 'string' && h.recipe ? h.recipe : null,
       kp: typeof h.kp === 'string' && h.kp ? h.kp : null,
       grade: typeof h.grade === 'string' && h.grade ? h.grade : null,
+      // PRD-C-015 批4/批5 header 级新键（旧后端缺失 → false/[]/null，向后兼容）
+      motherDirty: h.mother_dirty === true || h.motherDirty === true,
+      regenPending: numArr(h.regen_pending).length ? numArr(h.regen_pending) : numArr(h.regenPending),
+      motherConfirm: pickMotherConfirm(h.mother_confirm ?? h.motherConfirm),
     },
   }
   // PRD-C-012 P2：增量帧字段宽松解析 —— partial 非 true 一律视为定稿（不设键）；
@@ -649,22 +813,27 @@ export function reverifyVariantItem(
 // 🔴 两端点均开发中，B4 批次按此契约写，联调期再对（同 persist-one 的并行开发约定）。
 // ---------------------------------------------------------------------------
 
-/** edit-dna 的 value 联合类型（随 field 变；BE 按 field 解读） */
+/**
+ * edit-dna 的 value 联合类型（随 field 变；BE 按 field 解读）。
+ * PRD-C-015 批5 扩：skeleton/hard_points 走文本/数组，models 走 [{id,name}]。
+ */
 export type DnaEditValue =
   | { id: string; name: string } // main_kp
-  | Array<{ id: string; name: string }> // secondary_kps
-  | string // qtype / exam_type
-  | string[] // tags
+  | Array<{ id: string; name: string }> // secondary_kps / models
+  | string // qtype / exam_type / scene / grade / skeleton
+  | string[] // tags / hard_points
   | number // difficulty
 
 /**
  * T3 列表选编辑（零 LLM，平台数据源）：知识点树选叶子 / 枚举 / 标签多选 / 点星覆盖难度。
- * BE 直改 toolkit 会话 state 对应维 + 置 manual_edited，返回新 artifact。
+ * BE 直改 toolkit 会话 state 对应维 + 据 regen_class 路由（硬锚清 items / 软重生标 dirty /
+ * 重写解析标 dirty / 元数据即时生效），返回新 artifact。
+ * PRD-C-015 批5：field 扩至 11 维全集（含 skeleton/hard_points/models/scene/grade）。
  */
 export function editVariantDna(
   threadId: string,
   index: number,
-  field: 'main_kp' | 'secondary_kps' | 'qtype' | 'exam_type' | 'tags' | 'difficulty',
+  field: DnaField,
   value: DnaEditValue
 ): Promise<VariantArtifact | null> {
   return postEdit('/agent/variant/edit-dna', {
@@ -674,6 +843,90 @@ export function editVariantDna(
     value,
   })
 }
+
+// ---------------------------------------------------------------------------
+// PRD-C-015 批5 — DNA 改→重生 / 撤销重生（批4 已落 BE 端点，直连 /agent proxy）。
+//   POST /variant/regen      {thread_id, indexes?} → {ok, regenerated, failed, artifact}
+//     indexes 省略 = 对全待重生集合一次性重出（软重生维 _regen_once / 重写解析维只重写 solution）。
+//   POST /variant/undo-regen {thread_id, index}    → {ok, artifact}
+//     回上一版快照（缺口12，零 LLM）。item.can_undo_regen=true 才有快照可回。
+// 都走 /agent proxy（toolkit 原生接口，无 misikt envelope）；失败抛错，调用方兜底。
+// ---------------------------------------------------------------------------
+
+/** /variant/regen 返回（含逐题成败明细，FE 可对 failed 给精确提示） */
+export interface VariantRegenResult {
+  ok: boolean
+  /** 重生成功的题号（1-based） */
+  regenerated: number[]
+  /** 重生失败的题（保留原题，FE 提示哪几题没成） */
+  failed: Array<{ index: number; error: string }>
+  artifact: VariantArtifact | null
+}
+
+/**
+ * 重生待重生集合（手动触发，D-merge6）。indexes 省略 = 全待重生集合（变式自身脏 ∪ 母题脏波及）。
+ * 重生前 BE 存快照（支持撤销），重出过闸B + 难度 rubric 复评、保留手改 manual 维（BE 语义，FE 不管）。
+ */
+export async function regenVariant(
+  threadId: string,
+  indexes?: number[]
+): Promise<VariantRegenResult> {
+  const body: Record<string, unknown> = { thread_id: threadId }
+  if (indexes && indexes.length) body.indexes = indexes
+  const res = await fetch('/agent/variant/regen', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const detail = await res
+      .json()
+      .then((d: { detail?: string; error?: string }) => d.detail || d.error)
+      .catch(() => '')
+    throw new Error(detail || `/variant/regen ${res.status}`)
+  }
+  const data = (await res.json()) as {
+    ok?: boolean
+    regenerated?: unknown
+    failed?: unknown
+    artifact?: unknown
+  }
+  const failed: Array<{ index: number; error: string }> = []
+  if (Array.isArray(data.failed)) {
+    for (const f of data.failed) {
+      if (f && typeof f === 'object') {
+        const o = f as Record<string, unknown>
+        const idx = typeof o.idx === 'number' ? o.idx : Number(o.idx ?? o.index)
+        if (Number.isFinite(idx)) {
+          failed.push({ index: Math.floor(idx), error: str(o.error) ?? '重生失败' })
+        }
+      }
+    }
+  }
+  return {
+    ok: data.ok === true,
+    regenerated: numArr(data.regenerated),
+    failed,
+    artifact: pickArtifact({
+      type: 'custom',
+      content: '',
+      custom_data: { artifact: data.artifact as Record<string, unknown> },
+    }),
+  }
+}
+
+/** 撤销重生：回上一版快照（缺口12）。返回新 artifact 整量替换右栏。 */
+export function undoRegenVariant(
+  threadId: string,
+  index: number
+): Promise<VariantArtifact | null> {
+  return postEdit('/agent/variant/undo-regen', { thread_id: threadId, index })
+}
+
+// 🔴 PRD-C-015 块① 母题守恒维确认 = 「非硬锁」（D-merge7）：BE 无 confirm-mother 专用端点。
+//   老师「改」某守恒维 → 走 editVariantDna(field=secondary_kps/exam_type/skeleton/hard_points)；
+//   老师「过」（不改直接认可）→ 纯 FE 态关闭确认面（motherConfirmDismissed），不调后端。
+//   置信门控仍由 BE build_mother_confirm 算 needs_confirm，FE 据此首发外显。
 
 /**
  * T4 点击-说话 vibe（生成维 / 整卡重做）：老师用自然语言说「哪里不对、想怎么改」，
