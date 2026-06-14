@@ -824,31 +824,27 @@ async function onEditModels(payload: {
 }
 
 /**
- * 母题守恒维改（块①）：副考点/考察类型/骨架/难点 → 落 mother_dna.dna（组级共享）。
- * 走 editVariantDna(index=1, field)——BE 守恒维路由把这些维写进 mother_dna，下游变式回流 dirty。
+ * 🔴 PRD-C-017 B3.6 母题守恒维改（AC6/G6，复用 C-015 通路）：副考点/考察类型/骨架/难点
+ * → 落 mother_dna.dna（组级共享）。走 editVariantDna(index=1, field)——BE 守恒维路由把这些维
+ * 写进 mother_dna，下游变式回流 dirty（artifact.header.motherDirty 置位 → MotherCard 亮「重生」）。
+ * B3 收窄移位后由收窄后的 MotherCard 内联编辑触发（原 C-015 MotherBar 通路重接，重生机制不新造）。
+ * 守恒维改后须有变式在场才有「下游回流」意义（无变式时 BE 仅记 mother_dna，无回流）。
  */
 async function onEditMotherDna(payload: { field: DnaField; value: DnaEditValue }) {
-  if (sending.value || !artifact.value?.items.length) return
+  if (sending.value || !artifact.value) return
   try {
     const a = await editVariantDna(threadId.value, 1, payload.field, payload.value)
     if (a) artifact.value = a
-    ElMessage.success('已更新母题守恒维（下游变式已标待重生，点「重生」按新基准重出）')
+    ElMessage.success('已更新母题守恒维（下游变式已标待重生，点「重生下游变式」按新基准重出）')
   } catch (e) {
     ElMessage.error(`更新母题守恒维失败：${e instanceof Error ? e.message : String(e)}`)
   }
 }
 
-/** 老师「过」母题守恒维（非硬锁，MotherBar 内部关确认面，这里只给反馈）。 */
-function onConfirmMother() {
-  ElMessage.success('已确认母题守恒维，开始/继续出变式')
-}
-
-/** 换母题图（缺口13）：复用既有贴图流程——清画布换新 thread，提示换图=全新母题。 */
-function onSwapMotherImage() {
-  if (sending.value) return
-  resetSession()
-  ElMessage.info('换图 = 全新母题：请在左侧贴新母题图（Ctrl+V 截图或贴 URL），会重新分析 DNA')
-}
+// 🔴 PRD-C-017 B3.6：onConfirmMother / onSwapMotherImage（C-015 MotherBar 的「过确认面」/
+//   「换母题图」handler）随 B3 收窄移位 MotherBar 下线而移除——确认面已由 GradeChapterConfirmDialog
+//   （needConfirm 弹窗）承接，换图走左栏贴图重置流程。母题 DNA 编辑→重生能力（onEditMotherDna +
+//   onRegenAll/runRegen）已重接到收窄后的 MotherCard（AC6/G6，见上方 MotherCard 用法）。
 
 // ---------------------------------------------------------------------------
 // PRD-C-014 §3.1 — 单题入库（T1）+ 试题篮透明入库（T2）。
@@ -1297,8 +1293,13 @@ onBeforeUnmount(() => {
           :mother-img="motherImg"
           :persisted="motherPersisted"
           :persisting="motherPersisting"
+          :mother-dirty="!!artifact?.header.motherDirty"
+          :has-variants="!!artifact?.items.length"
+          :regenerating="regeneratingIndexes.length > 0"
           :sending="sending"
           @persist-mother="onPersistMother"
+          @edit-mother-dna="onEditMotherDna"
+          @regen-mother="onRegenAll"
           @preview="(u: string) => (previewUrl = u)"
         />
       </template>

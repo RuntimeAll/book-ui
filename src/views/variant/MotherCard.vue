@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // ---------------------------------------------------------------------------
-// PRD-C-017 B3 ②③④⑥ — 母题紧凑卡（AC4 / AC7 / G7 / G12 / M8）。
+// PRD-C-017 B3 ②③④⑥ + B3.6 母题 DNA 编辑→重生 — 母题紧凑卡（AC4 / AC6 / AC7 / G6 / G7 / G12 / M8）。
 //
 // 取代 C-015 的全宽大横条 MotherBar：收成【紧凑卡】，位置移到「变式题组」标题/chip 区
 // （宿主 ArtifactPanel canvas-head 下方），可折叠（AC7 / G7 收窄移位）。
@@ -14,12 +14,28 @@
 //   - need_anchor_review=1 → 显式标「锚定待人审」（闸B 留空的诚实提示）
 //   - ⑥「入库」按钮（G12）：母题确认入库 → 宿主映射 CreateQuestionBo → POST /teacher/question/create
 //
+// 🔴 B3.6 母题 DNA 编辑→重生（AC6/G6，复用 C-015 通路）：
+//   C-015 MotherBar 原承载「母题守恒维编辑 → 触发重生」能力，B3 收窄时被下线（index.vue 里
+//   onEditMotherDna 留成 dead code）。本批把这能力重接到收窄后的母题卡上，紧凑卡内联可编辑：
+//     可改维 = C-015 守恒维定义（不扩不缩）：副考点 / 考察类型 / 解法骨架 / 难点。
+//     改 → emit('edit-mother-dna', {field, value}) → 宿主 onEditMotherDna 调
+//          editVariantDna(index=1, field) 落 mother_dna.dna（组级共享，BE 守恒维路由）→ 下游变式回流 dirty。
+//     母题脏（motherDirty）→ 卡头亮「重生」按钮 → emit('regen-mother') → 宿主 runRegen 走
+//          C-015 四分流重生（regenVariant），下游回流。重生机制一行不新造，纯复用既有端点。
+//   🔴 入库 dirty 闸：母题脏（守恒维改了未重生）→ 入库按钮禁用（避免拿旧基准入库；与变式致命①一致）。
+//
 // 🔴 母题卡先于变式出：宿主在 needConfirm 确认后、变式 assemble 前若 toolkit 透传母题专帧，
-//    本卡先单独亮（hasVariants=false 也渲染）；当前 toolkit 兜底从 items[0].dna 拼母题维。
+//    本卡先单独亮（hasVariants=false 也渲染）；B3.5 后 toolkit 发 header.mother_card 专帧（含全维 dna）。
 // ---------------------------------------------------------------------------
 import { computed, ref } from 'vue'
-import type { VariantMotherCard } from '@/api/variant'
+import {
+  EXAM_TYPES,
+  type DnaEditValue,
+  type DnaField,
+  type VariantMotherCard,
+} from '@/api/variant'
 import MarkdownMath from '@/components/MarkdownMath.vue'
+import KpTreeDialog from './KpTreeDialog.vue'
 
 const props = defineProps<{
   motherCard: VariantMotherCard | null
@@ -29,6 +45,15 @@ const props = defineProps<{
   persisted: boolean
   /** 入库进行中 → 按钮 loading */
   persisting: boolean
+  /**
+   * 🔴 B3.6 母题脏（守恒维改了、下游变式待重生）→ 亮「重生」按钮 + 禁入库（dirty 闸）。
+   * 数据源 = artifact.header.motherDirty（D-merge8，BE 母题守恒维改后置位）。
+   */
+  motherDirty: boolean
+  /** 🔴 B3.6 当前已有变式（重生需要有下游变式才有意义；无变式时只编辑、不亮重生） */
+  hasVariants: boolean
+  /** 重生进行中 → 重生按钮 loading（宿主 regeneratingIndexes 非空驱动） */
+  regenerating: boolean
   /** 发送中：禁交互 */
   sending: boolean
 }>()
@@ -36,6 +61,13 @@ const props = defineProps<{
 const emit = defineEmits<{
   /** 母题入库（G12）→ 宿主映射 CreateQuestionBo 调 create */
   (e: 'persist-mother'): void
+  /**
+   * 🔴 B3.6 改母题守恒维（副考点/考察类型/骨架/难点·C-015 可改维定义）→ 宿主 onEditMotherDna
+   * 调 editVariantDna(index=1, field) 落 mother_dna.dna（组级共享，下游回流 dirty）。
+   */
+  (e: 'edit-mother-dna', payload: { field: DnaField; value: DnaEditValue }): void
+  /** 🔴 B3.6 触发重生（母题脏后）→ 宿主 runRegen 走 C-015 四分流（regenVariant），下游回流 */
+  (e: 'regen-mother'): void
   /** 点开看大图 */
   (e: 'preview', url: string): void
 }>()
@@ -50,15 +82,65 @@ const hasCard = computed(() => !!props.motherCard)
 const hardPoints = computed(() => dna.value?.hardPoints ?? [])
 
 // 解法骨架：把【...】最难步包成高亮 span（骨架文本里【】标记最难步基因）
-// 用 MarkdownMath 渲染骨架本体（含 LaTeX），最难步高亮靠 CSS 对 :deep 处理较难 →
-// 这里在展示层把【】替换成醒目标记文本，保证「最难步可视」。
 const skeletonHtml = computed(() => props.motherCard?.solutionSkeleton ?? '')
 const hasHardestMark = computed(() => /【[^】]+】/.test(skeletonHtml.value))
+
+// 🔴 B3.6 重生可点：母题脏 + 已有变式 + 非发送中 + 非重生中
+const canRegen = computed(
+  () => props.motherDirty && props.hasVariants && !props.sending && !props.regenerating
+)
+// 🔴 入库 dirty 闸：母题脏（守恒维改了未重生）→ 禁入库，避免拿旧基准落库
+const persistBlockedByDirty = computed(() => props.motherDirty)
+
+const examTypeOptions = EXAM_TYPES
+
+// ---- B3.6 守恒维：副考点（知识点树多选 ≤3，C-015 通路）----
+const kpDialog = ref(false)
+function onPickSecondaryKps(value: Array<{ id: string; name: string }>) {
+  emit('edit-mother-dna', { field: 'secondary_kps', value })
+  kpDialog.value = false
+}
+
+// ---- B3.6 守恒维：考察类型（闭集下拉）----
+function onPickExamType(v: string) {
+  if (!v || v === dna.value?.examType) return
+  emit('edit-mother-dna', { field: 'exam_type', value: v })
+}
+
+// ---- B3.6 守恒维：解法骨架（文本编辑，【】标最难步）----
+const skelEditing = ref(false)
+const skelDraft = ref('')
+function openSkelEdit() {
+  if (props.sending) return
+  skelDraft.value = props.motherCard?.solutionSkeleton || dna.value?.skeleton || ''
+  skelEditing.value = true
+}
+function saveSkel() {
+  emit('edit-mother-dna', { field: 'skeleton', value: skelDraft.value.trim() })
+  skelEditing.value = false
+}
+
+// ---- B3.6 守恒维：难点（文本编辑，多条按行）----
+const hardEditing = ref(false)
+const hardDraft = ref('')
+function openHardEdit() {
+  if (props.sending) return
+  hardDraft.value = hardPoints.value.join('\n')
+  hardEditing.value = true
+}
+function saveHard() {
+  const arr = hardDraft.value
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean)
+  emit('edit-mother-dna', { field: 'hard_points', value: arr })
+  hardEditing.value = false
+}
 </script>
 
 <template>
   <section v-if="hasCard" class="mother-card" data-testid="variant-mother-card">
-    <!-- 卡头：折叠开关 + 标题 + 锚定 chip + 待人审标 + 入库按钮 -->
+    <!-- 卡头：折叠开关 + 标题 + 锚定 chip + 待人审标 + 重生 + 入库按钮 -->
     <header class="mc-head">
       <button type="button" class="mc-toggle" @click="collapsed = !collapsed">
         {{ collapsed ? '▶' : '▼' }} 母题卡
@@ -70,14 +152,32 @@ const hasHardestMark = computed(() => /【[^】]+】/.test(skeletonHtml.value))
       <span v-if="motherCard?.needAnchorReview" class="mc-review-flag" title="主考点未锚到章内叶子，留待人工核对">
         锚定待人审
       </span>
+      <!-- 🔴 B3.6 母题脏标记（守恒维改了、下游待按新基准重生） -->
+      <span v-if="motherDirty" class="mc-dirty-flag" title="母题守恒维已改，下游变式待按新基准重生">
+        待重生
+      </span>
       <span class="mc-spacer" />
-      <!-- ⑥ 入库（G12） -->
+      <!-- 🔴 B3.6 重生按钮（母题脏 + 有变式才显，复用 C-015 regenVariant 通路） -->
+      <el-button
+        v-if="motherDirty && hasVariants"
+        size="small"
+        class="mc-regen"
+        type="warning"
+        plain
+        :loading="regenerating"
+        :disabled="!canRegen"
+        @click="emit('regen-mother')"
+      >
+        重生下游变式
+      </el-button>
+      <!-- ⑥ 入库（G12）·🔴 B3.6 母题脏时禁入库（dirty 闸） -->
       <el-button
         size="small"
         class="mc-persist"
         :type="persisted ? 'success' : 'primary'"
         :loading="persisting"
-        :disabled="sending || persisted"
+        :disabled="sending || persisted || persistBlockedByDirty"
+        :title="persistBlockedByDirty ? '母题守恒维已改，请先点「重生下游变式」再入库' : ''"
         @click="emit('persist-mother')"
       >
         {{ persisted ? '✓ 已入库' : '母题入库' }}
@@ -96,45 +196,92 @@ const hasHardestMark = computed(() => /【[^】]+】/.test(skeletonHtml.value))
           <span class="mc-block-k">
             解法骨架
             <span v-if="hasHardestMark" class="mc-hardest-hint">（【】= 最难步）</span>
+            <button type="button" class="mc-min-btn" :disabled="sending" @click="openSkelEdit">改</button>
           </span>
-          <div v-if="motherCard?.solutionSkeleton" class="mc-skeleton" :class="{ 'has-mark': hasHardestMark }">
-            <MarkdownMath :content="skeletonHtml" />
+          <template v-if="!skelEditing">
+            <div v-if="motherCard?.solutionSkeleton" class="mc-skeleton" :class="{ 'has-mark': hasHardestMark }">
+              <MarkdownMath :content="skeletonHtml" />
+            </div>
+            <span v-else class="mc-muted">（解法骨架未产出）</span>
+          </template>
+          <!-- 🔴 B3.6 骨架内联编辑（rewrite_solve 维，改→下游重写解析过闸B） -->
+          <div v-else class="mc-edit-box">
+            <el-input
+              v-model="skelDraft"
+              type="textarea"
+              :autosize="{ minRows: 2, maxRows: 6 }"
+              resize="none"
+              placeholder="解法骨架（【】包最难步基因；改它=换基因，下游变式重写解析）"
+            />
+            <div class="mc-edit-actions">
+              <button type="button" class="mc-cancel" @click="skelEditing = false">取消</button>
+              <button type="button" class="mc-save" @click="saveSkel">保存</button>
+            </div>
           </div>
-          <span v-else class="mc-muted">（解法骨架未产出）</span>
         </div>
         <div v-if="motherCard?.solvedAnswer" class="mc-block">
           <span class="mc-block-k">解答</span>
           <div class="mc-answer"><MarkdownMath :content="motherCard.solvedAnswer" /></div>
         </div>
 
-        <!-- 全 10 维 DNA -->
+        <!-- 全 10 维 DNA（副考点 / 考察类型 / 难点 可改 = C-015 守恒维） -->
         <div class="mc-dna-grid">
           <span class="mc-k">主考点</span>
           <span class="mc-v"><b>{{ dna?.mainKp || motherCard?.anchorKp || '未锚定' }}</b></span>
 
-          <span class="mc-k">副考点</span>
+          <span class="mc-k">副考点 <span class="mc-edit-tag">可改</span></span>
           <span class="mc-v">
             <template v-if="dna?.secondaryKps.length">
               <span v-for="kp in dna.secondaryKps" :key="kp" class="mc-pill sec">{{ kp }}</span>
             </template>
             <span v-else class="mc-muted">未标</span>
+            <button type="button" class="mc-min-btn" :disabled="sending" @click="kpDialog = true">
+              {{ dna?.secondaryKps.length ? '改' : '＋ 选' }}
+            </button>
           </span>
 
-          <span class="mc-k">题型 / 考察类型</span>
+          <span class="mc-k">题型 / 考察类型 <span class="mc-edit-tag">可改</span></span>
           <span class="mc-v">
-            <span class="mc-pill">{{ dna?.examType || '未标' }}</span>
+            <span class="mc-pill">{{ motherCard?.qtype || '—' }}</span>
+            <el-select
+              :model-value="dna?.examType || ''"
+              size="small"
+              placeholder="选考察类型"
+              class="mc-select"
+              :disabled="sending"
+              @change="onPickExamType"
+            >
+              <el-option v-for="t in examTypeOptions" :key="t" :label="t" :value="t" />
+            </el-select>
           </span>
 
           <span class="mc-k">场景</span>
           <span class="mc-v">{{ dna?.scene || '纯代数' }}</span>
 
-          <span class="mc-k">难点</span>
-          <span class="mc-v">
-            <template v-if="hardPoints.length">
-              <span v-for="hp in hardPoints" :key="hp" class="mc-hard">{{ hp }}</span>
+          <span class="mc-k">难点 <span class="mc-edit-tag">可改</span></span>
+          <span class="mc-v mc-full">
+            <template v-if="!hardEditing">
+              <template v-if="hardPoints.length">
+                <span v-for="hp in hardPoints" :key="hp" class="mc-hard">{{ hp }}</span>
+              </template>
+              <!-- ④ M8：难点空 → 显式文案，不留白（送分题难点空是诚实正确） -->
+              <span v-else class="mc-muted">此题无显著难点</span>
+              <button type="button" class="mc-min-btn" :disabled="sending" @click="openHardEdit">改</button>
             </template>
-            <!-- ④ M8：难点空 → 显式文案，不留白（送分题难点空是诚实正确） -->
-            <span v-else class="mc-muted">此题无显著难点</span>
+            <!-- 🔴 B3.6 难点内联编辑（meta 维，改→即时生效不重出，但下游回流仍标 dirty 由 BE 决定） -->
+            <div v-else class="mc-edit-box">
+              <el-input
+                v-model="hardDraft"
+                type="textarea"
+                :autosize="{ minRows: 1, maxRows: 4 }"
+                resize="none"
+                placeholder="难点（一行一条；基础题留空，宁空不凑）"
+              />
+              <div class="mc-edit-actions">
+                <button type="button" class="mc-cancel" @click="hardEditing = false">取消</button>
+                <button type="button" class="mc-save" @click="saveHard">保存</button>
+              </div>
+            </div>
           </span>
 
           <span class="mc-k">解题模型</span>
@@ -160,8 +307,23 @@ const hasHardestMark = computed(() => /【[^】]+】/.test(skeletonHtml.value))
             </span>
           </span>
         </div>
+
+        <!-- 🔴 B3.6 母题脏提示条（守恒维改了、下游待重生 → 引导点重生） -->
+        <p v-if="motherDirty && hasVariants" class="mc-dirty-hint">
+          母题守恒维已改 → 下游变式已标「待重生」，点右上「重生下游变式」按新基准重出（沿用 C-015 四分流通路）。
+        </p>
       </div>
     </div>
+
+    <!-- 副考点知识点树（多选 ≤3，C-015 通路） -->
+    <KpTreeDialog
+      v-model="kpDialog"
+      mode="multi"
+      title="改母题副考点（≤3）"
+      :max="3"
+      :preselected="[]"
+      @pick-multi="onPickSecondaryKps"
+    />
   </section>
 </template>
 
@@ -218,8 +380,20 @@ const hasHardestMark = computed(() => /【[^】]+】/.test(skeletonHtml.value))
   padding: 1px 8px;
   font-weight: 700;
 }
+.mc-dirty-flag {
+  font-size: 11px;
+  color: #c0392b;
+  background: #fdecea;
+  border: 1px solid #f0b8b1;
+  border-radius: 6px;
+  padding: 1px 8px;
+  font-weight: 700;
+}
 .mc-spacer {
   flex: 1;
+}
+.mc-regen {
+  font-size: 12px;
 }
 .mc-persist {
   font-size: 12px;
@@ -254,7 +428,9 @@ const hasHardestMark = computed(() => /【[^】]+】/.test(skeletonHtml.value))
   margin-bottom: 8px;
 }
 .mc-block-k {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 11.5px;
   font-weight: 700;
   color: #6b817e;
@@ -296,12 +472,24 @@ const hasHardestMark = computed(() => /【[^】]+】/.test(skeletonHtml.value))
   color: #6b817e;
   white-space: nowrap;
 }
+.mc-edit-tag {
+  font-size: 9.5px;
+  color: #0f6e6e;
+  background: #e7f3f1;
+  border: 1px solid #cfe6e3;
+  border-radius: 4px;
+  padding: 0 4px;
+  font-weight: 600;
+}
 .mc-v {
   color: #16302f;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 5px;
+}
+.mc-v.mc-full {
+  align-items: flex-start;
 }
 .mc-muted {
   color: #9fb0ad;
@@ -344,5 +532,70 @@ const hasHardestMark = computed(() => /【[^】]+】/.test(skeletonHtml.value))
   font-size: 11px;
   color: #9fb0ad;
   font-family: ui-monospace, monospace;
+}
+
+/* 🔴 B3.6 内联编辑控件（复用 MotherBar 守恒维编辑视觉） */
+.mc-min-btn {
+  font-size: 11px;
+  color: #0f6e6e;
+  background: #fff;
+  border: 1px solid #7fc0bd;
+  border-radius: 7px;
+  padding: 1px 9px;
+  cursor: pointer;
+}
+.mc-min-btn:hover:not(:disabled) {
+  background: #e7f3f1;
+}
+.mc-min-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.mc-select {
+  width: 138px;
+}
+.mc-edit-box {
+  flex-basis: 100%;
+  width: 100%;
+  background: #fff;
+  border: 1px solid #e7e3da;
+  border-radius: 8px;
+  padding: 8px;
+}
+.mc-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+.mc-cancel,
+.mc-save {
+  font-size: 12px;
+  border-radius: 8px;
+  padding: 3px 14px;
+  cursor: pointer;
+}
+.mc-cancel {
+  color: #5b6770;
+  background: #fff;
+  border: 1px solid #e7e3da;
+}
+.mc-save {
+  color: #fff;
+  background: #1e8a8a;
+  border: 1px solid #1e8a8a;
+}
+.mc-save:hover {
+  background: #176e6e;
+}
+.mc-dirty-hint {
+  margin: 10px 0 0;
+  font-size: 11.5px;
+  color: #b8741a;
+  background: #fdf6ea;
+  border: 1px solid #ecc98f;
+  border-radius: 8px;
+  padding: 6px 10px;
+  line-height: 1.5;
 }
 </style>
