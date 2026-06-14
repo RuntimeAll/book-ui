@@ -619,7 +619,9 @@ async function onPersistMother() {
       questionType: qcode,
       stem,
       answer: mc.solvedAnswer || undefined,
-      analyze: mc.solutionSkeleton || undefined,
+      // 🔴 PRD-C-017 minor-1：analyze = opus 完整解析富文本（mc.analysis），不再拿解法骨架顶替；
+      //   analysis 缺/空 → 回退骨架兜底（别让入库报错），但优先 analysis。skeleton 字段各归各位（见下）。
+      analyze: mc.analysis || mc.solutionSkeleton || undefined,
       // subjectId 走主考点 id（dim1KpId）优先（题归属知识点叶子），缺则确认章 id
       subjectId: dna.mainKpId || mc.anchorChapterId || undefined,
       stemImg: motherImg.value || undefined,

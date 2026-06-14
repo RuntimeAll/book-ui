@@ -492,6 +492,11 @@ function pickReject(msg: ToolkitChatMessage): VariantReject | null {
 export interface VariantMotherCard {
   /** 题面富文本 */
   stem: string | null
+  /**
+   * 🔴 PRD-C-017 minor-1：opus 产出的完整解析富文本（toolkit mother_card 帧顶层 analysis，
+   * commit 8a9c21b 起带）。入库 CreateQuestionBo.analyze 用它（不是用解法骨架顶替）。缺/空 → null。
+   */
+  analysis: string | null
   /** 解法骨架（【】标最难步，可视高亮） */
   solutionSkeleton: string | null
   /** opus 解出的答案 */
@@ -540,6 +545,8 @@ export function pickMotherCard(a: VariantArtifact | null): VariantMotherCard | n
     const diff = typeof o.difficulty === 'number' ? o.difficulty : Number(o.difficulty)
     return {
       stem: str(o.stem),
+      // 🔴 PRD-C-017 minor-1：opus 完整解析富文本（顶层 analysis；兼容驼峰 analyze 误名）
+      analysis: str(o.analysis) ?? str(o.analyze),
       solutionSkeleton: str(o.solution_skeleton) ?? str(o.solutionSkeleton) ?? str(o.skeleton),
       solvedAnswer: str(o.solved_answer) ?? str(o.solvedAnswer),
       qtype: str(o.qtype),
@@ -559,6 +566,7 @@ export function pickMotherCard(a: VariantArtifact | null): VariantMotherCard | n
   if (!it0) return null
   return {
     stem: null, // 变式 item.stem 是变式题面，非母题题面 → 不冒充母题题面，留空
+    analysis: null, // 兜底路径无母题完整解析（专帧缺）→ 入库时回退骨架
     solutionSkeleton: it0.dna.skeleton,
     solvedAnswer: null,
     qtype: it0.qtype || null,
