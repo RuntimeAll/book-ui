@@ -29,6 +29,15 @@ export interface VariantRequest {
   thread_id?: string
   /** 🔴 登录老师 RuoYi access_token：经 agent_config 透传给 toolkit，入库 owner=该老师本人。 */
   ruoyiToken?: string
+  /**
+   * 🔴 PRD-C-017 B3·母题年级章确认回传：老师确认的真 chapter_id（biz_subject level2 章节 id）。
+   * 经 agent_config(config.configurable.confirmed_chapter_id) 回传 toolkit —— B2 的 classify 从这里
+   * 取做闸B 章前缀锚定（route_entry: awaiting_mother_confirm + confirmed_chapter_id → 直奔 classify）。
+   * 这是 B3 与 toolkit B2 最关键的对接点（契约 §10 / PRD §1①）。
+   */
+  confirmedChapterId?: string
+  /** 🔴 PRD-C-017 B3·母题年级章确认回传：老师确认的年级册 id（biz_subject level1）。随确认章一并回传。 */
+  confirmedGradeBookId?: string
 }
 
 /** toolkit ChatMessage（只取前端用得到的字段，其余宽松忽略） */
@@ -378,6 +387,192 @@ function pickMotherConfirm(v: unknown): VariantMotherConfirm | null {
   }
 }
 
+// ---------------------------------------------------------------------------
+// 🔴 PRD-C-017 B3 — 母题前置 needConfirm / reject 事件（toolkit B2 _emit_need_confirm /
+// _emit_reject 发，落 type=custom 消息的 custom_data.needConfirm / custom_data.reject 上）。
+//   needConfirm：母题每次必停弹窗（决策表「母题必停」），FE 弹年级册+章确认面。
+//                候选 id 为空串（nano 只判名不判真 id）→ FE 章 picker 取真 chapter_id。
+//   reject：题面含图打回（G13），FE 直接出提示、流程结束（不弹确认/不渲染母题卡/不出变式）。
+// 契约 §10：confirm 回传走续聊回合 agent_config.confirmed_chapter_id（见 VariantRequest）。
+// ---------------------------------------------------------------------------
+
+/** 年级册 / 章 候选（nano 判出的名，id 通常为空串待 FE picker 取真） */
+export interface VariantConfirmCandidate {
+  id: string
+  name: string
+}
+
+/** needConfirm 事件载荷（toolkit _emit_need_confirm payload） */
+export interface VariantNeedConfirm {
+  /** nano 首选年级册（name；id 空串待 picker 取真） */
+  gradeBook: VariantConfirmCandidate
+  /** nano 首选章（name；id 空串待 picker 取真） */
+  chapter: VariantConfirmCandidate
+  /** 年级册候选列表（可空 → 老师纯手选） */
+  gradeCandidates: VariantConfirmCandidate[]
+  /** 章候选列表（可空 → 老师纯手选） */
+  chapterCandidates: VariantConfirmCandidate[]
+  /** nano 置信度（仅展示，0~1） */
+  confidence: number | null
+}
+
+/** reject 事件载荷（toolkit _emit_reject payload，G13 带图打回） */
+export interface VariantReject {
+  /** 打回原因码（如 with_figure） */
+  reason: string
+  /** 给老师看的文案（如「举一反三暂不支持带图题」） */
+  message: string
+}
+
+/** 宽松取候选数组（[{id,name}] / ["名字"] 两态兼容；非数组 → []） */
+function pickCandidates(v: unknown): VariantConfirmCandidate[] {
+  if (!Array.isArray(v)) return []
+  const out: VariantConfirmCandidate[] = []
+  for (const x of v) {
+    if (typeof x === 'string' && x.trim()) out.push({ id: '', name: x.trim() })
+    else if (x && typeof x === 'object') {
+      const o = x as Record<string, unknown>
+      const name = str(o.name) ?? str(o.title)
+      if (name) out.push({ id: o.id == null ? '' : String(o.id), name })
+    }
+  }
+  return out
+}
+
+/** 单个年级册/章对象（{id,name}）宽松解出；缺 → {id:'',name:''} */
+function pickCandidate(v: unknown): VariantConfirmCandidate {
+  if (v && typeof v === 'object') {
+    const o = v as Record<string, unknown>
+    return { id: o.id == null ? '' : String(o.id), name: str(o.name) ?? str(o.title) ?? '' }
+  }
+  if (typeof v === 'string') return { id: '', name: v.trim() }
+  return { id: '', name: '' }
+}
+
+/** 从 custom 消息里安全抠出 needConfirm（结构不符返回 null，宽松向后兼容） */
+function pickNeedConfirm(msg: ToolkitChatMessage): VariantNeedConfirm | null {
+  const raw = msg.custom_data?.needConfirm
+  if (!raw || typeof raw !== 'object') return null
+  const o = raw as Record<string, unknown>
+  const conf = typeof o.confidence === 'number' ? o.confidence : Number(o.confidence)
+  return {
+    gradeBook: pickCandidate(o.grade_book ?? o.gradeBook),
+    chapter: pickCandidate(o.chapter),
+    gradeCandidates: pickCandidates(o.grade_candidates ?? o.gradeCandidates),
+    chapterCandidates: pickCandidates(o.chapter_candidates ?? o.chapterCandidates),
+    confidence: Number.isFinite(conf) ? conf : null,
+  }
+}
+
+/** 从 custom 消息里安全抠出 reject（结构不符返回 null） */
+function pickReject(msg: ToolkitChatMessage): VariantReject | null {
+  const raw = msg.custom_data?.reject
+  if (!raw || typeof raw !== 'object') return null
+  const o = raw as Record<string, unknown>
+  return {
+    reason: str(o.reason) ?? 'rejected',
+    message: str(o.message) ?? '举一反三暂不支持该题',
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 🔴 PRD-C-017 B3 — 母题卡（先于变式出，全 10 维 DNA + 解法骨架 + 解答 + 锚定）。
+// 契约 §10 mother_card：{stem, solution_skeleton, solved_answer, dna{...}, anchor{...}}。
+//
+// 🔴 数据源现状（B1/B2 toolkit 实测）：toolkit classify 节点产出 mother_dna（含
+//    stem/answer/analysis/solution_skeleton/solved_answer/dna/need_anchor_review），但
+//    **classify → generate 直连、无「母题卡先出」专帧**；母题 DNA 仅经每个变式 item.dna
+//    （组级共享维）外显。故本解析做两路兜底：
+//      ① 优先读 artifact.header.mother_card（toolkit 后续补母题专帧时无缝接上）；
+//      ② 回退从 items[0].dna + header.kp/grade 拼出母题卡（变式继承母题，最近真相源）。
+//    待 toolkit 补母题专帧后，FE 自动走 ① 即可在变式前先亮母题卡。
+// ---------------------------------------------------------------------------
+
+/** 母题卡（全 10 维 DNA + 解法骨架 + 解答 + 锚定 + 待人审标记） */
+export interface VariantMotherCard {
+  /** 题面富文本 */
+  stem: string | null
+  /** 解法骨架（【】标最难步，可视高亮） */
+  solutionSkeleton: string | null
+  /** opus 解出的答案 */
+  solvedAnswer: string | null
+  /** 题型文本（选择/填空/解答；映射库值 1/4/5） */
+  qtype: string | null
+  /** 难度 1-4（dim4） */
+  difficulty: number | null
+  /** 全 10 维 DNA（复用 VariantDna，含 main_kp/secondary_kps/exam_type/skeleton/hard_points/tags/scene/models） */
+  dna: VariantDna
+  /** 副考点 id 列表（雪花 string；入库 secondaryKpIds 源。专帧带则用，兜底路径为 []） */
+  secondaryKpIds: string[]
+  /** 主考点 id（雪花 string；入库 dim1KpId 源） */
+  mainKpId: string | null
+  /** 主考点（锚定章内叶子；header.kp 镜像） */
+  anchorKp: string | null
+  /** 年级（header.grade 镜像） */
+  anchorGrade: string | null
+  /** 确认的章 id（锚定前缀；toolkit 补专帧后透传，现可空） */
+  anchorChapterId: string | null
+  /** 锚定待人审（闸B 留空的诚实提示）→ true 时母题卡标「锚定待人审」 */
+  needAnchorReview: boolean
+}
+
+/** 从 artifact 解出母题卡（① header.mother_card 专帧优先；② items[0].dna 兜底拼） */
+export function pickMotherCard(a: VariantArtifact | null): VariantMotherCard | null {
+  if (!a) return null
+  const h = a.header as unknown as Record<string, unknown>
+  // 路①：toolkit 后续补的母题专帧（header.mother_card）
+  const mc = h.mother_card ?? h.motherCard
+  if (mc && typeof mc === 'object') {
+    const o = mc as Record<string, unknown>
+    const d = pickDna(o)
+    // 副考点 id：专帧 secondary_kps 可能是 [{id,name}] → 抠 id
+    const secIds: string[] = []
+    const rawSec = (o.dna && typeof o.dna === 'object' ? (o.dna as Record<string, unknown>).secondary_kps : o.secondary_kps)
+    if (Array.isArray(rawSec)) {
+      for (const s of rawSec) {
+        if (s && typeof s === 'object') {
+          const sid = (s as Record<string, unknown>).id ?? (s as Record<string, unknown>).code
+          if (sid != null && String(sid).trim()) secIds.push(String(sid))
+        }
+      }
+    }
+    const anchor = (o.anchor && typeof o.anchor === 'object' ? o.anchor : {}) as Record<string, unknown>
+    const diff = typeof o.difficulty === 'number' ? o.difficulty : Number(o.difficulty)
+    return {
+      stem: str(o.stem),
+      solutionSkeleton: str(o.solution_skeleton) ?? str(o.solutionSkeleton) ?? str(o.skeleton),
+      solvedAnswer: str(o.solved_answer) ?? str(o.solvedAnswer),
+      qtype: str(o.qtype),
+      difficulty: Number.isFinite(diff) ? diff : null,
+      secondaryKpIds: secIds,
+      mainKpId: d.mainKpId,
+      dna: d,
+      anchorKp: str(o.main_kp) ?? d.mainKp ?? a.header.kp,
+      anchorGrade: a.header.grade,
+      anchorChapterId:
+        str(anchor.chapter_id) ?? str(o.anchor_chapter_id) ?? str(o.confirmed_chapter_id),
+      needAnchorReview: o.need_anchor_review === true || o.needAnchorReview === true,
+    }
+  }
+  // 路②：从首个变式 item.dna 兜底拼（变式继承母题，组级共享维）
+  const it0 = a.items[0]
+  if (!it0) return null
+  return {
+    stem: null, // 变式 item.stem 是变式题面，非母题题面 → 不冒充母题题面，留空
+    solutionSkeleton: it0.dna.skeleton,
+    solvedAnswer: null,
+    qtype: it0.qtype || null,
+    difficulty: it0.difficulty || null,
+    secondaryKpIds: [], // 兜底路径无副考点 id（仅有名）
+    mainKpId: it0.dna.mainKpId,
+    dna: it0.dna,
+    anchorKp: a.header.kp ?? it0.dna.mainKp,
+    anchorGrade: a.header.grade,
+    anchorChapterId: null,
+    needAnchorReview: false, // 兜底路径无此信号，保守不标
+  }
+}
+
 /** 从 custom 消息里安全抠出 artifact（镜像 pickStage 的宽松校验，结构不符返回 null） */
 function pickArtifact(msg: ToolkitChatMessage): VariantArtifact | null {
   const raw = msg.custom_data?.artifact
@@ -470,6 +665,16 @@ export interface VariantStreamHandlers {
   onStage?: (stage: VariantStage) => void
   /** artifact 快照帧（type=custom 且 custom_data.artifact）→ 右栏卡片栅。不传则静默丢弃，向后兼容 */
   onArtifact?: (artifact: VariantArtifact) => void
+  /**
+   * 🔴 PRD-C-017 B3·needConfirm 事件（type=custom 且 custom_data.needConfirm）→ 弹年级册+章确认面。
+   * 母题每次必停（决策表）；不传则静默丢弃（向后兼容旧 toolkit）。
+   */
+  onNeedConfirm?: (payload: VariantNeedConfirm) => void
+  /**
+   * 🔴 PRD-C-017 B3·reject 事件（type=custom 且 custom_data.reject）→ 带图打回提示，流程结束。
+   * 不传则静默丢弃。
+   */
+  onReject?: (payload: VariantReject) => void
   /** 服务端 error 帧 */
   onServerError?: (msg: string) => void
   /** 连接异常 / 非 SSE 响应 / 不可达。fatal 后流终止 */
@@ -516,7 +721,14 @@ export function streamVariant(
     stream_tokens: true,
   }
   if (payload.thread_id) body.thread_id = payload.thread_id
-  if (payload.ruoyiToken) body.agent_config = { ruoyi_token: payload.ruoyiToken }
+  // 🔴 PRD-C-017 B3：agent_config 透传 —— ruoyi_token（入库 owner）+ 母题确认章 id（接闸B 锚定）。
+  //   confirmed_chapter_id 进 config.configurable → toolkit route_entry 据它（+awaiting_mother_confirm）
+  //   直奔 classify，B2 闸B anchor_to_chapter(chapter_id=…) 用它收窄锚定到确认章。
+  const agentConfig: Record<string, unknown> = {}
+  if (payload.ruoyiToken) agentConfig.ruoyi_token = payload.ruoyiToken
+  if (payload.confirmedChapterId) agentConfig.confirmed_chapter_id = payload.confirmedChapterId
+  if (payload.confirmedGradeBookId) agentConfig.confirmed_grade_book_id = payload.confirmedGradeBookId
+  if (Object.keys(agentConfig).length) body.agent_config = agentConfig
 
   fetchEventSource('/agent/variant/stream', {
     method: 'POST',
@@ -567,7 +779,19 @@ export function streamVariant(
               handlers.onArtifact?.(artifact)
               break
             }
-            // 无 stage / artifact 的 custom：落回旧逻辑（content 非空才透传），向后兼容
+            // 🔴 PRD-C-017 B3：needConfirm（母题必停确认）→ 弹年级册+章确认面，不进消息气泡
+            const needConfirm = pickNeedConfirm(msg)
+            if (needConfirm) {
+              handlers.onNeedConfirm?.(needConfirm)
+              break
+            }
+            // 🔴 PRD-C-017 B3：reject（带图打回 G13）→ 提示 + 流程结束，不进消息气泡
+            const reject = pickReject(msg)
+            if (reject) {
+              handlers.onReject?.(reject)
+              break
+            }
+            // 无 stage / artifact / needConfirm / reject 的 custom：落回旧逻辑（content 非空才透传），向后兼容
           }
           // 只渲染 AI 产出的块；human（agent 回放输入）/ 空内容忽略
           if (msg.type !== 'human' && String(msg.content || '').trim()) {

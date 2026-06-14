@@ -377,6 +377,10 @@ function regenAll() {
       </div>
     </header>
 
+    <!-- PRD-C-017 B3·AC7 收窄移位：母题紧凑卡插槽——位于「变式题组」标题区下方
+         （原 C-015 全宽横条 MotherBar 收成本卡，宿主 index.vue 注入 MotherCard） -->
+    <slot name="mother-card" />
+
     <!-- G13 ⑤：头部主考点的知识点树弹层（组级守恒锚） -->
     <KpTreeDialog
       v-model="headerKpDialog"

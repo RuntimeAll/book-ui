@@ -9,6 +9,7 @@ import {
   fetchVariantHistory,
   persistVariantGroup,
   persistVariantOne,
+  pickMotherCard,
   regenVariant,
   reorderVariant,
   reverifyVariantItem,
@@ -22,15 +23,19 @@ import type {
   ToolkitChatMessage,
   VariantArtifact,
   VariantArtifactItem,
+  VariantNeedConfirm,
+  VariantReject,
   VariantStage,
   VariantStreamHandle,
 } from '@/api/variant'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
-import type { QuestionItem } from '@/api/question/index'
+import { createQuestionWithDna } from '@/api/question/index'
+import type { CreateQuestionWithDnaBo, QuestionItem } from '@/api/question/index'
 import MarkdownMath from '@/components/MarkdownMath.vue'
 import AiStageRail from '@/components/AiStageRail.vue'
 import ArtifactPanel from './ArtifactPanel.vue'
-import MotherBar from './MotherBar.vue'
+import MotherCard from './MotherCard.vue'
+import GradeChapterConfirmDialog from './GradeChapterConfirmDialog.vue'
 
 // 登录老师身份：入库 owner 走透传 token（agent_config.ruoyi_token），落老师本人个人题库。
 const userStore = useUserStore()
@@ -92,6 +97,20 @@ const thinking = ref(false) // LLM token 流期的「思考中」动效
 const currentRail = ref<RailItem | null>(null)
 // PRD-C-011：右栏卡片栅数据源 = artifact 快照帧（snapshot 全量，整量替换）
 const artifact = ref<VariantArtifact | null>(null)
+
+// ---------------------------------------------------------------------------
+// 🔴 PRD-C-017 B3 — 母题年级章确认面 + 母题卡 + 入库态。
+// ---------------------------------------------------------------------------
+// needConfirm 弹窗（母题每次必停·决策表）：收到 SSE needConfirm → 弹年级册+章确认面
+const needConfirmPayload = ref<VariantNeedConfirm | null>(null)
+const confirmDialogVisible = ref(false)
+const confirmSubmitting = ref(false) // 确认续聊回合发送中
+// 母题卡：从 artifact 解出（① header.mother_card 专帧优先；② items[0].dna 兜底拼）
+const motherCard = computed(() => pickMotherCard(artifact.value))
+// 母题入库态（G12）
+const motherPersisting = ref(false)
+const motherPersisted = ref(false)
+const motherQuestionId = ref('') // 入库后的母题题 id（雪花 string）
 // 题组编辑器：正在重新验算的题 index（1-based），驱动该卡 loading 态
 const reverifyingIndex = ref<number | null>(null)
 // PRD-C-014 T1/T2：正在「收录入库」/「加入试题篮」的题 index（1-based），驱动该卡按钮 loading
@@ -324,7 +343,13 @@ function settleStages() {
  * 🔴 统一发送管道：输入框手打 / 卡片快捷键 / 全部入库 / 换一批最终都走这里
  *（同 thread_id 同 chat SSE 通道，agent 既有受约束分类器路由）。
  */
-function dispatch(message: string, shownText?: string, images?: string[]) {
+function dispatch(
+  message: string,
+  shownText?: string,
+  images?: string[],
+  // 🔴 PRD-C-017 B3：母题确认续聊回合带确认章 id（+年级册 id）→ agent_config 回传 toolkit（接 B2 闸B）
+  confirmCtx?: { confirmedChapterId: string; confirmedGradeBookId?: string }
+) {
   if (sending.value) return
   handle?.abort()
 
@@ -348,7 +373,13 @@ function dispatch(message: string, shownText?: string, images?: string[]) {
   scrollToBottom()
 
   handle = streamVariant(
-    { message, thread_id: threadId.value, ruoyiToken: userStore.accessToken },
+    {
+      message,
+      thread_id: threadId.value,
+      ruoyiToken: userStore.accessToken,
+      confirmedChapterId: confirmCtx?.confirmedChapterId,
+      confirmedGradeBookId: confirmCtx?.confirmedGradeBookId,
+    },
     {
       onToken: (delta) => {
         // 思维外放（用户反馈①）：BE 已在服务端滤掉 JSON 中间产物的 token
@@ -374,6 +405,23 @@ function dispatch(message: string, shownText?: string, images?: string[]) {
         // partial / expectedTotal 随帧存进同一响应式 artifact，ArtifactPanel 据此渲染
         // 「生成中」占位骨架卡；定稿帧无 partial 键 → 占位卡自然消失。
         artifact.value = a
+      },
+      // 🔴 PRD-C-017 B3·① 母题年级章确认面（AC1/G1）：母题每次必停 → 弹确认面。
+      //   toolkit 停在 awaiting_mother_confirm（clarify→END resume），老师确认后宿主
+      //   发续聊回合带 confirmed_chapter_id（onConfirmGradeChapter）。
+      onNeedConfirm: (payload: VariantNeedConfirm) => {
+        thinking.value = false
+        needConfirmPayload.value = payload
+        confirmDialogVisible.value = true
+        // 本轮 toolkit 已 END（停等确认）→ onClose 会把 sending 收掉；这里不抢先动 sending。
+        scrollToBottom()
+      },
+      // 🔴 PRD-C-017 B3·⑤ 带图打回（G13）：直接出提示，流程结束（不弹确认/不渲染母题卡/不出变式）。
+      onReject: (payload: VariantReject) => {
+        thinking.value = false
+        settleStages()
+        onRejectMother(payload)
+        scrollToBottom()
       },
       onMessage: (msg: ToolkitChatMessage) => {
         thinking.value = false
@@ -482,6 +530,122 @@ async function persistAll() {
   } finally {
     sending.value = false
     scrollToBottom()
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 🔴 PRD-C-017 B3 — 母题年级章确认 / 带图打回 / 母题入库。
+// ---------------------------------------------------------------------------
+
+/**
+ * ① 老师确认年级册+章（AC1/G1）：拿到真 chapter_id + grade_book_id（biz_subject 真节点 id）。
+ * 经【续聊回合】把 confirmed_chapter_id 放进 agent_config 回传 toolkit ——
+ * toolkit route_entry（awaiting_mother_confirm + confirmed_chapter_id）直奔 classify，
+ * B2 闸B anchor_to_chapter(chapter_id=…) 据它收窄锚定到确认章。这是 B3↔toolkit 最关键对接点。
+ */
+function onConfirmGradeChapter(value: {
+  chapterId: string
+  gradeBookId: string
+  chapterName: string
+  gradeBookName: string
+}) {
+  if (sending.value) return
+  // 续聊回合：发一句「确认」+ 把确认章经 agent_config 回传（toolkit 取 config.confirmed_chapter_id）。
+  // 关弹窗后由左栏 sending/思路条接管反馈，confirmSubmitting 仅作弹窗内提交锁（这里关窗即解锁）。
+  const shown = `已确认：${value.gradeBookName} / ${value.chapterName}`
+  confirmDialogVisible.value = false
+  confirmSubmitting.value = false
+  dispatch('确认，按此年级册与章继续举一反三', shown, undefined, {
+    confirmedChapterId: value.chapterId,
+    confirmedGradeBookId: value.gradeBookId,
+  })
+}
+
+/**
+ * ⑤ 带图打回（G13）：toolkit 判母题含图 → reject 事件。直接出错误气泡，流程结束
+ *（不弹确认面、不渲染母题卡、不出变式）。reject 已带「举一反三暂不支持带图题」文案。
+ */
+function onRejectMother(payload: VariantReject) {
+  // 确认面若误开则关掉（带图打回优先级最高，且 toolkit 不会同时发 needConfirm+reject）
+  confirmDialogVisible.value = false
+  needConfirmPayload.value = null
+  stream.value.push({
+    type: 'bubble',
+    role: 'ai',
+    kind: 'error',
+    text: payload.message || '举一反三暂不支持带图题',
+  })
+}
+
+/** 把题型文本映射成库值（1选择/4填空/5解答）。母题题型缺省按解答(5)。 */
+function qtypeToCode(qt: string | null | undefined): number {
+  const s = qt || ''
+  if (/选择|单选|多选/.test(s)) return 1
+  if (/填空/.test(s)) return 4
+  return 5 // 解答 / 简答 / 证明 默认 5
+}
+
+/**
+ * ⑥ 母题入库（G12/§1⑧/§10 母题落库）：把母题打标产出映射 CreateQuestionBo →
+ * POST /teacher/question/create（走 /api → :8090 misikt 拦截器，code===1 判成功）。
+ *   - 字段事实源 = CreateQuestionBo.java：stem/answer/analyze + dim1KpId/secondaryKpIds/
+ *     dim2Qtype/dim4Difficulty/dim5Structure + skeleton/scene/examType/hardPoints + tags +
+ *     anchorId/needAnchorReview/reasoning + labelStatus=1/labeledBy(=opus 模型名)。
+ *   - 服务端强制 createBy/status/id（别传）；hardPointCount BE 算 size（别传）。
+ *   - stemImg = 整图 URL（母题原图；cropped 归 C-016）。
+ * 零新 BE 接口（复用 C-014/C-015 已建的 create path）。
+ */
+async function onPersistMother() {
+  if (motherPersisting.value || sending.value) return
+  const mc = motherCard.value
+  if (!mc || motherPersisted.value) return
+  // 母题题面事实源：toolkit 母题专帧 mc.stem；兜底路径无母题题面 → 用首个变式题面不合适，
+  // 拒绝入库并提示（避免把变式当母题落库）。
+  const stem = mc.stem?.trim()
+  if (!stem) {
+    ElMessage.warning('母题题面尚未产出（toolkit 暂未透传母题专帧），暂不能入库；待母题卡先出专帧后可入库')
+    return
+  }
+  motherPersisting.value = true
+  try {
+    const dna = mc.dna
+    const qcode = qtypeToCode(mc.qtype)
+    const bo: CreateQuestionWithDnaBo = {
+      questionType: qcode,
+      stem,
+      answer: mc.solvedAnswer || undefined,
+      analyze: mc.solutionSkeleton || undefined,
+      // subjectId 走主考点 id（dim1KpId）优先（题归属知识点叶子），缺则确认章 id
+      subjectId: dna.mainKpId || mc.anchorChapterId || undefined,
+      stemImg: motherImg.value || undefined,
+      // 5 维打标
+      dim1KpId: dna.mainKpId || undefined,
+      dim2Qtype: qcode,
+      dim4Difficulty: mc.difficulty || undefined,
+      dim5Structure: dna.scene || undefined,
+      labelStatus: 1, // AI 已标
+      labeledBy: 'claude-opus-4-8', // 母题 opus 打标（决策表）
+      labelConfidence: undefined,
+      // DNA 全维
+      secondaryKpIds: mc.secondaryKpIds.length ? mc.secondaryKpIds : undefined,
+      tags: dna.tags.length ? dna.tags : undefined,
+      skeleton: mc.solutionSkeleton || undefined,
+      scene: dna.scene || undefined,
+      examType: dna.examType || undefined,
+      hardPoints: dna.hardPoints.length ? dna.hardPoints : undefined,
+      anchorId: mc.anchorChapterId || undefined,
+      needAnchorReview: mc.needAnchorReview || undefined,
+      reasoning: 'PRD-C-017 母题 opus 解题打标',
+    }
+    const res = await createQuestionWithDna(bo)
+    motherQuestionId.value = res?.id ? String(res.id) : ''
+    motherPersisted.value = true
+    ElMessage.success('母题已入库（label_status=1，可组卷·可再举一反三）')
+  } catch (e) {
+    // 失败 toast 由 http 拦截器已弹（code!==1）；这里只补一条具体反馈
+    ElMessage.error(`母题入库失败：${e instanceof Error ? e.message : String(e)}`)
+  } finally {
+    motherPersisting.value = false
   }
 }
 
@@ -805,6 +969,13 @@ function clearCanvas() {
   thinking.value = false
   typingBubble = null
   firstComposeMessage = null
+  // PRD-C-017 B3：母题确认 / 入库态随会话重置
+  needConfirmPayload.value = null
+  confirmDialogVisible.value = false
+  confirmSubmitting.value = false
+  motherPersisting.value = false
+  motherPersisted.value = false
+  motherQuestionId.value = ''
 }
 
 /** 新会话（原「新母题」）：换新 thread；首条消息发出时才登记进会话列表 */
@@ -918,16 +1089,15 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="variant-page">
-    <!-- PRD-C-015 批5·块④ U1：母题顶部横条（可整体折叠 ▼/▲，不占中栏）。
-         含母题题面缩略 + 🧬 母题 DNA 面板（守恒维可改 + 其余维仅展示）+ 合并确认面 + 换图入口 -->
-    <MotherBar
-      :artifact="artifact"
-      :mother-img="motherImg"
-      :sending="sending"
-      @edit-mother-dna="onEditMotherDna"
-      @confirm-mother="onConfirmMother"
-      @swap-image="onSwapMotherImage"
-      @preview="(u: string) => (previewUrl = u)"
+    <!-- PRD-C-017 B3·AC7 收窄移位：母题区从 C-015 全宽大横条 → 紧凑卡，移到「变式题组」标题区
+         下方（ArtifactPanel mother-card 插槽）。下方仍双栏：左聊天 / 右变式题组 -->
+
+    <!-- 母题年级册+章确认面（AC1/G1）：母题每次必停，收到 SSE needConfirm 弹出 -->
+    <GradeChapterConfirmDialog
+      v-model="confirmDialogVisible"
+      :payload="needConfirmPayload"
+      :submitting="confirmSubmitting"
+      @confirm="onConfirmGradeChapter"
     />
 
     <!-- 下方双栏：左聊天 / 右变式题组 -->
@@ -1119,7 +1289,20 @@ onBeforeUnmount(() => {
       @undo-regen="onUndoRegen"
       @edit-models="onEditModels"
       @regen-all="onRegenAll"
-    />
+    >
+      <!-- AC7 收窄移位 + AC4 母题卡先出（全 10 维）+ M8 难点空文案 + G12 母题入库 -->
+      <template #mother-card>
+        <MotherCard
+          :mother-card="motherCard"
+          :mother-img="motherImg"
+          :persisted="motherPersisted"
+          :persisting="motherPersisting"
+          :sending="sending"
+          @persist-mother="onPersistMother"
+          @preview="(u: string) => (previewUrl = u)"
+        />
+      </template>
+    </ArtifactPanel>
     </div>
 
     <!-- P10：点开看大图（简易遮罩，点遮罩关闭；不引新依赖） -->

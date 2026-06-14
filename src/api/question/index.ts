@@ -152,6 +152,81 @@ export const questionPage = (
     config,
   )
 
+// ---------------------------------------------------------------------------
+// 🔴 PRD-C-017 B3 — 创建带完整 DNA 的题（母题入库）。
+// 端点 POST /teacher/question/create（misikt envelope，走 /api → :8090，code===1 判成功）。
+// 字段事实源 = book-server CreateQuestionBo.java（camelCase）。
+//   - 必填：questionType（1选择/4填空/5解答）+ stem（题面富文本）。
+//   - 服务端强制 createBy/createUser/status/id（别传）；hardPointCount BE 算 size（别传）。
+//   - 雪花 id 字段全 string（dim1KpId / secondaryKpIds / anchorId）——禁 number 截尾。
+//     secondaryKpIds BE 是 List<Long>，传字符串数组，Jackson 数字字符串自动转 Long。
+// ---------------------------------------------------------------------------
+
+/** 创建带 DNA 的题入参（CreateQuestionBo 子集，按 B3 母题入库用到的字段） */
+export interface CreateQuestionWithDnaBo {
+  /** 题型 1选择/4填空/5解答（必填） */
+  questionType: number
+  /** 题面富文本（必填） */
+  stem: string
+  /** 答案富文本 */
+  answer?: string
+  /** 解析富文本 */
+  analyze?: string
+  /** 难度 1-4 星（biz_question.difficult） */
+  difficult?: number
+  /** 章节/知识点编码（biz_question.subject_id；母题入库填确认章 id 或主考点 id） */
+  subjectId?: string
+  /** 题干整图 URL（母题原图，cropped 归 C-016） */
+  stemImg?: string
+  // ----- 5 维度打标（复用 V16 列） -----
+  /** ①主考点 id → dim1_kp_id（雪花 string） */
+  dim1KpId?: string
+  /** ②题型 → dim2_qtype */
+  dim2Qtype?: number
+  /** ④难度 → dim4_difficulty */
+  dim4Difficulty?: number
+  /** ⑤结构指纹 → dim5_structure */
+  dim5Structure?: string
+  /** 打标状态机：1=AI已标 */
+  labelStatus?: number
+  /** AI 自评置信度 0-1 */
+  labelConfidence?: number
+  /** 打标者（=opus 模型名） */
+  labeledBy?: string
+  // ----- DNA 全维 / 挂接表 -----
+  /** 副考点 id 列表（≤3，雪花 string）→ biz_question_knowledge(is_primary=0) */
+  secondaryKpIds?: string[]
+  /** 标签列表（3~6）→ biz_free_tag + biz_question_free_tag */
+  tags?: string[]
+  /** 解法骨架（【】标最难步）→ biz_question_ai.solution_skeleton */
+  skeleton?: string
+  /** 场景 → biz_question_ai.scenario */
+  scene?: string
+  /** 考察类型（闭集 10）→ biz_question_ai.assessment_type */
+  examType?: string
+  /** 难点/突破点列表 → biz_question_ai.breakthrough_points（hardPointCount BE 算 size，别传） */
+  hardPoints?: string[]
+  /** 锚定 subject 节点 → biz_question_ai.anchor_id */
+  anchorId?: string
+  /** 锚定待人审 → biz_question_ai.need_anchor_review */
+  needAnchorReview?: boolean
+  /** 抽取/生成依据 → biz_question_ai.reasoning */
+  reasoning?: string
+}
+
+/** 创建返回（QuestionDetailVo；至少含落库 id，雪花 string） */
+export interface CreateQuestionResult extends QuestionDetail {
+  id: string
+}
+
+/**
+ * 创建带完整 DNA 的题（母题入库，PRD-C-017 §1⑧ / G12）。
+ * 成功（misikt code===1）→ resolve 解包后的 QuestionDetailVo（含落库 id）；
+ * 失败 → reject（toast 由 http 拦截器已弹），调用方兜底。
+ */
+export const createQuestionWithDna = (bo: CreateQuestionWithDnaBo) =>
+  request.post<CreateQuestionResult, CreateQuestionResult>('/teacher/question/create', bo)
+
 /**
  * 拉试题栏角标数量
  */
