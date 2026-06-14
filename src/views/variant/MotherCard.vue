@@ -39,6 +39,11 @@ import KpTreeDialog from './KpTreeDialog.vue'
 
 const props = defineProps<{
   motherCard: VariantMotherCard | null
+  /**
+   * 🔴 B4-polish：老师在确认面亲手选的章「人话名」（如「第二章 一元二次方程」）。
+   * 母题卡「锚定章」优先显示它——最可靠，不依赖 toolkit 回灌 chapter_id。
+   */
+  confirmedChapterName?: string
   /** 母题原图（守恒锚缩略图，点开看大图） */
   motherImg?: string
   /** 母题已入库 → 入库按钮置「已入库」 */
@@ -77,6 +82,17 @@ const collapsed = ref(false)
 
 const dna = computed(() => props.motherCard?.dna ?? null)
 const hasCard = computed(() => !!props.motherCard)
+
+// 🔴 B4-polish：锚定章显示文本。
+//   优先级：① 老师确认面亲手选的章人话名（最可靠）；② toolkit 母题专帧回灌的 chapter id 兜底；
+//   ③ 都没有 → 「按年级册锚定」（诚实兜底，不露内部字段名，彻底消除「（确认章 id 未透传）」占位）。
+const anchorChapterText = computed(() => {
+  const name = props.confirmedChapterName?.trim()
+  if (name) return name
+  const id = props.motherCard?.anchorChapterId?.trim()
+  if (id) return id
+  return '按年级册锚定'
+})
 
 // 难点（M8）：hard_points 空 → 显式「此题无显著难点」
 const hardPoints = computed(() => dna.value?.hardPoints ?? [])
@@ -302,9 +318,7 @@ function saveHard() {
 
           <span class="mc-k">锚定章</span>
           <span class="mc-v">
-            <span class="mc-anchor-id">
-              {{ motherCard?.anchorChapterId || '（确认章 id 未透传）' }}
-            </span>
+            <span class="mc-anchor-id">{{ anchorChapterText }}</span>
           </span>
         </div>
 

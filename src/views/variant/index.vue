@@ -107,6 +107,9 @@ const confirmDialogVisible = ref(false)
 const confirmSubmitting = ref(false) // 确认续聊回合发送中
 // 母题卡：从 artifact 解出（① header.mother_card 专帧优先；② items[0].dna 兜底拼）
 const motherCard = computed(() => pickMotherCard(artifact.value))
+// 🔴 B4-polish：老师在确认面亲手选的章「人话名」（如「第二章 一元二次方程」）——
+// 确认时本就拿得到 chapterName/gradeBookName，存这里传给母题卡显示锚定章，最可靠、不依赖 toolkit 回灌。
+const confirmedChapterName = ref('')
 // 母题入库态（G12）
 const motherPersisting = ref(false)
 const motherPersisted = ref(false)
@@ -553,6 +556,8 @@ function onConfirmGradeChapter(value: {
   // 续聊回合：发一句「确认」+ 把确认章经 agent_config 回传（toolkit 取 config.confirmed_chapter_id）。
   // 关弹窗后由左栏 sending/思路条接管反馈，confirmSubmitting 仅作弹窗内提交锁（这里关窗即解锁）。
   const shown = `已确认：${value.gradeBookName} / ${value.chapterName}`
+  // 🔴 B4-polish：记下老师确认的章人话名（母题卡「锚定章」直接显示它，不依赖 toolkit 回灌 id）
+  confirmedChapterName.value = value.chapterName || value.gradeBookName || ''
   confirmDialogVisible.value = false
   confirmSubmitting.value = false
   dispatch('确认，按此年级册与章继续举一反三', shown, undefined, {
@@ -1290,6 +1295,7 @@ onBeforeUnmount(() => {
       <template #mother-card>
         <MotherCard
           :mother-card="motherCard"
+          :confirmed-chapter-name="confirmedChapterName"
           :mother-img="motherImg"
           :persisted="motherPersisted"
           :persisting="motherPersisting"
