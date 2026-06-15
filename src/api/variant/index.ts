@@ -300,6 +300,13 @@ export interface VariantArtifactHeader {
   regenPending: number[]
   /** 母题守恒维合并确认状态（块①，弹合并确认面时读它） */
   motherConfirm: VariantMotherConfirm | null
+  /**
+   * 🔴 PRD-C-017 B5：母题卡先出专帧载体（toolkit _emit_mother_card 发
+   * `header.mother_card` = 契约 §10 母题卡全字段）。pickMotherCard 路① / MotherCard.hasCard
+   * 的唯一来源。原 B5-ui 在 pickArtifact normalize 时漏拷此键致路①永空（B5-fix2 补回）。
+   * 结构松（toolkit 契约对象，pickMotherCard 内 as Record 宽松解析），故 unknown。
+   */
+  mother_card: unknown
 }
 
 /** artifact 快照（整帧 = 当前题组全量） */
@@ -656,12 +663,40 @@ function pickArtifact(msg: ToolkitChatMessage): VariantArtifact | null {
     })
   }
   const h = (a.header && typeof a.header === 'object' ? a.header : {}) as Record<string, unknown>
+  // 🔴 PRD-C-017 B5-fix2：母题卡专帧载体 —— pickMotherCard 路① / MotherCard.hasCard 都靠它，
+  //   原 B5-ui 漏拷此键 → pickMotherCard 永拿 undefined → 母题卡/「开始举一反三」/chip 全失效。
+  //   兼容下划线 mother_card（toolkit 真名）与驼峰 motherCard。
+  const motherCardRaw = h.mother_card ?? h.motherCard ?? null
+  // 🔴 B5-fix2 chip 回灌：母题卡先出专帧 header 只携 mother_card（kp/grade 为空 → chip「未锚定/未定」）。
+  //   有 mother_card 时 kp ← mother_card.main_kp / dna.main_kp；grade ← anchor.grade_book_name
+  //   （toolkit 现仅发 grade_book_id 代码 → 回退之；人话年级名以老师确认值为准，由调用方覆盖）。
+  const mcObj =
+    motherCardRaw && typeof motherCardRaw === 'object'
+      ? (motherCardRaw as Record<string, unknown>)
+      : null
+  const mcDna =
+    mcObj && mcObj.dna && typeof mcObj.dna === 'object'
+      ? (mcObj.dna as Record<string, unknown>)
+      : null
+  const mcAnchor =
+    mcObj && mcObj.anchor && typeof mcObj.anchor === 'object'
+      ? (mcObj.anchor as Record<string, unknown>)
+      : null
+  const kpFromFrame = typeof h.kp === 'string' && h.kp ? h.kp : null
+  const gradeFromFrame = typeof h.grade === 'string' && h.grade ? h.grade : null
+  const kpFromMother = str(mcObj?.main_kp) ?? str(mcDna?.main_kp)
+  const gradeFromMother =
+    str(mcAnchor?.grade_book_name) ?? str(mcAnchor?.gradeBookName) ?? str(mcAnchor?.grade_book_id)
   const out: VariantArtifact = {
     items,
     header: {
       recipe: typeof h.recipe === 'string' && h.recipe ? h.recipe : null,
-      kp: typeof h.kp === 'string' && h.kp ? h.kp : null,
-      grade: typeof h.grade === 'string' && h.grade ? h.grade : null,
+      // chip 主考点：帧 kp 优先，缺则回灌母题卡 main_kp（专帧只携 mother_card 时不再显「未锚定」）
+      kp: kpFromFrame ?? kpFromMother,
+      // chip 年级：帧 grade 优先，缺则回灌母题卡 anchor（人话名由 index.vue 用老师确认值再覆盖）
+      grade: gradeFromFrame ?? gradeFromMother,
+      // 🔴 B5-fix2：透传母题专帧 —— pickMotherCard 路① / MotherCard.hasCard 的命根子
+      mother_card: motherCardRaw,
       // PRD-C-015 批4/批5 header 级新键（旧后端缺失 → false/[]/null，向后兼容）
       motherDirty: h.mother_dirty === true || h.motherDirty === true,
       regenPending: numArr(h.regen_pending).length ? numArr(h.regen_pending) : numArr(h.regenPending),

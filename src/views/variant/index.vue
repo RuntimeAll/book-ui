@@ -106,6 +106,18 @@ const confirmDialogVisible = ref(false)
 const confirmSubmitting = ref(false) // 确认续聊回合发送中
 // 母题卡：从 artifact 解出（① header.mother_card 专帧优先；② items[0].dna 兜底拼）
 const motherCard = computed(() => pickMotherCard(artifact.value))
+// 🔴 PRD-C-017 B5-fix2：右栏 chip 用的 artifact —— 母题卡先出专帧 header 不带人话年级名
+//   （pickArtifact 只能从 anchor 回退到 grade_book_id 代码）。老师确认面亲选的年级册人话名
+//   （confirmedGradeBookName）最可靠 → 覆盖 header.grade，让 chip 显「七年级上」而非代码/「未定」。
+//   主考点 kp 已由 pickArtifact 从 mother_card.main_kp 回灌，无需此处再补。仅在有覆盖值时浅拷，
+//   否则原样透传（不破增量帧引用，省无谓重渲染）。
+const displayArtifact = computed<VariantArtifact | null>(() => {
+  const a = artifact.value
+  if (!a) return null
+  const human = confirmedGradeBookName.value
+  if (!human) return a
+  return { ...a, header: { ...a.header, grade: human } }
+})
 // 🔴 B4-polish：老师在确认面亲手选的章「人话名」（如「第二章 一元二次方程」）——
 // 确认时本就拿得到 chapterName/gradeBookName，存这里传给母题卡显示锚定章，最可靠、不依赖 toolkit 回灌。
 const confirmedChapterName = ref('')
@@ -1288,7 +1300,7 @@ onBeforeUnmount(() => {
     <!-- 右栏：变式题组画布（artifact 快照帧驱动；动作全部冒泡回左栏 chat 通道） -->
     <ArtifactPanel
       class="variant-artifact"
-      :artifact="artifact"
+      :artifact="displayArtifact"
       :sending="sending"
       :can-regenerate="!!firstComposeMessage || !!motherImg"
       :reverifying-index="reverifyingIndex"
