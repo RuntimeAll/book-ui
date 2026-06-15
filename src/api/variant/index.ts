@@ -38,6 +38,17 @@ export interface VariantRequest {
   confirmedChapterId?: string
   /** 🔴 PRD-C-017 B3·母题年级章确认回传：老师确认的年级册 id（biz_subject level1）。随确认章一并回传。 */
   confirmedGradeBookId?: string
+  /**
+   * 🔴 PRD-C-017 B5·母题硬停 resume 信号：母题卡出来后 toolkit 置 awaiting_mother_review 停住，
+   * 老师点「开始举一反三」→ 经 agent_config(config.configurable.start_variants=true) 回传 toolkit，
+   * toolkit 直奔生成变式（不重跑 opus 解题）。与 confirmedChapterId 同走续聊回合。
+   */
+  startVariants?: boolean
+  /**
+   * 🔴 PRD-C-017 B5·年级册人话名（老师确认面亲选的 grade_book name，如「七年级上」）：
+   * 经 agent_config(config.configurable.grade_book_name) 回传，省 toolkit 一次树查、同步年级显示。
+   */
+  gradeBookName?: string
 }
 
 /** toolkit ChatMessage（只取前端用得到的字段，其余宽松忽略） */
@@ -56,7 +67,12 @@ export interface ToolkitChatMessage {
 export interface VariantStage {
   key: string
   title: string
-  status: 'running' | 'done' | 'warn'
+  /**
+   * 🔴 PRD-C-017 B5：新增中性态 'await'（toolkit 对 needConfirm / await_review 两个【正常暂停】
+   * 发它，表「等老师确认 / 等点开始」，FE 配中性色（蓝/灰）—— 非告警。
+   * warn 仍保留作真告警（reject 带图打回等）。
+   */
+  status: 'running' | 'done' | 'warn' | 'await'
   detail?: string
 }
 
@@ -66,10 +82,12 @@ function pickStage(msg: ToolkitChatMessage): VariantStage | null {
   if (!raw || typeof raw !== 'object') return null
   const s = raw as Partial<VariantStage>
   if (typeof s.key !== 'string' || !s.key || typeof s.title !== 'string') return null
+  const st =
+    s.status === 'done' || s.status === 'warn' || s.status === 'await' ? s.status : 'running'
   return {
     key: s.key,
     title: s.title,
-    status: s.status === 'done' || s.status === 'warn' ? s.status : 'running',
+    status: st,
     detail: typeof s.detail === 'string' && s.detail ? s.detail : undefined,
   }
 }
@@ -499,7 +517,12 @@ export interface VariantMotherCard {
   analysis: string | null
   /** 解法骨架（【】标最难步，可视高亮） */
   solutionSkeleton: string | null
-  /** opus 解出的答案 */
+  /**
+   * 🔴 PRD-C-017 B5：标准答案（toolkit _build_mother_card 顶层 answer，优先显示）。
+   * 缺则回退 solvedAnswer。母题卡「答案」块用它优先。
+   */
+  answer: string | null
+  /** opus 解出的答案（兜底，已含 answer 兜底语义） */
   solvedAnswer: string | null
   /** 题型文本（选择/填空/解答；映射库值 1/4/5） */
   qtype: string | null
@@ -542,13 +565,21 @@ export function pickMotherCard(a: VariantArtifact | null): VariantMotherCard | n
       }
     }
     const anchor = (o.anchor && typeof o.anchor === 'object' ? o.anchor : {}) as Record<string, unknown>
-    const diff = typeof o.difficulty === 'number' ? o.difficulty : Number(o.difficulty)
+    // 🔴 PRD-C-017 B5：难度顶层 difficulty 优先；缺则回退 dna.difficulty（契约同值）
+    const dnaObj = (o.dna && typeof o.dna === 'object' ? o.dna : {}) as Record<string, unknown>
+    const diffRaw =
+      o.difficulty != null && o.difficulty !== ''
+        ? o.difficulty
+        : dnaObj.difficulty
+    const diff = typeof diffRaw === 'number' ? diffRaw : Number(diffRaw)
     return {
       stem: str(o.stem),
       // 🔴 PRD-C-017 minor-1：opus 完整解析富文本（顶层 analysis；兼容驼峰 analyze 误名）
       analysis: str(o.analysis) ?? str(o.analyze),
       solutionSkeleton: str(o.solution_skeleton) ?? str(o.solutionSkeleton) ?? str(o.skeleton),
-      solvedAnswer: str(o.solved_answer) ?? str(o.solvedAnswer),
+      // 🔴 PRD-C-017 B5：标准答案 answer 优先（toolkit 顶层），回退 solved_answer
+      answer: str(o.answer) ?? str(o.solved_answer) ?? str(o.solvedAnswer),
+      solvedAnswer: str(o.solved_answer) ?? str(o.solvedAnswer) ?? str(o.answer),
       qtype: str(o.qtype),
       difficulty: Number.isFinite(diff) ? diff : null,
       secondaryKpIds: secIds,
@@ -568,6 +599,7 @@ export function pickMotherCard(a: VariantArtifact | null): VariantMotherCard | n
     stem: null, // 变式 item.stem 是变式题面，非母题题面 → 不冒充母题题面，留空
     analysis: null, // 兜底路径无母题完整解析（专帧缺）→ 入库时回退骨架
     solutionSkeleton: it0.dna.skeleton,
+    answer: null, // 兜底路径无母题标准答案（变式答案非母题答案）→ 留空
     solvedAnswer: null,
     qtype: it0.qtype || null,
     difficulty: it0.difficulty || null,
@@ -736,6 +768,9 @@ export function streamVariant(
   if (payload.ruoyiToken) agentConfig.ruoyi_token = payload.ruoyiToken
   if (payload.confirmedChapterId) agentConfig.confirmed_chapter_id = payload.confirmedChapterId
   if (payload.confirmedGradeBookId) agentConfig.confirmed_grade_book_id = payload.confirmedGradeBookId
+  // 🔴 PRD-C-017 B5：母题硬停 resume 信号 + 年级册人话名（接 B5-toolkit 契约）
+  if (payload.startVariants) agentConfig.start_variants = true
+  if (payload.gradeBookName) agentConfig.grade_book_name = payload.gradeBookName
   if (Object.keys(agentConfig).length) body.agent_config = agentConfig
 
   fetchEventSource('/agent/variant/stream', {

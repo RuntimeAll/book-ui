@@ -44,6 +44,11 @@ const props = defineProps<{
    * 母题卡「锚定章」优先显示它——最可靠，不依赖 toolkit 回灌 chapter_id。
    */
   confirmedChapterName?: string
+  /**
+   * 🔴 PRD-C-017 B5：老师确认面亲选的年级册人话名（如「七年级上」）。chip 年级优先显示它，
+   * 不依赖 toolkit 回灌 header.grade（消除 chip「年级 未定」陈旧态）。
+   */
+  confirmedGradeBookName?: string
   /** 母题原图（守恒锚缩略图，点开看大图） */
   motherImg?: string
   /** 母题已入库 → 入库按钮置「已入库」 */
@@ -73,6 +78,11 @@ const emit = defineEmits<{
   (e: 'edit-mother-dna', payload: { field: DnaField; value: DnaEditValue }): void
   /** 🔴 B3.6 触发重生（母题脏后）→ 宿主 runRegen 走 C-015 四分流（regenVariant），下游回流 */
   (e: 'regen-mother'): void
+  /**
+   * 🔴 PRD-C-017 B5：母题硬停 resume —— 老师点「开始举一反三」→ 宿主 onStartVariants 经
+   * 续聊回合 agent_config 回传 start_variants=true，toolkit 直奔生成变式（不重跑 opus）。
+   */
+  (e: 'start-variants'): void
   /** 点开看大图 */
   (e: 'preview', url: string): void
 }>()
@@ -96,6 +106,42 @@ const anchorChapterText = computed(() => {
 
 // 难点（M8）：hard_points 空 → 显式「此题无显著难点」
 const hardPoints = computed(() => dna.value?.hardPoints ?? [])
+
+// 🔴 PRD-C-017 B5 chip 刷新：主考点 / 年级显示真值（消除「未锚定 / 未定」陈旧态）。
+//   主考点 = dna.main_kp（锚定后真考点）→ anchorKp 镜像兜底。
+//   年级   = 老师确认面亲选的年级册名优先 → toolkit 回灌 anchorGrade 兜底。
+const chipKp = computed(
+  () => dna.value?.mainKp || props.motherCard?.anchorKp || '主考点确认中'
+)
+const chipGrade = computed(
+  () => props.confirmedGradeBookName?.trim() || props.motherCard?.anchorGrade || '年级确认中'
+)
+
+// 🔴 PRD-C-017 B5 难度：1-4 星级（与变式卡同风格）+ 档位文案
+const DIFFICULTY_LABEL = ['', '送分', '常规', '多步综合', '压轴']
+const difficulty = computed(() => {
+  const d = props.motherCard?.difficulty
+  return typeof d === 'number' && d > 0 ? Math.round(d) : 0
+})
+const difficultyLabel = computed(() =>
+  difficulty.value >= 1 && difficulty.value <= 4 ? DIFFICULTY_LABEL[difficulty.value] : ''
+)
+
+// 🔴 PRD-C-017 B5 答案：标准答案 answer 优先，回退 solvedAnswer
+const answerText = computed(
+  () => props.motherCard?.answer || props.motherCard?.solvedAnswer || ''
+)
+
+// 🔴 PRD-C-017 B5 解析：opus 完整解析富文本（analysis）
+const analysisText = computed(() => props.motherCard?.analysis || '')
+
+// 🔴 PRD-C-017 B5「开始举一反三」按钮：母题卡出来、尚无变式（toolkit 硬停 awaiting_mother_review）
+//   → 显示主按钮，老师点了才生成变式；已有变式则不再显示（避免重复触发）。
+const showStartBtn = computed(() => props.hasVariants === false && hasCard.value)
+function onStart() {
+  if (props.sending) return
+  emit('start-variants')
+}
 
 // 解法骨架：把【...】最难步包成高亮 span（骨架文本里【】标记最难步基因）
 const skeletonHtml = computed(() => props.motherCard?.solutionSkeleton ?? '')
@@ -161,8 +207,9 @@ function saveHard() {
       <button type="button" class="mc-toggle" @click="collapsed = !collapsed">
         {{ collapsed ? '▶' : '▼' }} 母题卡
       </button>
+      <!-- 🔴 PRD-C-017 B5 chip 刷新：显示真主考点 + 老师确认年级（不再「未锚定 / 未定」陈旧态） -->
       <span class="mc-anchor-chip" :title="'锚定主考点 · 年级'">
-        {{ motherCard?.anchorKp || '未锚定' }}<span class="mc-dot">·</span>{{ motherCard?.anchorGrade || '未定' }}
+        {{ chipKp }}<span class="mc-dot">·</span>{{ chipGrade }}
       </span>
       <!-- ④ need_anchor_review 显式标（闸B 留空的诚实提示） -->
       <span v-if="motherCard?.needAnchorReview" class="mc-review-flag" title="主考点未锚到章内叶子，留待人工核对">
@@ -173,6 +220,18 @@ function saveHard() {
         待重生
       </span>
       <span class="mc-spacer" />
+      <!-- 🔴 PRD-C-017 B5「开始举一反三」主按钮（母题硬停 → 老师点了才生成变式；生成中 loading） -->
+      <el-button
+        v-if="showStartBtn"
+        size="small"
+        class="mc-start"
+        type="primary"
+        :loading="sending"
+        :disabled="sending"
+        @click="onStart"
+      >
+        {{ sending ? '生成中…' : '▶ 开始举一反三' }}
+      </el-button>
       <!-- 🔴 B3.6 重生按钮（母题脏 + 有变式才显，复用 C-015 regenVariant 通路） -->
       <el-button
         v-if="motherDirty && hasVariants"
@@ -235,9 +294,15 @@ function saveHard() {
             </div>
           </div>
         </div>
-        <div v-if="motherCard?.solvedAnswer" class="mc-block">
-          <span class="mc-block-k">解答</span>
-          <div class="mc-answer"><MarkdownMath :content="motherCard.solvedAnswer" /></div>
+        <!-- 🔴 PRD-C-017 B5 答案（标准答案 answer 优先，回退 solvedAnswer） -->
+        <div v-if="answerText" class="mc-block">
+          <span class="mc-block-k">答案</span>
+          <div class="mc-answer"><MarkdownMath :content="answerText" /></div>
+        </div>
+        <!-- 🔴 PRD-C-017 B5 解析（opus 完整解析富文本，与解答同风格 MarkdownMath） -->
+        <div v-if="analysisText" class="mc-block">
+          <span class="mc-block-k">解析</span>
+          <div class="mc-answer"><MarkdownMath :content="analysisText" /></div>
         </div>
 
         <!-- 全 10 维 DNA（副考点 / 考察类型 / 难点 可改 = C-015 守恒维） -->
@@ -273,6 +338,23 @@ function saveHard() {
 
           <span class="mc-k">场景</span>
           <span class="mc-v">{{ dna?.scene || '纯代数' }}</span>
+
+          <!-- 🔴 PRD-C-017 B5 难度行（1-4 星 + 档位文案，与变式卡同风格） -->
+          <span class="mc-k">难度</span>
+          <span class="mc-v">
+            <template v-if="difficulty">
+              <span class="mc-diff-stars">
+                <span
+                  v-for="n in 4"
+                  :key="`md${n}`"
+                  class="mc-star"
+                  :class="n <= difficulty ? 'is-full' : 'is-empty'"
+                >{{ n <= difficulty ? '★' : '☆' }}</span>
+              </span>
+              <span class="mc-diff-label">{{ difficultyLabel }}（{{ difficulty }}）</span>
+            </template>
+            <span v-else class="mc-muted">未标</span>
+          </span>
 
           <span class="mc-k">难点 <span class="mc-edit-tag">可改</span></span>
           <span class="mc-v mc-full">
@@ -411,6 +493,28 @@ function saveHard() {
 }
 .mc-persist {
   font-size: 12px;
+}
+/* 🔴 PRD-C-017 B5「开始举一反三」主按钮 */
+.mc-start {
+  font-size: 12px;
+}
+/* 🔴 PRD-C-017 B5 难度星（与变式卡同色语：暖琥珀实心 / 淡灰空心） */
+.mc-diff-stars {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+  letter-spacing: -1px;
+  font-size: 13px;
+}
+.mc-star.is-full {
+  color: #b8741a;
+}
+.mc-star.is-empty {
+  color: #d9d3c6;
+}
+.mc-diff-label {
+  font-size: 11.5px;
+  color: #6b817e;
 }
 
 .mc-body {

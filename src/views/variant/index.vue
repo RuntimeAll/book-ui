@@ -13,7 +13,6 @@ import {
   regenVariant,
   reorderVariant,
   reverifyVariantItem,
-  reviseVariantItem,
   streamVariant,
   undoRegenVariant,
   uploadMotherImage,
@@ -110,6 +109,9 @@ const motherCard = computed(() => pickMotherCard(artifact.value))
 // 🔴 B4-polish：老师在确认面亲手选的章「人话名」（如「第二章 一元二次方程」）——
 // 确认时本就拿得到 chapterName/gradeBookName，存这里传给母题卡显示锚定章，最可靠、不依赖 toolkit 回灌。
 const confirmedChapterName = ref('')
+// 🔴 PRD-C-017 B5：老师确认面亲选的年级册人话名（如「七年级上」）——chip 年级显示 + 续聊回合
+//   回传 toolkit（grade_book_name）同步年级，不依赖 toolkit 回灌 header.grade。
+const confirmedGradeBookName = ref('')
 // 母题入库态（G12）
 const motherPersisting = ref(false)
 const motherPersisted = ref(false)
@@ -350,8 +352,14 @@ function dispatch(
   message: string,
   shownText?: string,
   images?: string[],
-  // 🔴 PRD-C-017 B3：母题确认续聊回合带确认章 id（+年级册 id）→ agent_config 回传 toolkit（接 B2 闸B）
-  confirmCtx?: { confirmedChapterId: string; confirmedGradeBookId?: string }
+  // 🔴 PRD-C-017 B3/B5：母题确认续聊回合带确认章 id（+年级册 id +年级册人话名）/ 母题硬停 resume
+  //   信号 startVariants → 全部经 agent_config 回传 toolkit（接 B2 闸B / B5 awaiting_mother_review）。
+  confirmCtx?: {
+    confirmedChapterId?: string
+    confirmedGradeBookId?: string
+    gradeBookName?: string
+    startVariants?: boolean
+  }
 ) {
   if (sending.value) return
   handle?.abort()
@@ -382,6 +390,8 @@ function dispatch(
       ruoyiToken: userStore.accessToken,
       confirmedChapterId: confirmCtx?.confirmedChapterId,
       confirmedGradeBookId: confirmCtx?.confirmedGradeBookId,
+      gradeBookName: confirmCtx?.gradeBookName,
+      startVariants: confirmCtx?.startVariants,
     },
     {
       onToken: (delta) => {
@@ -558,11 +568,29 @@ function onConfirmGradeChapter(value: {
   const shown = `已确认：${value.gradeBookName} / ${value.chapterName}`
   // 🔴 B4-polish：记下老师确认的章人话名（母题卡「锚定章」直接显示它，不依赖 toolkit 回灌 id）
   confirmedChapterName.value = value.chapterName || value.gradeBookName || ''
+  // 🔴 B5：记下年级册人话名（chip 年级显示 + 回传 toolkit 同步年级）
+  confirmedGradeBookName.value = value.gradeBookName || ''
   confirmDialogVisible.value = false
   confirmSubmitting.value = false
   dispatch('确认，按此年级册与章继续举一反三', shown, undefined, {
     confirmedChapterId: value.chapterId,
     confirmedGradeBookId: value.gradeBookId,
+    gradeBookName: value.gradeBookName,
+  })
+}
+
+/**
+ * 🔴 PRD-C-017 B5：母题卡「开始举一反三」（母题硬停 resume）。
+ * 母题卡出来后 toolkit 停在 awaiting_mother_review；老师点此按钮 → 续聊回合经 agent_config
+ * 回传 start_variants=true，toolkit 直奔生成变式（不重跑 opus 解题）。生成中按钮 loading 由
+ * sending 驱动（dispatch 置 sending=true）。
+ */
+function onStartVariants() {
+  if (sending.value) return
+  dispatch('开始举一反三，按确认的年级册与章生成变式', '▶ 开始举一反三', undefined, {
+    startVariants: true,
+    // 顺带回传确认章/年级册名（toolkit resume 时不丢锚定上下文）
+    gradeBookName: confirmedGradeBookName.value || undefined,
   })
 }
 
@@ -618,7 +646,8 @@ async function onPersistMother() {
     const bo: CreateQuestionWithDnaBo = {
       questionType: qcode,
       stem,
-      answer: mc.solvedAnswer || undefined,
+      // 🔴 PRD-C-017 B5：标准答案 answer 优先，回退 solvedAnswer
+      answer: mc.answer || mc.solvedAnswer || undefined,
       // 🔴 PRD-C-017 minor-1：analyze = opus 完整解析富文本（mc.analysis），不再拿解法骨架顶替；
       //   analysis 缺/空 → 回退骨架兜底（别让入库报错），但优先 analysis。skeleton 字段各归各位（见下）。
       analyze: mc.analysis || mc.solutionSkeleton || undefined,
@@ -721,7 +750,16 @@ async function onReverify(index: number) {
 /** T3：DNA 列表选编辑（知识点树 / 枚举 / 标签 / 点星）。 */
 async function onEditDna(payload: {
   index: number
-  field: 'main_kp' | 'secondary_kps' | 'qtype' | 'exam_type' | 'tags' | 'difficulty'
+  // 🔴 PRD-C-017 B5：scene / skeleton 点击直改也走 edit-dna
+  field:
+    | 'main_kp'
+    | 'secondary_kps'
+    | 'qtype'
+    | 'exam_type'
+    | 'tags'
+    | 'difficulty'
+    | 'scene'
+    | 'skeleton'
   value: DnaEditValue
 }) {
   if (sending.value) return
@@ -734,30 +772,8 @@ async function onEditDna(payload: {
   }
 }
 
-/** T4：点击-说话 vibe（skeleton/scene/whole）。reverifyingIndex 复用驱动该卡 loading。 */
-async function onRevise(payload: {
-  index: number
-  target: 'skeleton' | 'scene' | 'whole'
-  instruction: string
-}) {
-  if (sending.value || reverifyingIndex.value !== null) return
-  reverifyingIndex.value = payload.index
-  try {
-    const a = await reviseVariantItem(
-      threadId.value,
-      payload.index,
-      payload.target,
-      payload.instruction,
-      userStore.accessToken
-    )
-    if (a) artifact.value = a
-    ElMessage.success(payload.target === 'whole' ? '已重做这题' : '已按你说的改')
-  } catch (e) {
-    ElMessage.error(`修改失败：${e instanceof Error ? e.message : String(e)}`)
-  } finally {
-    reverifyingIndex.value = null
-  }
-}
+// 🔴 PRD-C-017 B5：原 onRevise（T4 点击-说话 skeleton/scene/whole 自然语言重生）已下线 ——
+//   场景 / 解法骨架改为变式卡上「点击直改」（走 onEditDna 结构化字段 + 「重生这道」按钮）。
 
 // ---------------------------------------------------------------------------
 // PRD-C-015 批5 — DNA 改→重生 / 撤销重生 / models 改 / 母题守恒维改 / 换图。
@@ -976,6 +992,9 @@ function clearCanvas() {
   needConfirmPayload.value = null
   confirmDialogVisible.value = false
   confirmSubmitting.value = false
+  // PRD-C-017 B5：确认面记下的章/年级册人话名随会话重置（chip 不残留上轮）
+  confirmedChapterName.value = ''
+  confirmedGradeBookName.value = ''
   motherPersisting.value = false
   motherPersisted.value = false
   motherQuestionId.value = ''
@@ -1285,7 +1304,6 @@ onBeforeUnmount(() => {
       @persist-one="onPersistOne"
       @add-to-basket="onAddToBasket"
       @edit-dna="onEditDna"
-      @revise="onRevise"
       @edit-header-kp="onEditHeaderKp"
       @edit-header-grade="onEditHeaderGrade"
       @regen="onRegenOne"
@@ -1298,6 +1316,7 @@ onBeforeUnmount(() => {
         <MotherCard
           :mother-card="motherCard"
           :confirmed-chapter-name="confirmedChapterName"
+          :confirmed-grade-book-name="confirmedGradeBookName"
           :mother-img="motherImg"
           :persisted="motherPersisted"
           :persisting="motherPersisting"
@@ -1308,6 +1327,7 @@ onBeforeUnmount(() => {
           @persist-mother="onPersistMother"
           @edit-mother-dna="onEditMotherDna"
           @regen-mother="onRegenAll"
+          @start-variants="onStartVariants"
           @preview="(u: string) => (previewUrl = u)"
         />
       </template>

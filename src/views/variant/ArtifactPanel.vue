@@ -57,12 +57,19 @@ const emit = defineEmits<{
     e: 'edit-dna',
     payload: {
       index: number
-      field: 'main_kp' | 'secondary_kps' | 'qtype' | 'exam_type' | 'tags' | 'difficulty'
+      // 🔴 PRD-C-017 B5：scene / skeleton 点击直改也走 edit-dna，扩入 field 集
+      field:
+        | 'main_kp'
+        | 'secondary_kps'
+        | 'qtype'
+        | 'exam_type'
+        | 'tags'
+        | 'difficulty'
+        | 'scene'
+        | 'skeleton'
       value: { id: string; name: string } | Array<{ id: string; name: string }> | string | string[] | number
     }
   ): void
-  /** PRD-C-014 T4：点击-说话 vibe（宿主调 reviseVariantItem） */
-  (e: 'revise', payload: { index: number; target: 'skeleton' | 'scene' | 'whole'; instruction: string }): void
   /** PRD-C-014 G13 ⑤：头部主考点可改（组级守恒锚，宿主走 chat 通道重锚定） */
   (e: 'edit-header-kp', value: { id: string; name: string }): void
   /** PRD-C-014 G13 ⑤：头部年级可改 */
@@ -425,7 +432,6 @@ function regenAll() {
             @persist-one="(i: number) => emit('persist-one', i)"
             @add-to-basket="(i: number) => emit('add-to-basket', i)"
             @edit-dna="(p) => emit('edit-dna', p)"
-            @revise="(p) => emit('revise', p)"
             @regen="(i: number) => emit('regen', i)"
             @undo-regen="(i: number) => emit('undo-regen', i)"
             @edit-models="(p) => emit('edit-models', p)"

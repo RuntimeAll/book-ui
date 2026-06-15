@@ -73,16 +73,23 @@ const emit = defineEmits<{
     e: 'edit-dna',
     payload: {
       index: number
-      field: 'main_kp' | 'secondary_kps' | 'qtype' | 'exam_type' | 'tags' | 'difficulty'
+      // 🔴 PRD-C-017 B5：scene / skeleton 改点击直改 → 也走 edit-dna（结构化字段，去掉自然语言 revise）
+      field:
+        | 'main_kp'
+        | 'secondary_kps'
+        | 'qtype'
+        | 'exam_type'
+        | 'tags'
+        | 'difficulty'
+        | 'scene'
+        | 'skeleton'
       value: { id: string; name: string } | Array<{ id: string; name: string }> | string | string[] | number
     }
   ): void
   /**
-   * PRD-C-014 T4：点击-说话 vibe（生成维 / 整卡重做）。宿主调 reviseVariantItem(target, instruction)。
-   * target ∈ skeleton | scene | whole。
+   * PRD-C-015 批5：重生本题（宿主调 regenVariant([index])，对 dirty 维按新 DNA 重出）。
+   * 🔴 PRD-C-017 B5：「重生这道」按钮始终可点（不再限 dirty），按当前改好的字段重出本题。
    */
-  (e: 'revise', payload: { index: number; target: 'skeleton' | 'scene' | 'whole'; instruction: string }): void
-  /** PRD-C-015 批5：重生本题（宿主调 regenVariant([index])，对 dirty 维按新 DNA 重出） */
   (e: 'regen', index: number): void
   /** PRD-C-015 批5：撤销本题重生（宿主调 undoRegenVariant，回上一版快照） */
   (e: 'undo-regen', index: number): void
@@ -325,8 +332,9 @@ function classBadge(field: DnaField): { cls: RegenClass; label: string; hint: st
   return { cls, ...REGEN_CLASS_BADGE[cls] }
 }
 
+// 🔴 PRD-C-017 B5：「重生这道」始终可点（不再限 dirty）—— 按当前改好的字段重出本题。
 function onRegen() {
-  if (props.sending || props.regenerating || !isDirty.value) return
+  if (props.sending || props.regenerating) return
   emit('regen', props.item.index)
 }
 function onUndoRegen() {
@@ -476,28 +484,36 @@ function saveModels() {
   modelPopover.value = false
 }
 
-// ---- T4：点击-说话 vibe（生成维 skeleton/scene + 整卡 whole）----
-const reviseTarget = ref<null | 'skeleton' | 'scene' | 'whole'>(null)
-const reviseInput = ref('')
-function openRevise(target: 'skeleton' | 'scene' | 'whole') {
+// ---------------------------------------------------------------------------
+// 🔴 PRD-C-017 B5：场景 / 解法骨架改为「点击直改」（inline 文本编辑），去掉原 C-015 的
+//   「说一句改」自然语言 revise 框 + 整卡「重做这题」whole revise。
+//   保存 → emit('edit-dna', field='scene'/'skeleton', value=string)（结构化字段，宿主走
+//   editVariantDna 落 toolkit 会话 state；scene=soft_regen / skeleton=rewrite_solve，改后标
+//   dirty，点「重生这道」按新 DNA 重出）—— 复用既有 edit-dna 端点，不新造、不动底层状态机。
+// ---------------------------------------------------------------------------
+const editingField = ref<null | 'scene' | 'skeleton'>(null)
+const fieldDraft = ref('')
+function openFieldEdit(field: 'scene' | 'skeleton') {
   if (props.sending || props.reverifying) return
-  reviseTarget.value = target
-  reviseInput.value = ''
+  editingField.value = field
+  fieldDraft.value =
+    field === 'scene' ? props.item.dna.scene || '' : props.item.dna.skeleton || ''
 }
-function cancelRevise() {
-  reviseTarget.value = null
-  reviseInput.value = ''
+function cancelFieldEdit() {
+  editingField.value = null
+  fieldDraft.value = ''
 }
-function submitRevise() {
-  const instruction = reviseInput.value.trim()
-  if (!instruction) {
-    ElMessage.warning('说一句「哪里不对、想怎么改」再提交')
+function saveFieldEdit() {
+  const field = editingField.value
+  if (!field) return
+  const v = fieldDraft.value.trim()
+  const cur = (field === 'scene' ? props.item.dna.scene : props.item.dna.skeleton) || ''
+  if (v === cur) {
+    cancelFieldEdit()
     return
   }
-  const target = reviseTarget.value
-  if (!target) return
-  emit('revise', { index: props.item.index, target, instruction })
-  cancelRevise()
+  emit('edit-dna', { index: props.item.index, field, value: v })
+  cancelFieldEdit()
 }
 </script>
 
@@ -872,23 +888,26 @@ function submitRevise() {
               <span class="rc-badge" :class="`rc-${classBadge('scene').cls}`" :title="classBadge('scene').hint">{{ classBadge('scene').label }}</span>
             </span>
             <span class="dna-v dna-full">
-              <span class="dna-text">{{ dna.scene || '未标' }}</span>
-              <span v-if="dimDirty('scene')" class="dim-dirty">待重生⏳</span>
-              <button type="button" class="dna-min-btn" :disabled="sending || reverifying" @click="openRevise('scene')">
-                说一句改
-              </button>
-              <div v-if="reviseTarget === 'scene'" class="revise-box">
+              <!-- 🔴 PRD-C-017 B5：场景点击直改（去「说一句改」自然语言框） -->
+              <template v-if="editingField !== 'scene'">
+                <span class="dna-text">{{ dna.scene || '未标' }}</span>
+                <span v-if="dimDirty('scene')" class="dim-dirty">待重生⏳</span>
+                <button type="button" class="dna-min-btn" :disabled="sending || reverifying" @click="openFieldEdit('scene')">
+                  改
+                </button>
+              </template>
+              <div v-else class="inline-edit-box">
                 <el-input
-                  v-model="reviseInput"
+                  v-model="fieldDraft"
                   type="textarea"
                   :autosize="{ minRows: 1, maxRows: 3 }"
                   resize="none"
-                  placeholder="哪里不对、想换成什么场景？（如：换成行程问题）"
-                  @keyup.enter.exact.prevent="submitRevise"
+                  placeholder="场景（如：行程问题 / 纯代数；改后点「重生这道」按新场景重出）"
+                  @keyup.enter.exact.prevent="saveFieldEdit"
                 />
-                <div class="revise-actions">
-                  <button type="button" class="revise-cancel" @click="cancelRevise">取消</button>
-                  <button type="button" class="revise-go" @click="submitRevise">提交</button>
+                <div class="inline-edit-actions">
+                  <button type="button" class="inline-cancel" @click="cancelFieldEdit">取消</button>
+                  <button type="button" class="inline-save" @click="saveFieldEdit">保存</button>
                 </div>
               </div>
             </span>
@@ -899,23 +918,25 @@ function submitRevise() {
               <span class="rc-badge" :class="`rc-${classBadge('skeleton').cls}`" :title="classBadge('skeleton').hint">{{ classBadge('skeleton').label }}</span>
             </span>
             <span class="dna-v dna-full">
-              <span class="dna-text skel"><MarkdownMath :content="dna.skeleton || '未标'" /></span>
-              <span v-if="dimDirty('skeleton')" class="dim-dirty">待重生⏳</span>
-              <button type="button" class="dna-min-btn" :disabled="sending || reverifying" @click="openRevise('skeleton')">
-                说一句改
-              </button>
-              <div v-if="reviseTarget === 'skeleton'" class="revise-box">
+              <!-- 🔴 PRD-C-017 B5：解法骨架点击直改（去「说一句改」自然语言框；【】包最难步） -->
+              <template v-if="editingField !== 'skeleton'">
+                <span class="dna-text skel"><MarkdownMath :content="dna.skeleton || '未标'" /></span>
+                <span v-if="dimDirty('skeleton')" class="dim-dirty">待重生⏳</span>
+                <button type="button" class="dna-min-btn" :disabled="sending || reverifying" @click="openFieldEdit('skeleton')">
+                  改
+                </button>
+              </template>
+              <div v-else class="inline-edit-box">
                 <el-input
-                  v-model="reviseInput"
+                  v-model="fieldDraft"
                   type="textarea"
-                  :autosize="{ minRows: 1, maxRows: 3 }"
+                  :autosize="{ minRows: 2, maxRows: 6 }"
                   resize="none"
-                  placeholder="哪里不对、想怎么改解法？（如：用整体代入，别拆开算）"
-                  @keyup.enter.exact.prevent="submitRevise"
+                  placeholder="解法骨架（【】包最难步基因；改它=换基因，点「重生这道」重写解析过闸B）"
                 />
-                <div class="revise-actions">
-                  <button type="button" class="revise-cancel" @click="cancelRevise">取消</button>
-                  <button type="button" class="revise-go" @click="submitRevise">提交</button>
+                <div class="inline-edit-actions">
+                  <button type="button" class="inline-cancel" @click="cancelFieldEdit">取消</button>
+                  <button type="button" class="inline-save" @click="saveFieldEdit">保存</button>
                 </div>
               </div>
             </span>
@@ -1087,15 +1108,14 @@ function submitRevise() {
 
       <!-- 旋钮行：编辑 + 重生/撤销重生 +（手动编辑后）重新验算 + 卡片快捷键 utterance -->
       <footer class="knob-row">
-        <!-- PRD-C-015 批5：重生（dirty 题改完点它按新 DNA 重出待重生集合，保留手改） -->
+        <!-- 🔴 PRD-C-017 B5：「重生这道」始终可点（按当前改好的字段重出本题；复用 regen 通路） -->
         <button
-          v-if="isDirty"
           type="button"
           class="knob-btn is-regen"
           :disabled="sending || regenerating"
           @click="onRegen"
         >
-          {{ regenerating ? '重生中…' : '🔄 重生' }}
+          {{ regenerating ? '重生中…' : '🔄 重生这道' }}
         </button>
         <!-- PRD-C-015 批5：撤销重生（缺口12，重生过有快照才显示）→ 回上一版 -->
         <button
@@ -1148,32 +1168,7 @@ function submitRevise() {
         >
           答疑
         </button>
-        <!-- T4：整卡级「重做这题」（target=whole，如「太简单了难一点」） -->
-        <button
-          type="button"
-          class="knob-btn is-redo"
-          :disabled="sending || reverifying"
-          @click="openRevise('whole')"
-        >
-          重做这题
-        </button>
       </footer>
-
-      <!-- T4：整卡重做的内联输入（whole；与维级 revise 共用 reviseInput，target 区分） -->
-      <div v-if="reviseTarget === 'whole'" class="revise-box whole-revise">
-        <el-input
-          v-model="reviseInput"
-          type="textarea"
-          :autosize="{ minRows: 1, maxRows: 3 }"
-          resize="none"
-          placeholder="这题想怎么重做？（如：太简单了，难一点 / 换个考法）"
-          @keyup.enter.exact.prevent="submitRevise"
-        />
-        <div class="revise-actions">
-          <button type="button" class="revise-cancel" @click="cancelRevise">取消</button>
-          <button type="button" class="revise-go" @click="submitRevise">重做</button>
-        </div>
-      </div>
     </template>
 
     <!-- T3：知识点树弹层（主考点单选 / 副考点多选，与 dnaOpen 无关，按需挂载） -->
@@ -1682,7 +1677,43 @@ function submitRevise() {
   width: 150px;
 }
 
-/* T4：点击-说话内联输入框 */
+/* 🔴 PRD-C-017 B5：场景 / 骨架点击直改的 inline 编辑框（teal 系，老师拍板色） */
+.inline-edit-box {
+  flex-basis: 100%;
+  width: 100%;
+  background: #fff;
+  border: 1px solid #e7e3da;
+  border-radius: 10px;
+  padding: 8px;
+}
+.inline-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+.inline-cancel,
+.inline-save {
+  font-size: 12px;
+  border-radius: 8px;
+  padding: 3px 14px;
+  cursor: pointer;
+}
+.inline-cancel {
+  color: #5b6770;
+  background: #fff;
+  border: 1px solid #e7e3da;
+}
+.inline-save {
+  color: #fff;
+  background: #1e8a8a; /* teal-600：老师拍板 */
+  border: 1px solid #1e8a8a;
+}
+.inline-save:hover {
+  background: #176e6e;
+}
+
+/* T4（已下线）：点击-说话内联输入框样式保留（无引用，不影响） */
 .revise-box {
   flex-basis: 100%;
   margin-top: 8px;
