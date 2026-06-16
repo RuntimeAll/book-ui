@@ -43,7 +43,8 @@ export interface QuestionItem {
   questionType: number // 1=选择 / 4=填空 / 5=简答
   difficult: number | null   // ⚠️ 真实字段名是 difficult 不是 difficulty（4星制）
   stemImg: string | null      // 题干图 URL（完整 CDN URL）
-  stemText?: string | null    // 题干文本
+  stemText?: string | null    // 题干文本（旧字段，兼容保留）
+  stemTextContent?: string | null   // 富文本题干（Markdown + $...$ LaTeX）
   answerImg?: string | null
   explainImg?: string | null
   fileBin?: string | null
@@ -54,6 +55,8 @@ export interface QuestionItem {
   createUser?: string
   score?: number
   status?: number
+  /** 打标状态：0=未标 / 1=AI已标 / 2=已审核 */
+  labelStatus?: number | null
   isSelected?: boolean | null
   isWrongBook?: boolean | null
   examYear?: string | null
@@ -87,13 +90,19 @@ export interface QuestionPageParams {
   notUsedQuestion?: number
   /** PRD-C-009「我的题库」：true=只看当前登录老师自己的题（owner 由后端 LoginHelper 定）。空/false=全量。 */
   mine?: boolean
+  /** 按试卷 id 筛选（雪花 string）。空/不传=不限。 */
+  examPaperId?: string
+  /** 打标状态筛选：0=未标 / 1=AI已标 / 2=已审核。空/不传=全部。 */
+  labelStatus?: number
 }
 
 // 题目详情（GET /teacher/question/{id} 返）
 export interface QuestionDetail extends QuestionItem {
   // ── Q' 卡 段③ 扩展 — BE QuestionDetailVo 详情字段（list / select 端点返回） ──
-  answer?: string | null              // 答案文本（HTML/纯文本）
-  explain?: string | null             // 解析文本（HTML/纯文本）
+  answer?: string | null              // 答案文本（旧字段，兼容保留）
+  explain?: string | null             // 解析文本（旧字段，兼容保留）
+  answerTextContent?: string | null   // 富文本答案（Markdown + $...$ LaTeX）
+  analyzeTextContent?: string | null  // 富文本解析（Markdown + $...$ LaTeX）
   // 以下字段 QuestionItem 已声明（fileBin / questionStdKnowledges 全部可选），
   // 列表 page 端点空返，list / select 详情端点才真有值 — 这里不重复声明。
 }

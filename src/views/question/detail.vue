@@ -19,6 +19,7 @@ import {
   addFavorite,
   removeFavorite,
   type QuestionItem,
+  type QuestionDetail,
   type QuestionNote,
   type QuestionSource,
   type SimilarQuestion,
@@ -45,7 +46,7 @@ const sketchVisible = ref(false)
 const basket = useQuestionBasket()
 
 // ── 题目数据 ─────────────────────────────────────────────────
-const question = ref<QuestionItem | null>(null)
+const question = ref<QuestionDetail | null>(null)
 const loading = ref(false)
 
 async function loadQuestion() {
@@ -53,8 +54,8 @@ async function loadQuestion() {
   try {
     // PRD-A-013 T2 — API 签名已改 string，盲 cast 撤掉
     const res = await getQuestionDetail(questionId.value)
-    if (res && (res as QuestionItem).id) {
-      question.value = res as QuestionItem
+    if (res && (res as QuestionDetail).id) {
+      question.value = res as QuestionDetail
     } else {
       fallbackFromCache()
     }
@@ -70,7 +71,7 @@ function fallbackFromCache() {
   // 兜底从 index.vue 写入的 cache 读
   try {
     const cacheKey = 'book-ui:question-cache-by-id'
-    const cache: Record<string, QuestionItem> = JSON.parse(localStorage.getItem(cacheKey) || '{}')
+    const cache: Record<string, QuestionDetail> = JSON.parse(localStorage.getItem(cacheKey) || '{}')
     const cached = cache[String(questionId.value)]
     if (cached) {
       question.value = cached
@@ -355,10 +356,11 @@ watch(questionId, async () => {
           </div>
         </div>
 
-        <!-- 题干（富文本/图片/占位统一走 QuestionContent） -->
+        <!-- 题干（富文本/图片/占位统一走 QuestionContent）
+             stemTextContent 优先（Markdown+LaTeX 富文本），fallback stemText（旧字段） -->
         <div class="stem-area">
           <QuestionContent
-            :text="question.stemText"
+            :text="question.stemTextContent || question.stemText"
             :img-url="question.stemImg"
             alt="题干"
           />
@@ -401,9 +403,10 @@ watch(questionId, async () => {
           </div>
           <div v-if="answerExpanded" class="collapse-body">
             <div class="answer-label">【答案】</div>
-            <!-- 答案（富文本/图片统一走 QuestionContent；answer=文本字段 answerImg=图字段）-->
+            <!-- 答案（富文本/图片统一走 QuestionContent）
+                 answerTextContent 优先（Markdown+LaTeX 富文本），fallback answer（旧字段） -->
             <QuestionContent
-              :text="(question as { answer?: string | null }).answer"
+              :text="question.answerTextContent || question.answer"
               :img-url="question.answerImg"
               alt="答案"
             />
@@ -417,9 +420,10 @@ watch(questionId, async () => {
             <span class="collapse-arrow" :class="{ 'expanded': explainExpanded }">▼</span>
           </div>
           <div v-if="explainExpanded" class="collapse-body">
-            <!-- 解析（富文本/图片统一走 QuestionContent；explain=文本字段 explainImg=图字段）-->
+            <!-- 解析（富文本/图片统一走 QuestionContent）
+                 analyzeTextContent 优先（Markdown+LaTeX 富文本），fallback explain（旧字段） -->
             <QuestionContent
-              :text="(question as { explain?: string | null }).explain"
+              :text="question.analyzeTextContent || question.explain"
               :img-url="question.explainImg"
               alt="解析"
             />
