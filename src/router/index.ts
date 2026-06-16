@@ -46,6 +46,19 @@ const router = createRouter({
           name: 'QuestionDetail',
           component: () => import('@/views/question/detail.vue'),
         },
+        // PRD-A-015 批3 — 单题网格编辑器（新建态 + 编辑态同页）
+        //   新建态（无 id）：doc 从 emptyDoc() 起，动作"创建题目"
+        //   编辑态（带 id）：加载 getQuestionDetail → parseBlockDoc 还原 doc，动作"保存修改"
+        {
+          path: '/question/editor',
+          name: 'QuestionEditorNew',
+          component: () => import('@/views/question/editor.vue'),
+        },
+        {
+          path: '/question/editor/:id',
+          name: 'QuestionEditorEdit',
+          component: () => import('@/views/question/editor.vue'),
+        },
         // PRD-C-009「我的题库」——只看当前登录老师自己的题（mine:true），复用题库详情页
         {
           path: '/my-question',

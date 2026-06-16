@@ -103,8 +103,46 @@ export interface QuestionDetail extends QuestionItem {
   explain?: string | null             // 解析文本（旧字段，兼容保留）
   answerTextContent?: string | null   // 富文本答案（Markdown + $...$ LaTeX）
   analyzeTextContent?: string | null  // 富文本解析（Markdown + $...$ LaTeX）
+  /**
+   * PRD-A-015 — 结构化网格块 JSON（biz_question_block.block_json）。
+   * null/缺省 = 该题未结构化，渲染回落旧富文本/图（QuestionContent 链）。
+   * 🔴 仅 POST /teacher/question/select/{id}（单题详情）返回此字段；
+   *    批量 GET /teacher/question/list?ids= 当前 BE 不回填（见本文件 questionListByIds 注释）。
+   */
+  blockJson?: string | null
   // 以下字段 QuestionItem 已声明（fileBin / questionStdKnowledges 全部可选），
   // 列表 page 端点空返，list / select 详情端点才真有值 — 这里不重复声明。
+}
+
+// ── PRD-A-015 录题/编辑 入参 ──────────────────────────────────────
+// 雪花 id 一律 string（防 JS Number 精度丢失，本仓约定）。
+// blockJson = §10.1 锁定的结构化网格块文档序列化串（{ v, rows:[...] }）。
+
+/** POST /teacher/question/create 入参（CreateQuestionBo） */
+export interface CreateQuestionPayload {
+  questionType: number          // 1=选择 / 4=填空 / 5=简答
+  stem: string
+  subjectId: string
+  difficult?: number
+  blockJson?: string            // 结构化网格块 JSON（可选）
+  answer?: string
+  analyze?: string
+  freeTag?: string
+  examYear?: string
+  examPaperId?: string
+  examPaperName?: string
+}
+
+/** POST /teacher/question/update 入参（UpdateQuestionBo，权威源 = blockJson） */
+export interface UpdateQuestionPayload {
+  questionId: string            // 雪花 string
+  blockJson: string             // 必填：结构化内容权威源
+  questionType?: number
+  difficult?: number
+  subjectId?: string
+  stem?: string
+  answer?: string
+  analyze?: string
 }
 
 // 收藏夹文件夹（GET /teacher/center/q-folder/tree 返回树结构）
@@ -350,11 +388,30 @@ export interface PaperDetailVo {
 export const getQuestionDetail = (questionId: string) =>
   request.post<QuestionDetail, QuestionDetail>(`/teacher/question/select/${questionId}`)
 
+/**
+ * PRD-A-015 — 新建题目（结构化录题）。
+ * POST /teacher/question/create（CreateQuestionBo）。
+ * envelope `/teacher/**` 由拦截器解包，拿到的是 QuestionDetail 内层。
+ */
+export const createQuestion = (payload: CreateQuestionPayload) =>
+  request.post<QuestionDetail, QuestionDetail>('/teacher/question/create', payload)
+
+/**
+ * PRD-A-015 — 结构化编辑题目（权威源 = blockJson）。
+ * POST /teacher/question/update（UpdateQuestionBo）。
+ * 返回更新后的 QuestionDetail（含回读的 blockJson + 外置文本 + knowledges + freeTags）。
+ */
+export const updateQuestion = (payload: UpdateQuestionPayload) =>
+  request.post<QuestionDetail, QuestionDetail>('/teacher/question/update', payload)
+
 
 // Q' 卡 段① BE 新端点 — 按 ids 批查完整字段（含 answer / explain / freeTags / questionStdKnowledges）。
 // query string = ?ids=1,2,3 逗号分隔（axios params 对 string 不会重复 key）；上限 100（BE 端约束）；
 // 软删自动过滤（BE WHERE status<>'2'）；顺序按 FIND_IN_SET 保入参顺序（FE 仍需 reorder 兜底）。
 // PRD-A-013 T2 — ids 雪花 string[]
+// 🔴 PRD-A-015 数据缺口：BE selectQuestionDetailByIds（QuestionServiceImpl.listByIds）当前【不回填 blockJson】
+//    —— 与单题 selectById 不同，批量路径没有 bizQuestionBlockMapper 回填。卷库/PDF 走本接口拿数据，
+//    故结构化渲染暂时只在单题详情页生效；要让卷库预览/PDF 也吃结构化，需 BE 在 listByIds 批量回填 blockJson。
 export const questionListByIds = (ids: string[]) =>
   request.get<QuestionDetail[], QuestionDetail[]>('/teacher/question/list', {
     params: { ids: ids.join(',') },

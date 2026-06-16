@@ -14,13 +14,14 @@
  *     永远 PNG 无损不压缩（记忆铁则）。
  */
 import { computed } from 'vue'
-import { Edit, Star, ShoppingCart, Key } from '@element-plus/icons-vue'
+import { Edit, EditPen, Star, ShoppingCart, Key } from '@element-plus/icons-vue'
 import Icon from '@/components/Icon/index.vue'
 import FreeTagList from '@/components/business/FreeTagList/index.vue'
 import QuestionContent from '@/components/business/QuestionContent/index.vue'
 import type { QuestionItem } from '@/api/question/index'
 
-type ActionKey = 'draft' | 'favorite' | 'basket' | 'detail'
+// PRD-A-015 — 'edit' 为可选 action（opt-in，默认 actions 不含），仅「我的题库」等本人题场景启用。
+type ActionKey = 'draft' | 'favorite' | 'basket' | 'detail' | 'edit'
 
 const props = withDefaults(
   defineProps<{
@@ -53,12 +54,14 @@ const emit = defineEmits<{
   (e: 'detail', q: QuestionItem): void
   (e: 'favorite', q: QuestionItem): void
   (e: 'draft', q: QuestionItem): void
+  (e: 'edit', q: QuestionItem): void
 }>()
 
 const showDraft = computed(() => props.actions.includes('draft'))
 const showFavorite = computed(() => props.actions.includes('favorite'))
 const showBasket = computed(() => props.actions.includes('basket'))
 const showDetail = computed(() => props.actions.includes('detail'))
+const showEdit = computed(() => props.actions.includes('edit'))
 
 function getQuestionTypeLabel(type: number): string {
   const map: Record<number, string> = { 1: '选择题', 2: '判断题', 3: '应用题', 4: '填空题', 5: '简答题' }
@@ -94,6 +97,16 @@ function getQuestionTypeTag(type: number): 'success' | 'warning' | 'info' | 'pri
       </div>
 
       <div class="card-meta-right">
+        <el-button
+          v-if="showEdit"
+          size="small"
+          class="action-btn"
+          type="primary"
+          plain
+          @click="emit('edit', question)"
+        >
+          <el-icon><EditPen /></el-icon>编辑
+        </el-button>
         <el-button v-if="showDraft" size="small" class="action-btn" @click="emit('draft', question)">
           <el-icon><Edit /></el-icon>草稿
         </el-button>

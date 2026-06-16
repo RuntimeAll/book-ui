@@ -28,6 +28,9 @@ import FreeTagList from '@/components/business/FreeTagList/index.vue'
 import SketchPad from '@/components/business/SketchPad/index.vue'
 import DetailSidebar from './components/DetailSidebar.vue'
 import QuestionContent from '@/components/business/QuestionContent/index.vue'
+// PRD-A-015 — 结构化网格块统一渲染（题干 blockJson 非空时优先用它，否则回落 QuestionContent）
+import QuestionBlockRender from '@/components/business/QuestionBlockRender/index.vue'
+import { parseBlockDoc } from '@/utils/blockSchema'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
 
 // ── 路由 ────────────────────────────────────────────────────
@@ -48,6 +51,9 @@ const basket = useQuestionBasket()
 // ── 题目数据 ─────────────────────────────────────────────────
 const question = ref<QuestionDetail | null>(null)
 const loading = ref(false)
+
+// PRD-A-015 — 题干结构化 block 文档（非法/空返 null → 题干区回落旧富文本/图渲染）
+const parsedBlock = computed(() => parseBlockDoc(question.value?.blockJson))
 
 async function loadQuestion() {
   loading.value = true
@@ -356,10 +362,16 @@ watch(questionId, async () => {
           </div>
         </div>
 
-        <!-- 题干（富文本/图片/占位统一走 QuestionContent）
-             stemTextContent 优先（Markdown+LaTeX 富文本），fallback stemText（旧字段） -->
+        <!-- 题干区（PRD-A-015）：
+             parsedBlock 非空 → 结构化网格块整题内容为权威（QuestionBlockRender）；
+             否则回落旧富文本/图链（stemTextContent 优先，fallback stemText / stemImg）。 -->
         <div class="stem-area">
+          <QuestionBlockRender
+            v-if="parsedBlock"
+            :doc="parsedBlock"
+          />
           <QuestionContent
+            v-else
             :text="question.stemTextContent || question.stemText"
             :img-url="question.stemImg"
             alt="题干"
