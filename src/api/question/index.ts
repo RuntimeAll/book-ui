@@ -106,8 +106,8 @@ export interface QuestionDetail extends QuestionItem {
   /**
    * PRD-A-015 — 结构化网格块 JSON（biz_question_block.block_json）。
    * null/缺省 = 该题未结构化，渲染回落旧富文本/图（QuestionContent 链）。
-   * 🔴 仅 POST /teacher/question/select/{id}（单题详情）返回此字段；
-   *    批量 GET /teacher/question/list?ids= 当前 BE 不回填（见本文件 questionListByIds 注释）。
+   * 单题 POST /teacher/question/select/{id} 与批量 GET /teacher/question/list?ids=
+   * （selectQuestionDetailById / listByIds）均回填此字段——卷库预览/PDF 也吃结构化渲染。
    */
   blockJson?: string | null
   // 以下字段 QuestionItem 已声明（fileBin / questionStdKnowledges 全部可选），
@@ -409,9 +409,8 @@ export const updateQuestion = (payload: UpdateQuestionPayload) =>
 // query string = ?ids=1,2,3 逗号分隔（axios params 对 string 不会重复 key）；上限 100（BE 端约束）；
 // 软删自动过滤（BE WHERE status<>'2'）；顺序按 FIND_IN_SET 保入参顺序（FE 仍需 reorder 兜底）。
 // PRD-A-013 T2 — ids 雪花 string[]
-// 🔴 PRD-A-015 数据缺口：BE selectQuestionDetailByIds（QuestionServiceImpl.listByIds）当前【不回填 blockJson】
-//    —— 与单题 selectById 不同，批量路径没有 bizQuestionBlockMapper 回填。卷库/PDF 走本接口拿数据，
-//    故结构化渲染暂时只在单题详情页生效；要让卷库预览/PDF 也吃结构化，需 BE 在 listByIds 批量回填 blockJson。
+// PRD-A-015：BE listByIds 已批量回填 blockJson（与单题 selectById 对称），故卷库预览/PDF 走本接口
+//    也能拿到结构化内容、命中 QuestionBlockRender 网格渲染（PaperPreview blockDocOf 分支）。
 export const questionListByIds = (ids: string[]) =>
   request.get<QuestionDetail[], QuestionDetail[]>('/teacher/question/list', {
     params: { ids: ids.join(',') },

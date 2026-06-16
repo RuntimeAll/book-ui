@@ -477,6 +477,7 @@ async function handleAsyncExport() {
                 <QuestionBlockRender
                   v-if="blockDocOf(q)"
                   :doc="blockDocOf(q)!"
+                  :proxy="true"
                 />
                 <img
                   v-else-if="q.stemImg"

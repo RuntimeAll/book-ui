@@ -18,13 +18,19 @@ import { computed } from 'vue'
 import { renderRichText } from '@/utils/richtext'
 import type { QuestionBlockDoc, BlockRow, Block } from '@/utils/blockSchema'
 import { parseBlockDoc } from '@/utils/blockSchema'
+import { proxyImage } from '@/utils/image-proxy'
 
 const props = withDefaults(
   defineProps<{
     /** block 文档对象，或后端返回的 JSON 字符串；非法/空时渲染空 */
     doc?: QuestionBlockDoc | string | null
+    /**
+     * 图片是否走 BE 同源代理（proxyImage）。默认 false（页面内直连 OSS url 即可）。
+     * 🔴 PDF 导出场景(PaperPreview)须传 true：html2canvas 截图要求图片同源，否则跨域图污染 canvas/被跳过。
+     */
+    proxy?: boolean
   }>(),
-  { doc: null },
+  { doc: null, proxy: false },
 )
 
 const docObj = computed<QuestionBlockDoc | null>(() => parseBlockDoc(props.doc))
@@ -32,6 +38,11 @@ const rows = computed<BlockRow[]>(() => docObj.value?.rows ?? [])
 
 function textHtml(md: string): string {
   return renderRichText(md ?? '')
+}
+
+/** 图片 src：导出场景(proxy=true)走 BE 同源代理避 html2canvas 跨域污染 */
+function imgSrc(url: string): string {
+  return props.proxy ? proxyImage(url) : url
 }
 
 /** 图片块行内样式：width 占容器宽百分比 + 左中右对齐（块级 margin） */
@@ -78,7 +89,7 @@ function imageStyle(b: Extract<Block, { type: 'image' }>) {
         <!-- 图片块 -->
         <img
           v-else-if="cell.type === 'image'"
-          :src="cell.url"
+          :src="imgSrc(cell.url)"
           :style="imageStyle(cell)"
           class="qbr-img"
           alt="题目图片"
@@ -105,7 +116,7 @@ function imageStyle(b: Extract<Block, { type: 'image' }>) {
               />
               <img
                 v-else-if="sub.type === 'image'"
-                :src="sub.url"
+                :src="imgSrc(sub.url)"
                 :style="imageStyle(sub)"
                 class="qbr-img"
                 alt="选项图片"
