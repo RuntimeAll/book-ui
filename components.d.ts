@@ -63,6 +63,7 @@ declare module 'vue' {
     PaperLibrary: typeof import('./src/components/business/PaperLibrary/index.vue')['default']
     PaperPreview: typeof import('./src/components/business/PaperPreview/index.vue')['default']
     QuestionBasket: typeof import('./src/components/business/QuestionBasket/index.vue')['default']
+    QuestionBlockRender: typeof import('./src/components/business/QuestionBlockRender/index.vue')['default']
     QuestionCard: typeof import('./src/components/business/QuestionCard/index.vue')['default']
     QuestionContent: typeof import('./src/components/business/QuestionContent/index.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
