@@ -52,6 +52,15 @@ const props = defineProps<{
   basketing?: boolean
   /** PRD-C-015 批5：本卡正在重生（regen 待重生集合命中本题）→ 卡片 loading + 重生按钮转圈 */
   regenerating?: boolean
+  // ----- 🔴 PRD-C-100 B6 带图展示 + 图片重生（宿主调 compose_variant 后回填）-----
+  /** 本变式配图 PNG base64（无损；data:image/png;base64,... 渲染） */
+  figurePng?: string | null
+  /** 配图进行中 → 按钮 loading + 占位 */
+  figureLoading?: boolean
+  /** 需配图但没造出来（G4）→ 「⚠待补图」徽章 */
+  figureNeedsFigure?: boolean
+  /** 配图相关文案，外显 */
+  figureReason?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -95,9 +104,29 @@ const emit = defineEmits<{
   (e: 'undo-regen', index: number): void
   /** PRD-C-015 批5：models 维改（rewrite_solve 档；宿主调 editVariantDna(field='models')） */
   (e: 'edit-models', payload: { index: number; value: Array<{ id: string; name: string }> }): void
+  /**
+   * 🔴 PRD-C-100 B6：为本变式造配图 / 图片重生（宿主调 composeVariantFigure）。
+   * correctionPrompt 非空 = 老师对上一版图的修正提示词（图歪了→重新生成，人在回路）。
+   */
+  (e: 'compose-figure', payload: { index: number; correctionPrompt?: string }): void
+  /** 🔴 PRD-C-100 B6：点开看大图（含切图 / 配图的 data URL） */
+  (e: 'preview', url: string): void
 }>()
 
 const showSolution = ref(false)
+
+// 🔴 PRD-C-100 B6：图片重生（人在回路）—— 修正提示词输入框开合 + 草稿。
+const figFixOpen = ref(false)
+const figCorrection = ref('')
+
+/** 按修正提示词重新生成配图（图歪了→重生） */
+function onRegenFigure() {
+  const prompt = figCorrection.value.trim()
+  if (!prompt) return
+  emit('compose-figure', { index: props.item.index, correctionPrompt: prompt })
+  figFixOpen.value = false
+  figCorrection.value = ''
+}
 
 // ---------------------------------------------------------------------------
 // 内容编辑（傻瓜式）：编辑态把 stem/answer/solution 各显示为 textarea + 实时 MarkdownMath
@@ -782,6 +811,66 @@ function saveFieldEdit() {
         <MarkdownMath v-else :content="item.stem" />
       </div>
 
+      <!-- ============ 🔴 PRD-C-100 B6 配图（带图展示 + 图片重生，人在回路） ============ -->
+      <div class="vc-figure-zone">
+        <!-- 已造出的配图（PNG 无损），点开看大图 -->
+        <div
+          v-if="figurePng"
+          class="vc-figure"
+          title="变式配图 · 点开看大图"
+          @click="emit('preview', `data:image/png;base64,${figurePng}`)"
+        >
+          <img :src="`data:image/png;base64,${figurePng}`" alt="配图" />
+        </div>
+        <!-- G4：需配图但没造出来 → ⚠待补图（不静默无图） -->
+        <div v-else-if="figureNeedsFigure" class="vc-figure-warn">⚠ 待补图（本题需配图，暂未生成成功）</div>
+
+        <div class="vc-figure-actions">
+          <el-button
+            text
+            size="small"
+            :loading="figureLoading"
+            :disabled="sending || figureLoading"
+            @click="emit('compose-figure', { index: item.index })"
+          >
+            {{ figurePng ? '🖼 重新配图' : '🖼 配图' }}
+          </el-button>
+          <!-- 图片重生：图歪了 → 输入修正提示词，再造（带 correctionPrompt） -->
+          <el-button
+            v-if="figurePng"
+            text
+            size="small"
+            :disabled="sending || figureLoading"
+            @click="figFixOpen = !figFixOpen"
+          >
+            图歪了？重新生成
+          </el-button>
+        </div>
+
+        <div v-if="figFixOpen" class="vc-fig-fix">
+          <el-input
+            v-model="figCorrection"
+            type="textarea"
+            :autosize="{ minRows: 1, maxRows: 3 }"
+            resize="none"
+            placeholder="说说哪里不对、想怎么改（如：三角形画成等腰、坐标轴标上刻度、圆再大一点）"
+          />
+          <div class="vc-fig-fix-actions">
+            <button type="button" class="vc-fig-cancel" @click="figFixOpen = false">取消</button>
+            <button
+              type="button"
+              class="vc-fig-regen"
+              :disabled="figureLoading || !figCorrection.trim()"
+              @click="onRegenFigure"
+            >
+              按提示重新生成
+            </button>
+          </div>
+        </div>
+
+        <p v-if="figureReason" class="vc-figure-reason">{{ figureReason }}</p>
+      </div>
+
       <!-- ============ 🧬 题目 DNA（G13 ③：默认收起 = 图标 chip；点开展开全维，逐维可改） ============ -->
       <div class="dna-zone">
         <button type="button" class="dna-chip" :class="{ open: dnaOpen }" @click="dnaOpen = !dnaOpen">
@@ -1378,6 +1467,74 @@ function saveFieldEdit() {
 .card-stem {
   font-size: 14px;
   color: #1d2a2e; /* ink-900 */
+}
+
+/* PRD-C-100 B6：配图区 */
+.vc-figure-zone {
+  margin-top: 8px;
+}
+.vc-figure {
+  display: inline-block;
+  max-width: 100%;
+  border: 1px dashed #7b6cf0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #faf9ff;
+  cursor: zoom-in;
+}
+.vc-figure img {
+  display: block;
+  max-width: 100%;
+  max-height: 260px;
+  height: auto;
+}
+.vc-figure-warn {
+  font-size: 12px;
+  color: #b8741a;
+  background: #fdf6ec;
+  border: 1px dashed #f0c78a;
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+.vc-figure-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+}
+.vc-fig-fix {
+  margin-top: 6px;
+}
+.vc-fig-fix-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+.vc-fig-cancel,
+.vc-fig-regen {
+  font-size: 12px;
+  border: none;
+  border-radius: 6px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+.vc-fig-cancel {
+  background: #f2f3f5;
+  color: #4e5969;
+}
+.vc-fig-regen {
+  background: #7b6cf0;
+  color: #fff;
+}
+.vc-fig-regen:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.vc-figure-reason {
+  font-size: 11px;
+  color: #a0a8b3;
+  line-height: 1.5;
+  margin: 4px 0 0;
 }
 
 /* 选择题展示：题干下选项网格。短选项 2 列（2×2），长选项单列（is-two-col 时才 2 列） */

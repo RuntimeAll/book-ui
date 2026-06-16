@@ -3,6 +3,8 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'v
 import { ElMessage } from 'element-plus'
 import { useUserStore } from '@/store/user'
 import {
+  composeVariantFigure,
+  cropMotherFigure,
   editVariantDna,
   editVariantItem,
   fetchVariantArtifact,
@@ -23,6 +25,7 @@ import type {
   VariantArtifact,
   VariantArtifactItem,
   VariantNeedConfirm,
+  VariantReasoning,
   VariantReject,
   VariantStage,
   VariantStreamHandle,
@@ -79,6 +82,13 @@ interface Bubble {
 interface RailItem {
   type: 'rail'
   stages: VariantStage[]
+  /**
+   * 🔴 PRD-C-100 B6：本轮 AI 思考流（reasoning 增量拼接）。流式期默认展开滚动、结束自动折叠。
+   * 现状 opus 经 aigeek 不吐 reasoning → 多数轮该值为空串，思考块不渲染（向后兼容）。
+   */
+  reasoning: string
+  /** 思考块当前是否展开（流式期 true，onClose 自动置 false） */
+  reasoningOpen: boolean
 }
 
 type StreamItem = Bubble | RailItem
@@ -96,6 +106,17 @@ const thinking = ref(false) // LLM token 流期的「思考中」动效
 const currentRail = ref<RailItem | null>(null)
 // PRD-C-011：右栏卡片栅数据源 = artifact 快照帧（snapshot 全量，整量替换）
 const artifact = ref<VariantArtifact | null>(null)
+
+// 🔴 PRD-C-100 B6·成本相关 UI（轻量）：今日 AI 额度用尽的友好横幅。
+//   SSE error 帧 reason==='budget_exceeded'（或 content 含「额度/budget」关键词）→ 置位 + 横幅外显。
+//   文案直接用后端给的（含已用/上限 ¥），FE 不自拼金额。下一条成功请求时清掉。
+const budgetExceeded = ref(false)
+const budgetMessage = ref('')
+
+/** 判一条 error 文案是否「今日额度用尽」（结构化 reason 缺位时按关键词兜底） */
+function isBudgetError(msg: string): boolean {
+  return /budget_exceeded|额度|预算用尽|余额不足/i.test(msg)
+}
 
 // ---------------------------------------------------------------------------
 // 🔴 PRD-C-017 B3 — 母题年级章确认面 + 母题卡 + 入库态。
@@ -128,6 +149,77 @@ const confirmedGradeBookName = ref('')
 const motherPersisting = ref(false)
 const motherPersisted = ref(false)
 const motherQuestionId = ref('') // 入库后的母题题 id（雪花 string）
+
+// ---------------------------------------------------------------------------
+// 🔴 PRD-C-100 B6 — 带图展示 + 图片重生（toolkit /variant/compose-figure）。
+//   母题切图（crop_mother）：母题卡里展示切出的图形区。
+//   变式造图（compose_variant）：每道变式按需造图 + 「图歪了？重新生成」（带 correctionPrompt）。
+// ---------------------------------------------------------------------------
+// 母题切图态
+const motherFigurePng = ref<string | null>(null)
+const motherFigureLoading = ref(false)
+const motherFigureNeeds = ref(false)
+const motherFigureReason = ref<string | null>(null)
+
+// 变式图态：按题 index（1-based）存。{png, loading, needs, reason}
+interface VariantFigureState {
+  png: string | null
+  loading: boolean
+  needs: boolean
+  reason: string | null
+}
+const variantFigures = reactive<Record<number, VariantFigureState>>({})
+
+function ensureVariantFigure(index: number): VariantFigureState {
+  if (!variantFigures[index]) {
+    variantFigures[index] = { png: null, loading: false, needs: false, reason: null }
+  }
+  return variantFigures[index]
+}
+
+/** 母题切图（crop_mother）：从母题原图切出图形区。重切=再调一次。 */
+async function onCropMotherFigure() {
+  if (motherFigureLoading.value || !motherImg.value) return
+  motherFigureLoading.value = true
+  motherFigureReason.value = null
+  try {
+    const res = await cropMotherFigure(threadId.value, userStore.accessToken, motherImg.value)
+    motherFigurePng.value = res.pngBase64
+    motherFigureNeeds.value = res.needsFigure && !res.pngBase64
+    motherFigureReason.value = res.reason
+  } catch (e) {
+    motherFigureReason.value = `切图失败：${e instanceof Error ? e.message : String(e)}`
+  } finally {
+    motherFigureLoading.value = false
+  }
+}
+
+/**
+ * 变式造图（compose_variant）：为某道变式造配图。correctionPrompt 非空 = 图片重生（人在回路）。
+ */
+async function onComposeVariantFigure(payload: { index: number; correctionPrompt?: string }) {
+  const st = ensureVariantFigure(payload.index)
+  if (st.loading) return
+  const item = findItem(payload.index)
+  if (!item) return
+  st.loading = true
+  st.reason = null
+  try {
+    const res = await composeVariantFigure(threadId.value, userStore.accessToken, {
+      stem: item.stem,
+      answer: item.answer || undefined,
+      itemId: item.seq || item.index,
+      correctionPrompt: payload.correctionPrompt,
+    })
+    st.png = res.pngBase64
+    st.needs = res.needsFigure && !res.pngBase64
+    st.reason = res.reason
+  } catch (e) {
+    st.reason = `配图失败：${e instanceof Error ? e.message : String(e)}`
+  } finally {
+    st.loading = false
+  }
+}
 // 题组编辑器：正在重新验算的题 index（1-based），驱动该卡 loading 态
 const reverifyingIndex = ref<number | null>(null)
 // PRD-C-014 T1/T2：正在「收录入库」/「加入试题篮」的题 index（1-based），驱动该卡按钮 loading
@@ -375,6 +467,9 @@ function dispatch(
 ) {
   if (sending.value) return
   handle?.abort()
+  // PRD-C-100 B6：新一轮请求清掉上轮的额度横幅（让老师重试时不残留旧提示）
+  budgetExceeded.value = false
+  budgetMessage.value = ''
 
   stream.value.push({
     type: 'bubble',
@@ -385,7 +480,7 @@ function dispatch(
   // P10：把本条用户气泡的图按发送序登记，会话恢复时贴回（checkpointer 回放无图）
   pushMsgImgs(images ?? [])
   // 本轮思路条锚点：紧跟用户气泡 push，后续 AI 气泡追加在它下方 → rail 钉在本轮头部
-  const rail = reactive<RailItem>({ type: 'rail', stages: [] })
+  const rail = reactive<RailItem>({ type: 'rail', stages: [], reasoning: '', reasoningOpen: true })
   stream.value.push(rail)
   currentRail.value = rail
   touchSession(shownText ?? message) // 会话注册表：首条登记 / 后续刷活跃置顶
@@ -422,6 +517,13 @@ function dispatch(
         const idx = rail.stages.findIndex((s) => s.key === stage.key)
         if (idx >= 0) rail.stages[idx] = stage
         else rail.stages.push(stage)
+        scrollToBottom()
+      },
+      // 🔴 PRD-C-100 B6：思考流式 → 本轮可折叠思考块（增量拼接、流式期展开滚动）。
+      //   现状 opus 经 aigeek 不吐 reasoning → 多数轮此回调不触发，思考块不渲染（向后兼容）。
+      onReasoning: (payload: VariantReasoning) => {
+        rail.reasoning += payload.text
+        rail.reasoningOpen = true
         scrollToBottom()
       },
       onArtifact: (a: VariantArtifact) => {
@@ -469,6 +571,12 @@ function dispatch(
       onServerError: (m) => {
         thinking.value = false
         settleStages() // 思路条与错误气泡一致收口（running → warn·已中断）
+        // 🔴 PRD-C-100 B6：今日额度用尽 → 顶部友好横幅（文案用后端原文，含已用/上限 ¥），
+        //   不只塞进错误气泡里被忽略。仍同时落一条气泡保留上下文。
+        if (isBudgetError(m)) {
+          budgetExceeded.value = true
+          budgetMessage.value = m
+        }
         stream.value.push({ type: 'bubble', role: 'ai', kind: 'error', text: m })
         scrollToBottom()
       },
@@ -490,6 +598,8 @@ function dispatch(
         thinking.value = false
         typingBubble = null // 半成品打字气泡留在原地（极少见：流断在 token 中途）
         settleStages() // 正常完成时无 running 条目 = no-op；异常断流时兜底收口
+        // PRD-C-100 B6：本轮结束自动折叠思考块（有思考内容时；空则无块、无影响）
+        rail.reasoningOpen = false
         scrollToBottom()
       },
     }
@@ -1010,6 +1120,12 @@ function clearCanvas() {
   motherPersisting.value = false
   motherPersisted.value = false
   motherQuestionId.value = ''
+  // PRD-C-100 B6：带图态随会话重置
+  motherFigurePng.value = null
+  motherFigureLoading.value = false
+  motherFigureNeeds.value = false
+  motherFigureReason.value = null
+  for (const k of Object.keys(variantFigures)) delete variantFigures[Number(k)]
 }
 
 /** 新会话（原「新母题」）：换新 thread；首条消息发出时才登记进会话列表 */
@@ -1132,6 +1248,18 @@ onBeforeUnmount(() => {
       :payload="needConfirmPayload"
       :submitting="confirmSubmitting"
       @confirm="onConfirmGradeChapter"
+    />
+
+    <!-- 🔴 PRD-C-100 B6·成本相关 UI：今日 AI 额度用尽横幅（文案用后端原文，含已用/上限 ¥） -->
+    <el-alert
+      v-if="budgetExceeded"
+      class="budget-banner"
+      type="warning"
+      show-icon
+      :closable="true"
+      title="今日 AI 额度已用尽"
+      :description="budgetMessage || '今日 AI 调用额度已用完，请明日再试或联系管理员调整额度。'"
+      @close="budgetExceeded = false"
     />
 
     <!-- 下方双栏：左聊天 / 右变式题组 -->
@@ -1261,9 +1389,26 @@ onBeforeUnmount(() => {
           </div>
 
           <!-- 本轮思路条锚点（钉在该轮用户气泡之后、AI 产出之前；历史轮留存） -->
-          <div v-else-if="item.stages.length > 0" class="msg-row is-ai">
-            <AiStageRail class="stage-rail-wrap" :stages="item.stages" />
-          </div>
+          <template v-else>
+            <!-- PRD-C-100 B6：AI 思考流可折叠块（有 reasoning 才渲染；流式期展开滚动，结束自动折叠） -->
+            <div v-if="item.reasoning" class="msg-row is-ai">
+              <div class="reasoning-block">
+                <button
+                  type="button"
+                  class="reasoning-head"
+                  @click="item.reasoningOpen = !item.reasoningOpen"
+                >
+                  <span class="reasoning-spark">🤔</span>
+                  <span class="reasoning-title">AI 思考中…</span>
+                  <span class="reasoning-toggle">{{ item.reasoningOpen ? '收起' : '展开' }}</span>
+                </button>
+                <pre v-show="item.reasoningOpen" class="reasoning-body">{{ item.reasoning }}</pre>
+              </div>
+            </div>
+            <div v-if="item.stages.length > 0" class="msg-row is-ai">
+              <AiStageRail class="stage-rail-wrap" :stages="item.stages" />
+            </div>
+          </template>
         </template>
 
         <!-- 思考中动效（token 流期）：仅作本轮首条 stage 到来前的兜底 -->
@@ -1307,6 +1452,7 @@ onBeforeUnmount(() => {
       :persisting-index="persistingIndex"
       :basketing-index="basketingIndex"
       :regenerating-indexes="regeneratingIndexes"
+      :variant-figures="variantFigures"
       @utterance="sendUtterance"
       @regenerate="regenerate"
       @persist="persistAll"
@@ -1322,6 +1468,8 @@ onBeforeUnmount(() => {
       @undo-regen="onUndoRegen"
       @edit-models="onEditModels"
       @regen-all="onRegenAll"
+      @compose-figure="onComposeVariantFigure"
+      @preview="(u: string) => (previewUrl = u)"
     >
       <!-- AC7 收窄移位 + AC4 母题卡先出（全 10 维）+ M8 难点空文案 + G12 母题入库 -->
       <template #mother-card>
@@ -1336,11 +1484,16 @@ onBeforeUnmount(() => {
           :has-variants="!!artifact?.items.length"
           :regenerating="regeneratingIndexes.length > 0"
           :sending="sending"
+          :figure-png="motherFigurePng"
+          :figure-loading="motherFigureLoading"
+          :figure-needs-figure="motherFigureNeeds"
+          :figure-reason="motherFigureReason"
           @persist-mother="onPersistMother"
           @edit-mother-dna="onEditMotherDna"
           @regen-mother="onRegenAll"
           @start-variants="onStartVariants"
           @preview="(u: string) => (previewUrl = u)"
+          @crop-figure="onCropMotherFigure"
         />
       </template>
     </ArtifactPanel>
@@ -1367,6 +1520,11 @@ onBeforeUnmount(() => {
   background: #fbfaf6; /* 暖纸白 paper */
   padding: 16px;
   box-sizing: border-box;
+}
+/* PRD-C-100 B6：额度横幅（双栏上方，占满宽度） */
+.budget-banner {
+  margin-bottom: 12px;
+  flex-shrink: 0;
 }
 /* 下方双栏容器：左聊天 / 右变式题组（占满母题横条以下剩余高度） */
 .variant-main {
@@ -1626,6 +1784,52 @@ onBeforeUnmount(() => {
 .stage-rail-wrap {
   max-width: 86%;
   min-width: 300px;
+}
+
+/* PRD-C-100 B6：AI 思考流可折叠块（淡紫底，区别于正式气泡 / 思路条） */
+.reasoning-block {
+  max-width: 86%;
+  min-width: 280px;
+  border: 1px dashed #d6cffb;
+  border-radius: 10px;
+  background: #faf9ff;
+  overflow: hidden;
+}
+.reasoning-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+.reasoning-spark {
+  font-size: 13px;
+}
+.reasoning-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #7b6cf0;
+}
+.reasoning-toggle {
+  margin-left: auto;
+  font-size: 11px;
+  color: #a59bf0;
+}
+.reasoning-body {
+  margin: 0;
+  padding: 0 12px 10px;
+  max-height: 220px;
+  overflow-y: auto;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #8478b8;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
 }
 
 /* 思考中动效 */

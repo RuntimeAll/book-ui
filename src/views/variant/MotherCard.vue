@@ -66,6 +66,15 @@ const props = defineProps<{
   regenerating: boolean
   /** 发送中：禁交互 */
   sending: boolean
+  // ----- 🔴 PRD-C-100 B6 带图展示：母题切图（宿主调 crop_mother 后回填）-----
+  /** 切出的母题图 PNG base64（无损；展示 data:image/png;base64,...） */
+  figurePng?: string | null
+  /** 切图进行中 → 按钮 loading + 占位 */
+  figureLoading?: boolean
+  /** 需配图但没切出来（G4）→ 「⚠待补图」徽章 */
+  figureNeedsFigure?: boolean
+  /** 切图相关文案（如「未识别到图形」），外显 */
+  figureReason?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -85,6 +94,8 @@ const emit = defineEmits<{
   (e: 'start-variants'): void
   /** 点开看大图 */
   (e: 'preview', url: string): void
+  /** 🔴 PRD-C-100 B6：切母题图（宿主调 cropMotherFigure；重切=再点） */
+  (e: 'crop-figure'): void
 }>()
 
 // 折叠态（默认展开让老师过目母题基准；过目后可收起腾地方·AC7）
@@ -260,9 +271,35 @@ function saveHard() {
     </header>
 
     <div v-show="!collapsed" class="mc-body">
-      <!-- 左：母题图缩略（守恒锚） -->
-      <div v-if="motherImg" class="mc-thumb" title="母题原图 · 点开看大图" @click="emit('preview', motherImg)">
-        <img :src="motherImg" alt="母题" referrerpolicy="no-referrer" />
+      <!-- 左：母题图缩略（守恒锚） + 🔴 PRD-C-100 B6 切图（图形区） -->
+      <div v-if="motherImg" class="mc-thumb-col">
+        <div class="mc-thumb" title="母题原图 · 点开看大图" @click="emit('preview', motherImg)">
+          <img :src="motherImg" alt="母题" referrerpolicy="no-referrer" />
+        </div>
+        <!-- 母题切图：切出的图形区（PNG 无损），点开看大图 -->
+        <div
+          v-if="figurePng"
+          class="mc-figure"
+          title="母题图形（切图）· 点开看大图"
+          @click="emit('preview', `data:image/png;base64,${figurePng}`)"
+        >
+          <img :src="`data:image/png;base64,${figurePng}`" alt="母题图形" />
+          <span class="mc-figure-tag">图形</span>
+        </div>
+        <!-- G4：需配图但没切出来 → ⚠待补图 -->
+        <div v-else-if="figureNeedsFigure" class="mc-figure-warn">⚠ 待补图</div>
+        <!-- 切图 / 重切按钮（loading 期转圈） -->
+        <el-button
+          text
+          size="small"
+          class="mc-figure-btn"
+          :loading="figureLoading"
+          :disabled="sending || figureLoading"
+          @click="emit('crop-figure')"
+        >
+          {{ figurePng ? '重新切图' : '切图形' }}
+        </el-button>
+        <p v-if="figureReason" class="mc-figure-reason">{{ figureReason }}</p>
       </div>
 
       <div class="mc-main">
@@ -522,8 +559,14 @@ function saveHard() {
   gap: 12px;
   padding: 12px;
 }
-.mc-thumb {
+.mc-thumb-col {
   flex: 0 0 96px;
+  width: 96px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.mc-thumb {
   width: 96px;
   height: 72px;
   border-radius: 8px;
@@ -536,6 +579,52 @@ function saveHard() {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+/* PRD-C-100 B6：母题切图（图形区） */
+.mc-figure {
+  position: relative;
+  width: 96px;
+  min-height: 50px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px dashed #7b6cf0;
+  cursor: zoom-in;
+  background: #faf9ff;
+}
+.mc-figure img {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.mc-figure-tag {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  right: 0;
+  font-size: 9px;
+  color: #fff;
+  text-align: center;
+  background: rgba(123, 108, 240, 0.78);
+}
+.mc-figure-warn {
+  width: 96px;
+  font-size: 11px;
+  color: #b8741a;
+  background: #fdf6ec;
+  border: 1px dashed #f0c78a;
+  border-radius: 8px;
+  text-align: center;
+  padding: 4px 0;
+}
+.mc-figure-btn {
+  justify-content: flex-start;
+  padding: 0;
+}
+.mc-figure-reason {
+  font-size: 10px;
+  color: #a0a8b3;
+  line-height: 1.4;
+  margin: 0;
 }
 .mc-main {
   flex: 1;

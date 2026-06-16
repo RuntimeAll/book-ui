@@ -76,6 +76,64 @@ export interface VariantStage {
   detail?: string
 }
 
+// ---------------------------------------------------------------------------
+// 🔴 PRD-C-100 B6 — 思考流式（reasoning）custom 帧。
+//
+// 思考型模型（opus 解题 / nano 判章）经管线吐 reasoning token 时，BE 在节点内经 langgraph
+// custom 流发 type=custom 消息，custom_data.content[0] = {reasoning:{text:'<片段>'}}（也兼容
+// custom_data.reasoning = {text} / 字符串两种松散形态）。FE 抽 text 渲染「AI 思考中…」可折叠块，
+// 不进正式消息气泡、不混变式正文。
+//
+// 🔴 现状（ready-but-dormant）：当前 opus 经 aigeek 不吐 reasoning → 该帧通常不出现。
+//    pickReasoning 只负责「有就抽出、没有就返 null 静默」，向后兼容，无 reasoning 也绝不报错。
+// ---------------------------------------------------------------------------
+
+/** 思考帧载荷（增量文本片段；FE 追加进当前轮可折叠思考块） */
+export interface VariantReasoning {
+  /** 本次增量的思考文本片段 */
+  text: string
+}
+
+/** 从松散结构里抠 reasoning.text（兼容 {text} / {reasoning:{text}} / 纯字符串；无 → null） */
+function reasoningText(raw: unknown): string | null {
+  if (!raw) return null
+  if (typeof raw === 'string') return raw.trim() ? raw : null
+  if (typeof raw === 'object') {
+    const o = raw as Record<string, unknown>
+    // {reasoning:{text}} 再下钻一层
+    if (o.reasoning && typeof o.reasoning === 'object') {
+      const inner = reasoningText(o.reasoning)
+      if (inner !== null) return inner
+    }
+    if (typeof o.text === 'string') return o.text
+  }
+  return null
+}
+
+/**
+ * 从 custom 消息抠出 reasoning（仿 pickStage）。两条来源宽松兜底：
+ *   ① custom_data.content[0].reasoning（契约主路：content 数组第 0 项带 reasoning 键）；
+ *   ② custom_data.reasoning（散键兜底）。
+ * 任一命中即返；结构不符返 null（向后兼容，无 reasoning 静默）。
+ */
+function pickReasoning(msg: ToolkitChatMessage): VariantReasoning | null {
+  const cd = msg.custom_data
+  if (!cd || typeof cd !== 'object') return null
+  // 路①：content[0].reasoning
+  const content = (cd as Record<string, unknown>).content
+  if (Array.isArray(content) && content.length) {
+    const first = content[0]
+    if (first && typeof first === 'object') {
+      const t = reasoningText((first as Record<string, unknown>).reasoning)
+      if (t !== null) return { text: t }
+    }
+  }
+  // 路②：散键 custom_data.reasoning
+  const t = reasoningText((cd as Record<string, unknown>).reasoning)
+  if (t !== null) return { text: t }
+  return null
+}
+
 /** 从 custom 消息里安全抠出 stage（结构不符返回 null，宽松向后兼容） */
 function pickStage(msg: ToolkitChatMessage): VariantStage | null {
   const raw = msg.custom_data?.stage
@@ -738,6 +796,11 @@ export interface VariantStreamHandlers {
   onMessage: (msg: ToolkitChatMessage) => void
   /** stage 事件（type=custom 且 custom_data.stage）→ 思路条。不传则 stage 帧静默丢弃，旧行为不变 */
   onStage?: (stage: VariantStage) => void
+  /**
+   * 🔴 PRD-C-100 B6·reasoning 事件（type=custom 且 custom_data 含 reasoning）→ 可折叠思考块。
+   * 增量追加。不传则静默丢弃（向后兼容；现状 opus 经 aigeek 不吐 reasoning，多数会话该帧不出现）。
+   */
+  onReasoning?: (payload: VariantReasoning) => void
   /** artifact 快照帧（type=custom 且 custom_data.artifact）→ 右栏卡片栅。不传则静默丢弃，向后兼容 */
   onArtifact?: (artifact: VariantArtifact) => void
   /**
@@ -846,6 +909,13 @@ export function streamVariant(
           // 🔴 PRD-C-010：custom 帧（langgraph 自定义流）数据全在 custom_data，content
           // 惯例为空串 —— 不能走下面「content 非空」过滤，按 custom_data.stage 放行。
           if (msg.type === 'custom') {
+            // 🔴 PRD-C-100 B6：reasoning 帧（思考流式）→ 可折叠思考块，不进消息气泡 / 思路条。
+            //    先于 stage 判，思考片段独立通道（有 reasoning 就走它，无则继续往下分诊）。
+            const reasoning = pickReasoning(msg)
+            if (reasoning) {
+              handlers.onReasoning?.(reasoning)
+              break
+            }
             const stage = pickStage(msg)
             if (stage) {
               handlers.onStage?.(stage)
@@ -1249,6 +1319,134 @@ export function reviseVariantItem(
     instruction,
     ruoyi_token: ruoyiToken,
   })
+}
+
+// ---------------------------------------------------------------------------
+// 🔴 PRD-C-100 B6 — 带图展示 + 图片重生（toolkit /variant/compose-figure）。
+//
+// 普通 POST（非 SSE，返 JSON），走 /agent proxy → toolkit :8093（无 misikt envelope，
+// 不走 http/request 拦截器）。两种 mode：
+//   mode=crop_mother    切母题图：{thread_id, ruoyi_token, image_url}
+//                       → {ok, png_base64?, n_figures, needs_figure, reason?}
+//   mode=compose_variant 造变式图：{thread_id, ruoyi_token, stem, answer?, item_id,
+//                                   correction_prompt?}
+//                       → {ok, png_base64?, needs_figure, commands, reason?}
+//
+// 图片重生 = 同 compose_variant 带 correction_prompt（老师输入的修正提示词，人在回路）。
+// 🔴 G4：needs_figure=true 时 png_base64 可能缺位 → FE 出「⚠待补图」徽章，不静默无图。
+// PNG 无损（铁则：禁压缩），直接 data:image/png;base64,<png_base64> 渲染。
+// ---------------------------------------------------------------------------
+
+/** crop_mother 返回 */
+export interface ComposeFigureMotherResult {
+  ok: boolean
+  /** 切出的母题图 PNG base64（无损；needs_figure=false 或无图时可空） */
+  pngBase64: string | null
+  /** 母题原图里识别到的图数 */
+  nFigures: number
+  /** 本题是否需要配图（true 但无 png → ⚠待补图） */
+  needsFigure: boolean
+  /** 文案（如「未识别到图形」/「切图失败」），外显给老师 */
+  reason: string | null
+}
+
+/** compose_variant 返回 */
+export interface ComposeFigureVariantResult {
+  ok: boolean
+  /** 造出的变式图 PNG base64（无损；needs_figure=true 但造不出时可空 → ⚠待补图） */
+  pngBase64: string | null
+  /** 本变式是否需要配图（true 但无 png → ⚠待补图） */
+  needsFigure: boolean
+  /** 绘图指令（调试 / 透明展示用，FE 可不渲染） */
+  commands: unknown
+  /** 文案，外显给老师 */
+  reason: string | null
+}
+
+function str0(v: unknown): string | null {
+  return typeof v === 'string' && v.trim() ? v : null
+}
+
+/**
+ * crop_mother：从母题原图切出图形区。
+ * @param imageUrl 母题原图公网 URL（OSS 公读）。
+ */
+export async function cropMotherFigure(
+  threadId: string,
+  ruoyiToken: string,
+  imageUrl: string
+): Promise<ComposeFigureMotherResult> {
+  const res = await fetch('/agent/variant/compose-figure', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      mode: 'crop_mother',
+      thread_id: threadId,
+      ruoyi_token: ruoyiToken,
+      image_url: imageUrl,
+    }),
+  })
+  if (!res.ok) {
+    const detail = await res
+      .json()
+      .then((d: { detail?: string; error?: string }) => d.detail || d.error)
+      .catch(() => '')
+    throw new Error(detail || `/variant/compose-figure(crop_mother) ${res.status}`)
+  }
+  const d = (await res.json()) as Record<string, unknown>
+  const n = typeof d.n_figures === 'number' ? d.n_figures : Number(d.n_figures)
+  return {
+    ok: d.ok === true,
+    pngBase64: str0(d.png_base64) ?? str0((d as Record<string, unknown>).pngBase64),
+    nFigures: Number.isFinite(n) ? n : 0,
+    needsFigure: d.needs_figure === true || d.needsFigure === true,
+    reason: str0(d.reason),
+  }
+}
+
+/**
+ * compose_variant：为某道变式题造配图。带 correctionPrompt 即「图片重生」（人在回路修正）。
+ * @param itemId  变式题在题组里的稳定标识（1-based index 或 seq；与 BE 约定一致）。
+ * @param correctionPrompt 可选，老师对上一版图的修正提示词（重新生成时传）。
+ */
+export async function composeVariantFigure(
+  threadId: string,
+  ruoyiToken: string,
+  params: {
+    stem: string
+    answer?: string
+    itemId: number | string
+    correctionPrompt?: string
+  }
+): Promise<ComposeFigureVariantResult> {
+  const res = await fetch('/agent/variant/compose-figure', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      mode: 'compose_variant',
+      thread_id: threadId,
+      ruoyi_token: ruoyiToken,
+      stem: params.stem,
+      answer: params.answer,
+      item_id: params.itemId,
+      correction_prompt: params.correctionPrompt,
+    }),
+  })
+  if (!res.ok) {
+    const detail = await res
+      .json()
+      .then((d: { detail?: string; error?: string }) => d.detail || d.error)
+      .catch(() => '')
+    throw new Error(detail || `/variant/compose-figure(compose_variant) ${res.status}`)
+  }
+  const d = (await res.json()) as Record<string, unknown>
+  return {
+    ok: d.ok === true,
+    pngBase64: str0(d.png_base64) ?? str0((d as Record<string, unknown>).pngBase64),
+    needsFigure: d.needs_figure === true || d.needsFigure === true,
+    commands: d.commands ?? null,
+    reason: str0(d.reason),
+  }
 }
 
 // ---------------------------------------------------------------------------

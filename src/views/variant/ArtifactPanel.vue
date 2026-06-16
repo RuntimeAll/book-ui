@@ -15,6 +15,14 @@ import { ElMessage } from 'element-plus'
 import Sortable from 'sortablejs'
 import type { VariantArtifact, VariantArtifactItem } from '@/api/variant'
 import VariantCard from './VariantCard.vue'
+
+// 🔴 PRD-C-100 B6：单卡配图态（按题 index 1-based）。宿主 variantFigures 透传，缺省 = 未配图。
+interface VariantFigureState {
+  png: string | null
+  loading: boolean
+  needs: boolean
+  reason: string | null
+}
 import KpTreeDialog from './KpTreeDialog.vue'
 import FontSizeSwitch from '@/components/business/FontSizeSwitch/index.vue'
 import { useFontScale } from '@/composables/useFontScale'
@@ -36,6 +44,8 @@ const props = defineProps<{
   basketingIndex?: number | null
   /** PRD-C-015 批5：正在重生的题号集合（1-based）；命中的卡 loading + 重生按钮转圈。null/[]=无 */
   regeneratingIndexes?: number[] | null
+  /** 🔴 PRD-C-100 B6：单卡配图态（按题 index 1-based）；宿主透传，缺省 = 未配图 */
+  variantFigures?: Record<number, VariantFigureState>
 }>()
 
 const emit = defineEmits<{
@@ -82,6 +92,10 @@ const emit = defineEmits<{
   (e: 'edit-models', payload: { index: number; value: Array<{ id: string; name: string }> }): void
   /** PRD-C-015 批5：一键重生全待重生集合（宿主调 regenVariant()，indexes 省略） */
   (e: 'regen-all'): void
+  /** 🔴 PRD-C-100 B6：单卡配图 / 图片重生（宿主调 composeVariantFigure） */
+  (e: 'compose-figure', payload: { index: number; correctionPrompt?: string }): void
+  /** 🔴 PRD-C-100 B6：点开看大图（含切图 / 配图 data URL；宿主弹大图遮罩） */
+  (e: 'preview', url: string): void
 }>()
 
 // G13 ⑤：头部主考点（知识点树弹层）/ 年级（下拉）可改
@@ -426,6 +440,10 @@ function regenAll() {
             :persisting="persistingIndex === it.index"
             :basketing="basketingIndex === it.index"
             :regenerating="!!(regeneratingIndexes && regeneratingIndexes.includes(it.index))"
+            :figure-png="variantFigures?.[it.index]?.png ?? null"
+            :figure-loading="!!variantFigures?.[it.index]?.loading"
+            :figure-needs-figure="!!variantFigures?.[it.index]?.needs"
+            :figure-reason="variantFigures?.[it.index]?.reason ?? null"
             @utterance="(t: string) => emit('utterance', t)"
             @edit="(p) => emit('edit', p)"
             @reverify="(i: number) => emit('reverify', i)"
@@ -435,6 +453,8 @@ function regenAll() {
             @regen="(i: number) => emit('regen', i)"
             @undo-regen="(i: number) => emit('undo-regen', i)"
             @edit-models="(p) => emit('edit-models', p)"
+            @compose-figure="(p) => emit('compose-figure', p)"
+            @preview="(u: string) => emit('preview', u)"
           />
         </div>
         <!-- PRD-C-012 P2：增量帧期的「生成中」占位卡（题号顺延已完成题，定稿帧到达即消失） -->

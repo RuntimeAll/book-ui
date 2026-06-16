@@ -7,6 +7,7 @@ import {
   updateProfile,
   type UpdateProfilePayload,
 } from '@/api/user'
+import AiMemorySection from './AiMemorySection.vue'
 
 // PRD-002 段③ — 教师个人资料页（登录态内页）。
 //
@@ -24,6 +25,9 @@ import {
 //   - userId 不传 body，BE 从登录态取（防越权改他人）。
 
 const userStore = useUserStore()
+
+// PRD-C-100 B6：tab 切换（个人资料 / AI 记忆）
+const activeTab = ref<'profile' | 'memory'>('profile')
 
 const formRef = ref<FormInstance>()
 const loading = ref(false)
@@ -135,12 +139,14 @@ onMounted(() => {
 <template>
   <div class="profile-page">
     <header class="profile-header">
-      <h1 class="title">个人资料</h1>
-      <p class="subtitle">完善你的资料，方便我们为你提供更贴合的服务</p>
+      <h1 class="title">个人中心</h1>
+      <p class="subtitle">完善你的资料，并维护 AI 命题 / 组卷的个性化记忆</p>
     </header>
 
-    <div v-loading="loading" class="profile-card">
-      <el-form
+    <el-tabs v-model="activeTab" class="profile-tabs">
+      <el-tab-pane label="个人资料" name="profile">
+        <div v-loading="loading" class="profile-card">
+          <el-form
         ref="formRef"
         :model="form"
         :rules="rules"
@@ -207,16 +213,28 @@ onMounted(() => {
             保存
           </el-button>
         </el-form-item>
-      </el-form>
-    </div>
+          </el-form>
+        </div>
+      </el-tab-pane>
+
+      <el-tab-pane label="AI 记忆" name="memory">
+        <div class="profile-card">
+          <AiMemorySection />
+        </div>
+      </el-tab-pane>
+    </el-tabs>
   </div>
 </template>
 
 <style scoped>
 .profile-page {
   padding: 24px 32px;
-  max-width: 720px;
+  max-width: 860px;
   margin: 0 auto;
+}
+
+.profile-tabs {
+  margin-top: 4px;
 }
 
 .profile-header {
