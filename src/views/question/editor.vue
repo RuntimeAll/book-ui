@@ -269,12 +269,20 @@ const ALIGN_OPTIONS: { label: string; value: ImageAlign }[] = [
 // 务实实现：rows 列表挂一个 Sortable；每个 row 内 cells 挂各自 Sortable（同 group 允许行间换列）。
 // 拖拽后从 DOM data-index 重建 doc.rows（与 workbench freesort 同思路），再 remount 重绑。
 const rowsContainerRef = ref<HTMLElement | null>(null)
-const cellContainerRefs = ref<(HTMLElement | null)[]>([])
 const renderKey = ref(0)
 let sortableInstances: Sortable[] = []
 
-function setCellContainerRef(el: unknown, idx: number) {
-  cellContainerRefs.value[idx] = (el as HTMLElement | null) ?? null
+// 稳定 key：行/块对象 → 自增 key（WeakMap）。避免 splice 后 Vue 按 index 错误复用
+// RichTextBlock/el-input 组件致状态错乱（PRD-A-015 选项增删「加挂」根因之一）。
+let keySeq = 0
+const keyMap = new WeakMap<object, number>()
+function keyOf(o: object): number {
+  let k = keyMap.get(o)
+  if (k == null) {
+    k = ++keySeq
+    keyMap.set(o, k)
+  }
+  return k
 }
 
 function destroySortable() {
@@ -322,9 +330,11 @@ function initSortable() {
         }),
       )
     }
-    // 行内 cell 拖拽（同 group 'editor-cells' 允许跨行换列）
-    cellContainerRefs.value.forEach((el) => {
-      if (!el) return
+    // 行内 cell 拖拽：实时查 DOM 拿各行 .cells-container（不依赖会残留废节点的 ref 数组）
+    const cellEls = Array.from(
+      rowsContainerRef.value?.querySelectorAll<HTMLElement>(':scope > .editor-row > .cells-container') ?? [],
+    )
+    cellEls.forEach((el) => {
       sortableInstances.push(
         Sortable.create(el, {
           group: 'editor-cells',
@@ -550,7 +560,7 @@ watch(questionId, async (newId) => {
         <div ref="rowsContainerRef" :key="renderKey" class="rows-container">
           <div
             v-for="(row, ri) in doc.rows"
-            :key="ri"
+            :key="keyOf(row)"
             class="editor-row"
             :data-row-index="ri"
           >
@@ -595,13 +605,12 @@ watch(questionId, async (newId) => {
             </div>
 
             <div
-              :ref="(el) => setCellContainerRef(el, ri)"
               class="cells-container"
               :style="{ gridTemplateColumns: `repeat(${Math.max(1, row.cells.length)}, minmax(0, 1fr))` }"
             >
               <div
                 v-for="(cell, ci) in row.cells"
-                :key="ci"
+                :key="keyOf(cell)"
                 class="editor-cell"
                 :data-cell-key="`${ri}:${ci}`"
               >
