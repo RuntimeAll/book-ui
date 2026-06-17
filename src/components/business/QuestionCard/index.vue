@@ -14,13 +14,16 @@
  *     永远 PNG 无损不压缩（记忆铁则）。
  */
 import { computed } from 'vue'
-import { Edit, Star, ShoppingCart, Key } from '@element-plus/icons-vue'
+import { Edit, EditPen, Star, ShoppingCart, Key } from '@element-plus/icons-vue'
 import Icon from '@/components/Icon/index.vue'
 import FreeTagList from '@/components/business/FreeTagList/index.vue'
 import QuestionContent from '@/components/business/QuestionContent/index.vue'
+import QuestionBlockRender from '@/components/business/QuestionBlockRender/index.vue'
+import { parseBlockDoc } from '@/utils/blockSchema'
 import type { QuestionItem } from '@/api/question/index'
 
-type ActionKey = 'draft' | 'favorite' | 'basket' | 'detail'
+// PRD-A-015 — 'edit' 为可选 action（opt-in，默认 actions 不含），仅「我的题库」等本人题场景启用。
+type ActionKey = 'draft' | 'favorite' | 'basket' | 'detail' | 'edit'
 
 const props = withDefaults(
   defineProps<{
@@ -53,12 +56,18 @@ const emit = defineEmits<{
   (e: 'detail', q: QuestionItem): void
   (e: 'favorite', q: QuestionItem): void
   (e: 'draft', q: QuestionItem): void
+  (e: 'edit', q: QuestionItem): void
 }>()
+
+// PRD-A-015 — 结构化题：blockJson 能解析成非空文档则走 QuestionBlockRender 网格渲染
+// （图片/选项/公式与详情/卷库/PDF 四端一致）；老题（无 blockJson）回落扁平 QuestionContent。
+const parsedBlock = computed(() => parseBlockDoc(props.question.blockJson))
 
 const showDraft = computed(() => props.actions.includes('draft'))
 const showFavorite = computed(() => props.actions.includes('favorite'))
 const showBasket = computed(() => props.actions.includes('basket'))
 const showDetail = computed(() => props.actions.includes('detail'))
+const showEdit = computed(() => props.actions.includes('edit'))
 
 function getQuestionTypeLabel(type: number): string {
   const map: Record<number, string> = { 1: '选择题', 2: '判断题', 3: '应用题', 4: '填空题', 5: '简答题' }
@@ -94,6 +103,16 @@ function getQuestionTypeTag(type: number): 'success' | 'warning' | 'info' | 'pri
       </div>
 
       <div class="card-meta-right">
+        <el-button
+          v-if="showEdit"
+          size="small"
+          class="action-btn"
+          type="primary"
+          plain
+          @click="emit('edit', question)"
+        >
+          <el-icon><EditPen /></el-icon>编辑
+        </el-button>
         <el-button v-if="showDraft" size="small" class="action-btn" @click="emit('draft', question)">
           <el-icon><Edit /></el-icon>草稿
         </el-button>
@@ -130,9 +149,14 @@ function getQuestionTypeTag(type: number): 'success' | 'warning' | 'info' | 'pri
       <span class="q-id-text">{{ question.id }}</span>
     </div>
 
-    <!-- 题干内容（富文本 / 图片 / 占位，统一走 QuestionContent） -->
+    <!-- 题干内容：结构化题(blockJson)走 QuestionBlockRender 网格；老题回落 QuestionContent 扁平 -->
     <div class="card-stem">
+      <QuestionBlockRender
+        v-if="parsedBlock"
+        :doc="parsedBlock"
+      />
       <QuestionContent
+        v-else
         :text="question.stemText"
         :img-url="question.stemImg"
         alt="题干"

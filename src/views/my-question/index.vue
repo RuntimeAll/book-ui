@@ -5,7 +5,7 @@
 // 血缘展示（母题关系等）暂不做（QuestionCard 列表本就不展示血缘，无需额外隐藏）。
 import { ref, reactive, onMounted, computed, watch, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Search, Document } from '@element-plus/icons-vue'
+import { Search, Document, Plus } from '@element-plus/icons-vue'
 import {
   lazyTree,
   questionPage,
@@ -236,6 +236,15 @@ function handleFavDrawerSuccess(_folderId: string | undefined) {
   }
 }
 
+// PRD-A-015 — 录题入口（G1）：从「我的题库」可点进单题网格编辑器。
+function handleCreate() {
+  router.push('/question/editor')
+}
+
+function handleEdit(q: QuestionItem) {
+  router.push(`/question/editor/${q.id}`)
+}
+
 function handleDetail(q: QuestionItem) {
   // 复用题库详情页（血缘展示在详情页，列表页不展示）
   try {
@@ -376,6 +385,10 @@ onMounted(async () => {
             </el-tag>
           </div>
           <FontSizeSwitch />
+          <!-- PRD-A-015 — 录题入口（G1）：新建题 -->
+          <el-button type="primary" :icon="Plus" class="create-btn" @click="handleCreate">
+            新建题
+          </el-button>
         </div>
 
         <div v-loading="listLoading" class="question-list">
@@ -397,10 +410,12 @@ onMounted(async () => {
             :basket-loading="basket.isLoading(q.id)"
             :is-favorite="!!q.isFavorite"
             :favorite-loading="favoriteLoading.has(q.id)"
+            :actions="['edit', 'draft', 'favorite', 'basket', 'detail']"
             @draft="handleDraft"
             @favorite="handleFavorite"
             @basket-toggle="handleBasketToggle"
             @detail="handleDetail"
+            @edit="handleEdit"
           />
         </div>
 
@@ -533,6 +548,12 @@ onMounted(async () => {
   font-size: 14px;
   font-weight: 600;
   color: #1d2129;
+}
+
+/* PRD-A-015 录题入口（青主色） */
+.create-btn {
+  background: #1e8a8a;
+  border-color: #1e8a8a;
 }
 
 .question-list {

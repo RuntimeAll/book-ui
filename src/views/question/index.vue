@@ -102,10 +102,19 @@ const DIFFICULTY_OPTIONS = [
   { label: '4星', value: 4 },
 ]
 
+const LABEL_STATUS_OPTIONS = [
+  { label: '全部', value: '' },
+  { label: '未标', value: 0 },
+  { label: 'AI已标', value: 1 },
+  { label: '已审核', value: 2 },
+]
+
 const filter = reactive({
   questionType: '' as number | '',
   difficulty: '' as number | '',
   keyWord: '',
+  labelStatus: '' as number | '',
+  examPaperId: '',
 })
 
 const searchLoading = ref(false)
@@ -115,6 +124,8 @@ function onSearch() {
   pageParams.questionType = filter.questionType !== '' ? Number(filter.questionType) : undefined
   pageParams.difficult = filter.difficulty !== '' ? Number(filter.difficulty) : undefined
   pageParams.keyWord = filter.keyWord || undefined
+  pageParams.labelStatus = filter.labelStatus !== '' ? Number(filter.labelStatus) : undefined
+  pageParams.examPaperId = filter.examPaperId.trim() || undefined
   pageParams.pageIndex = 1
   fetchQuestions()
 }
@@ -123,9 +134,13 @@ function onReset() {
   filter.questionType = ''
   filter.difficulty = ''
   filter.keyWord = ''
+  filter.labelStatus = ''
+  filter.examPaperId = ''
   pageParams.questionType = undefined
   pageParams.difficult = undefined
   pageParams.keyWord = undefined
+  pageParams.labelStatus = undefined
+  pageParams.examPaperId = undefined
   pageParams.subjectId = undefined
   pageParams.pageIndex = 1
   fetchQuestions()
@@ -395,6 +410,34 @@ onMounted(async () => {
                 <el-icon><Search /></el-icon>
               </template>
             </el-input>
+          </div>
+
+          <div class="filter-item">
+            <span class="filter-label">打标态</span>
+            <el-select
+              v-model="filter.labelStatus"
+              placeholder="全部"
+              clearable
+              style="width: 110px;"
+            >
+              <el-option
+                v-for="opt in LABEL_STATUS_OPTIONS"
+                :key="String(opt.value)"
+                :label="opt.label"
+                :value="opt.value"
+              />
+            </el-select>
+          </div>
+
+          <div class="filter-item">
+            <span class="filter-label">试卷ID</span>
+            <el-input
+              v-model="filter.examPaperId"
+              placeholder="输入试卷ID"
+              clearable
+              style="width: 180px;"
+              @keyup.enter="onSearch"
+            />
           </div>
         </SearchWrap>
 

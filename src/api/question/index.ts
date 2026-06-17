@@ -43,7 +43,8 @@ export interface QuestionItem {
   questionType: number // 1=选择 / 4=填空 / 5=简答
   difficult: number | null   // ⚠️ 真实字段名是 difficult 不是 difficulty（4星制）
   stemImg: string | null      // 题干图 URL（完整 CDN URL）
-  stemText?: string | null    // 题干文本
+  stemText?: string | null    // 题干文本（旧字段，兼容保留）
+  stemTextContent?: string | null   // 富文本题干（Markdown + $...$ LaTeX）
   answerImg?: string | null
   explainImg?: string | null
   fileBin?: string | null
@@ -54,6 +55,8 @@ export interface QuestionItem {
   createUser?: string
   score?: number
   status?: number
+  /** 打标状态：0=未标 / 1=AI已标 / 2=已审核 */
+  labelStatus?: number | null
   isSelected?: boolean | null
   isWrongBook?: boolean | null
   examYear?: string | null
@@ -62,6 +65,13 @@ export interface QuestionItem {
   freeTag?: string | null              // 老字段（字符串），段③字典化后保留兼容
   freeTags?: FreeTagVo[]               // X 卡 段② BE 新字段，position asc 已排序
   isFavorite?: boolean                 // J 卡 段② BE LEFT JOIN biz_question_favorite 返回，FE 列表心形态判断
+  /**
+   * PRD-A-015 — 结构化网格块 JSON（biz_question_block.block_json）。
+   * null/缺省 = 该题未结构化，渲染回落旧富文本/图（QuestionContent 链）。
+   * 回填端点：分页 page（我的题库/题库列表卡片走 QuestionBlockRender）、
+   * 单题 select/{id}、批量 list?ids=（卷库预览/PDF）——四端一致结构化渲染。
+   */
+  blockJson?: string | null
 }
 
 // page 接口响应（PageHelper 结构）
@@ -87,15 +97,73 @@ export interface QuestionPageParams {
   notUsedQuestion?: number
   /** PRD-C-009「我的题库」：true=只看当前登录老师自己的题（owner 由后端 LoginHelper 定）。空/false=全量。 */
   mine?: boolean
+  /** 按试卷 id 筛选（雪花 string）。空/不传=不限。 */
+  examPaperId?: string
+  /** 打标状态筛选：0=未标 / 1=AI已标 / 2=已审核。空/不传=全部。 */
+  labelStatus?: number
 }
 
 // 题目详情（GET /teacher/question/{id} 返）
 export interface QuestionDetail extends QuestionItem {
   // ── Q' 卡 段③ 扩展 — BE QuestionDetailVo 详情字段（list / select 端点返回） ──
-  answer?: string | null              // 答案文本（HTML/纯文本）
-  explain?: string | null             // 解析文本（HTML/纯文本）
-  // 以下字段 QuestionItem 已声明（fileBin / questionStdKnowledges 全部可选），
-  // 列表 page 端点空返，list / select 详情端点才真有值 — 这里不重复声明。
+  answer?: string | null              // 答案文本（旧字段，兼容保留）
+  explain?: string | null             // 解析文本（旧字段，兼容保留）
+  answerTextContent?: string | null   // 富文本答案（Markdown + $...$ LaTeX）
+  analyzeTextContent?: string | null  // 富文本解析（Markdown + $...$ LaTeX）
+  // blockJson 已上移至基类 QuestionItem（page/list/select 三端均回填），此处不重复声明。
+
+  // ── PRD-A-015 批1「题目属性编辑页」— select/{id} 已返全部属性维度字段（皆可选，BE 端可能为 null） ──
+  // 🔴 C-100 B-converge 方案B：dim3Skill / auxTags 随 BE V905 DROP 列剥除（属性编辑页 C 线预期降级）。
+  dim1KpId?: string | null            // AI 维度1：知识点 id
+  dim2Qtype?: number | null           // AI 维度2：题型
+  dim4Difficulty?: number | null      // AI 维度4：难度
+  dim5Structure?: string | null       // AI 维度5：结构指纹
+  labelConfidence?: number | null     // 打标置信度
+  labeledBy?: string | null           // 打标者
+  labeledAt?: number | string | null  // 打标时间（时间戳/字符串）
+  baseScore?: number | null           // 标准分值
+  importSource?: string | null        // 导入来源
+  regionCode?: string | null          // 地域编码
+  sourceType?: number | null          // 来源类型（1中考真题/2模拟/3期末/4月考/5单元/6自编/9其他）
+  motherQuestionId?: string | null    // 母题 id（雪花 string）
+  variantRelation?: string | null     // 变式关系
+  annotateVersion?: number | null     // 标注版本
+  annotateStatus?: number | null      // 标注完整度（0未标/1已标全/2部分）
+}
+
+// ── PRD-A-015 录题/编辑 入参 ──────────────────────────────────────
+// 雪花 id 一律 string（防 JS Number 精度丢失，本仓约定）。
+// blockJson = §10.1 锁定的结构化网格块文档序列化串（{ v, rows:[...] }）。
+
+/** POST /teacher/question/create 入参（CreateQuestionBo） */
+export interface CreateQuestionPayload {
+  questionType: number          // 1=选择 / 4=填空 / 5=简答
+  stem: string
+  subjectId: string
+  difficult?: number
+  blockJson?: string            // 结构化网格块 JSON（可选）
+  answer?: string
+  analyze?: string
+  freeTag?: string
+  examYear?: string
+  examPaperId?: string
+  examPaperName?: string
+}
+
+/**
+ * POST /teacher/question/update-block 入参（UpdateBlockBo，权威源 = blockJson）。
+ * 🔴 C-100 B-converge：A-015 原端点 /teacher/question/update 与 C-015 覆盖原行撞名，
+ * 维护者拍板 A 改名 → /teacher/question/update-block。
+ */
+export interface UpdateBlockPayload {
+  questionId: string            // 雪花 string
+  blockJson: string             // 必填：结构化内容权威源
+  questionType?: number
+  difficult?: number
+  subjectId?: string
+  stem?: string
+  answer?: string
+  analyze?: string
 }
 
 // 收藏夹文件夹（GET /teacher/center/q-folder/tree 返回树结构）
@@ -416,11 +484,61 @@ export interface PaperDetailVo {
 export const getQuestionDetail = (questionId: string) =>
   request.post<QuestionDetail, QuestionDetail>(`/teacher/question/select/${questionId}`)
 
+/**
+ * PRD-A-015 — 新建题目（结构化录题）。
+ * POST /teacher/question/create（CreateQuestionBo）。
+ * envelope `/teacher/**` 由拦截器解包，拿到的是 QuestionDetail 内层。
+ */
+export const createQuestion = (payload: CreateQuestionPayload) =>
+  request.post<QuestionDetail, QuestionDetail>('/teacher/question/create', payload)
+
+/**
+ * PRD-A-015 — 结构化编辑题目（权威源 = blockJson）。
+ * 🔴 C-100 B-converge 改名：POST /teacher/question/update-block（UpdateBlockBo）。
+ * 返回更新后的 QuestionDetail（含回读的 blockJson + 外置文本 + knowledges + freeTags）。
+ */
+export const updateBlock = (payload: UpdateBlockPayload) =>
+  request.post<QuestionDetail, QuestionDetail>('/teacher/question/update-block', payload)
+
+// ── PRD-A-015 批1「题目属性编辑页」— 属性回写端点 ────────────────────────────
+// POST /teacher/question/update-attrs（全字段可选，BE 只回写传了的非 null 列，不碰 blockJson/题干）。
+// 返回更新后的 QuestionDetail。雪花 id（questionId / motherQuestionId）一律 string。
+export interface UpdateAttrsPayload {
+  questionId: string
+  subjectId?: string
+  questionType?: number
+  difficult?: number
+  dim1KpId?: string
+  dim2Qtype?: number
+  // 🔴 C-100 B-converge 方案B：dim3Skill / auxTags 随 BE V905 DROP 列剥除（属性编辑页 C 线预期降级）。
+  dim4Difficulty?: number
+  dim5Structure?: string
+  labelStatus?: number
+  labelConfidence?: number
+  labeledBy?: string
+  baseScore?: number
+  sourceType?: number
+  regionCode?: string
+  variantRelation?: string
+  motherQuestionId?: string
+  annotateStatus?: number
+}
+
+/**
+ * PRD-A-015 批1 — 回写题目属性（基础设置 + 各维度，本批仅基础设置生效）。
+ * POST /teacher/question/update-attrs（UpdateAttrsBo），envelope `/teacher/**` 由拦截器解包。
+ * 返回更新后的 QuestionDetail（含刷新后的全部属性维度字段）。
+ */
+export const updateQuestionAttrs = (payload: UpdateAttrsPayload) =>
+  request.post<QuestionDetail, QuestionDetail>('/teacher/question/update-attrs', payload)
+
 
 // Q' 卡 段① BE 新端点 — 按 ids 批查完整字段（含 answer / explain / freeTags / questionStdKnowledges）。
 // query string = ?ids=1,2,3 逗号分隔（axios params 对 string 不会重复 key）；上限 100（BE 端约束）；
 // 软删自动过滤（BE WHERE status<>'2'）；顺序按 FIND_IN_SET 保入参顺序（FE 仍需 reorder 兜底）。
 // PRD-A-013 T2 — ids 雪花 string[]
+// PRD-A-015：BE listByIds 已批量回填 blockJson（与单题 selectById 对称），故卷库预览/PDF 走本接口
+//    也能拿到结构化内容、命中 QuestionBlockRender 网格渲染（PaperPreview blockDocOf 分支）。
 export const questionListByIds = (ids: string[]) =>
   request.get<QuestionDetail[], QuestionDetail[]>('/teacher/question/list', {
     params: { ids: ids.join(',') },

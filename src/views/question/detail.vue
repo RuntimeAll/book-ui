@@ -7,8 +7,10 @@ import {
   ArrowLeft,
   Star,
   Edit,
+  EditPen,
   ShoppingCart,
   ChatDotRound,
+  Tools,
 } from '@element-plus/icons-vue'
 import {
   getQuestionDetail,
@@ -29,8 +31,13 @@ import SketchPad from '@/components/business/SketchPad/index.vue'
 import DetailSidebar from './components/DetailSidebar.vue'
 import FontSizeSwitch from '@/components/business/FontSizeSwitch/index.vue'
 import QuestionContent from '@/components/business/QuestionContent/index.vue'
+// PRD-A-015 — 结构化网格块统一渲染（题干 blockJson 非空时优先用它，否则回落 QuestionContent）
+import QuestionBlockRender from '@/components/business/QuestionBlockRender/index.vue'
+import { parseBlockDoc } from '@/utils/blockSchema'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
 import { useFontScale } from '@/composables/useFontScale'
+import { useUserStore } from '@/store/user'
+import { getCurrentUser } from '@/api/user'
 
 // 题面展示字号（小/中/大）—— 与变式编辑器共用同一状态，注入 --md-font-size 级联给 MarkdownMath
 const { cssVars: fontVars } = useFontScale()
@@ -54,13 +61,35 @@ const basket = useQuestionBasket()
 const question = ref<QuestionDetail | null>(null)
 const loading = ref(false)
 
+// PRD-A-015 — 题干结构化 block 文档（非法/空返 null → 题干区回落旧富文本/图渲染）
+const parsedBlock = computed(() => parseBlockDoc(question.value?.blockJson))
+
+// ── 编辑权限（PRD-A-015）──────────────────────────────────────
+// 本人题（createUser=登录 id）或 superadmin（角色，对齐 BE LoginHelper.isSuperAdmin）才可编辑。
+// teacher 仅本人题；非本人非超管 → 不显示编辑按钮（BE update 同步硬校验，防御纵深）。
+const userStore = useUserStore()
+const canEdit = computed(() => {
+  if (!question.value) return false
+  if (userStore.isSuperAdmin) return true
+  const uid = userStore.userInfo?.id
+  const owner = question.value.createUser
+  return uid != null && owner != null && String(owner) === String(uid)
+})
+function goEdit() {
+  router.push(`/question/editor/${questionId.value}`)
+}
+// PRD-A-015 批1 — 跳题目属性编辑页（同 canEdit 门控）
+function goAttributes() {
+  router.push(`/question/attributes/${questionId.value}`)
+}
+
 async function loadQuestion() {
   loading.value = true
   try {
     // PRD-A-013 T2 — API 签名已改 string，盲 cast 撤掉
     const res = await getQuestionDetail(questionId.value)
-    if (res && (res as QuestionItem).id) {
-      question.value = res as QuestionItem
+    if (res && (res as QuestionDetail).id) {
+      question.value = res as QuestionDetail
     } else {
       fallbackFromCache()
     }
@@ -76,7 +105,7 @@ function fallbackFromCache() {
   // 兜底从 index.vue 写入的 cache 读
   try {
     const cacheKey = 'book-ui:question-cache-by-id'
-    const cache: Record<string, QuestionItem> = JSON.parse(localStorage.getItem(cacheKey) || '{}')
+    const cache: Record<string, QuestionDetail> = JSON.parse(localStorage.getItem(cacheKey) || '{}')
     const cached = cache[String(questionId.value)]
     if (cached) {
       question.value = cached
@@ -261,6 +290,15 @@ function goToPaperSource(paperId: string) {
 
 // ── 初始化 ───────────────────────────────────────────────────
 onMounted(async () => {
+  // 兜底拉当前用户（权限判定需 userInfo.id/roles；内存态刷新会丢，与 editor.vue 同款兜底）
+  if (!userStore.userInfo) {
+    try {
+      const info = await getCurrentUser()
+      if (info) userStore.setUserInfo(info)
+    } catch (e) {
+      console.warn('[detail] getCurrentUser 兜底失败', e)
+    }
+  }
   await loadQuestion()
   // 并行加载侧边栏数据
   Promise.allSettled([loadNotes(), loadSources()])
@@ -332,6 +370,28 @@ watch(questionId, async () => {
             <span v-else class="knowledge-empty">暂无</span>
           </div>
           <div class="meta-right">
+            <!-- 编辑（PRD-A-015）：本人题 / superadmin 才显示；BE update 同步硬校验 -->
+            <el-button
+              v-if="canEdit"
+              size="small"
+              type="primary"
+              plain
+              class="action-btn"
+              @click="goEdit"
+            >
+              <el-icon><EditPen /></el-icon>编辑
+            </el-button>
+            <!-- 属性（PRD-A-015 批1）：同 canEdit 门控，跳题目属性编辑页 -->
+            <el-button
+              v-if="canEdit"
+              size="small"
+              type="primary"
+              plain
+              class="action-btn"
+              @click="goAttributes"
+            >
+              <el-icon><Tools /></el-icon>高级属性
+            </el-button>
             <!-- 草稿 -->
             <el-button size="small" class="action-btn" @click="sketchVisible = true">
               <el-icon><Edit /></el-icon>草稿
@@ -363,10 +423,17 @@ watch(questionId, async () => {
           </div>
         </div>
 
-        <!-- 题干（富文本/图片/占位统一走 QuestionContent） -->
+        <!-- 题干区（PRD-A-015）：
+             parsedBlock 非空 → 结构化网格块整题内容为权威（QuestionBlockRender）；
+             否则回落旧富文本/图链（stemTextContent 优先，fallback stemText / stemImg）。 -->
         <div class="stem-area">
+          <QuestionBlockRender
+            v-if="parsedBlock"
+            :doc="parsedBlock"
+          />
           <QuestionContent
-            :text="question.stemText"
+            v-else
+            :text="question.stemTextContent || question.stemText"
             :img-url="question.stemImg"
             alt="题干"
           />
@@ -409,9 +476,10 @@ watch(questionId, async () => {
           </div>
           <div v-if="answerExpanded" class="collapse-body">
             <div class="answer-label">【答案】</div>
-            <!-- 答案（富文本/图片统一走 QuestionContent；answer=文本字段 answerImg=图字段）-->
+            <!-- 答案（富文本/图片统一走 QuestionContent）
+                 answerTextContent 优先（Markdown+LaTeX 富文本），fallback answer（旧字段） -->
             <QuestionContent
-              :text="(question as { answer?: string | null }).answer"
+              :text="question.answerTextContent || question.answer"
               :img-url="question.answerImg"
               alt="答案"
             />
@@ -425,9 +493,10 @@ watch(questionId, async () => {
             <span class="collapse-arrow" :class="{ 'expanded': explainExpanded }">▼</span>
           </div>
           <div v-if="explainExpanded" class="collapse-body">
-            <!-- 解析（富文本/图片统一走 QuestionContent；explain=文本字段 explainImg=图字段）-->
+            <!-- 解析（富文本/图片统一走 QuestionContent）
+                 analyzeTextContent 优先（Markdown+LaTeX 富文本），fallback explain（旧字段） -->
             <QuestionContent
-              :text="(question as { explain?: string | null }).explain"
+              :text="question.analyzeTextContent || question.explain"
               :img-url="question.explainImg"
               alt="解析"
             />

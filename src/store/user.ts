@@ -74,6 +74,9 @@ export const useUserStore = defineStore('user', () => {
   // U 卡新增 — 真实角色列表（基于 userInfo.roles），FE 登录分流 + 菜单角色过滤 single source of truth
   const roles = computed(() => userInfo.value?.roles ?? [])
   const isTeacher = computed(() => roles.value.includes('teacher'))
+  // PRD-A-015 — 超级管理员（角色 superadmin，对齐 BE LoginHelper.isSuperAdmin）。
+  // 用于题目编辑权限：teacher 仅本人题，superadmin 可编辑所有题。
+  const isSuperAdmin = computed(() => roles.value.includes('superadmin'))
 
   function setAuth(payload: AuthState): void {
     auth.value = payload
@@ -117,6 +120,7 @@ export const useUserStore = defineStore('user', () => {
     accessToken,
     roles,
     isTeacher,
+    isSuperAdmin,
     setAuth,
     setUserInfo,
     clear,

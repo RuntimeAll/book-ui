@@ -17,6 +17,8 @@ import {
 import { typesetPaperPreview } from '@/utils/mathjax'
 import { exportPaperToPdf } from '@/utils/pdf-export'
 import { proxyImage } from '@/utils/image-proxy'
+import { parseBlockDoc, type QuestionBlockDoc } from '@/utils/blockSchema'
+import QuestionBlockRender from '@/components/business/QuestionBlockRender/index.vue'
 import { useUserStore } from '@/store/user'
 import { getCurrentUser } from '@/api/user'
 // PRD-A-014 异步导出 API（2026-06-11 用户拍板去掉导出配置弹窗：导出直接用页面状态——
@@ -59,6 +61,15 @@ onMounted(async () => {
     }
   }
 })
+
+/**
+ * PRD-A-015：结构化网格块文档（有 blockJson 且合法时返文档，否则 null）。
+ * 非空 → 该题走 QuestionBlockRender 结构化渲染（KaTeX 同步入 DOM，html2canvas 直接截到）；
+ * null → 回落原 image-only（stemImg）。
+ */
+function blockDocOf(q: QuestionDetail): QuestionBlockDoc | null {
+  return parseBlockDoc(q.blockJson)
+}
 
 /** 手机号脱敏 138****1234 */
 function maskPhone(phone?: string): string {
@@ -462,8 +473,14 @@ async function handleAsyncExport() {
             <template v-if="RENDER_MODE === 'image-only'">
               <!-- 题干图（已含选项 + LaTeX 渲染） -->
               <div class="pp-q-stem">
+                <!-- PRD-A-015：结构化网格块题(个人题) → QuestionBlockRender(权威, 含选项); 否则回落题干图 -->
+                <QuestionBlockRender
+                  v-if="blockDocOf(q)"
+                  :doc="blockDocOf(q)!"
+                  :proxy="true"
+                />
                 <img
-                  v-if="q.stemImg"
+                  v-else-if="q.stemImg"
                   :src="proxyImage(q.stemImg)"
                   alt="题干图"
                   class="stem-img"
