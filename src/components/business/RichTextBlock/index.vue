@@ -39,23 +39,77 @@ function recordSel() {
   if (ta) lastSel.value = { start: ta.selectionStart, end: ta.selectionEnd }
 }
 
-/** 用 before/after 包裹当前选区（无选区则插入占位词），写回 v-model 并恢复选区 */
+function escapeReg(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+/** emit 新值并恢复焦点 + 选中 [ns, ns+len] */
+function commit(next: string, ns: number, len: number) {
+  emit('update:modelValue', next)
+  requestAnimationFrame(() => {
+    const ta = getTa()
+    if (!ta) return
+    ta.focus()
+    ta.setSelectionRange(ns, ns + len)
+    lastSel.value = { start: ns, end: ns + len }
+  })
+}
+
+/**
+ * 切换包裹：选区已被 before/after 包裹（含在选区内 或 紧贴选区外）→ 剥掉（取消）；否则包裹。
+ * 用于加粗/斜体/上标/下标/公式（before/after 为固定串）。
+ */
 function wrap(before: string, after: string, placeholder = '文字') {
-  const ta = getTa()
   const { start, end } = lastSel.value
   const val = props.modelValue ?? ''
   const hasSel = end > start
-  const sel = hasSel ? val.slice(start, end) : placeholder
-  const next = val.slice(0, start) + before + sel + after + val.slice(end)
-  emit('update:modelValue', next)
-  // 恢复焦点 + 选中包裹后的内容
-  requestAnimationFrame(() => {
-    if (!ta) return
-    ta.focus()
-    const ns = start + before.length
-    ta.setSelectionRange(ns, ns + sel.length)
-    lastSel.value = { start: ns, end: ns + sel.length }
-  })
+  const sel = hasSel ? val.slice(start, end) : ''
+
+  // 取消①：标记包含在选区内 "**x**"
+  if (hasSel && sel.length >= before.length + after.length
+    && sel.startsWith(before) && sel.endsWith(after)) {
+    const inner = sel.slice(before.length, sel.length - after.length)
+    commit(val.slice(0, start) + inner + val.slice(end), start, inner.length)
+    return
+  }
+  // 取消②：标记紧贴选区外 "**[x]**"
+  if (val.slice(start - before.length, start) === before
+    && val.slice(end, end + after.length) === after) {
+    commit(val.slice(0, start - before.length) + sel + val.slice(end + after.length),
+      start - before.length, sel.length)
+    return
+  }
+  // 包裹
+  const body = hasSel ? sel : placeholder
+  commit(val.slice(0, start) + before + body + after + val.slice(end), start + before.length, body.length)
+}
+
+/**
+ * 应用「带值」标记（颜色/字号）：先剥掉同类已有包裹（避免 ⟦c⟧⟦c⟧ 嵌套），再以新值包裹 = 替换语义。
+ */
+function applyTyped(openStr: string, openRe: RegExp, close: string, placeholder = '文字') {
+  const { start, end } = lastSel.value
+  let val = props.modelValue ?? ''
+  let s = start
+  let e = end
+  let sel = e > s ? val.slice(s, e) : ''
+
+  // 剥同类①：选区内 "⟦c:..⟧x⟦/c⟧"
+  const innerM = sel.match(new RegExp('^(' + openRe.source + ')([\\s\\S]*)(' + escapeReg(close) + ')$'))
+  if (innerM) {
+    sel = innerM[2]
+    val = val.slice(0, s) + sel + val.slice(e)
+    e = s + sel.length
+  } else {
+    // 剥同类②：紧贴选区外
+    const preM = val.slice(0, s).match(new RegExp('(' + openRe.source + ')$'))
+    if (preM && val.slice(e).startsWith(close)) {
+      val = val.slice(0, s - preM[1].length) + sel + val.slice(e + close.length)
+      s -= preM[1].length
+      e = s + sel.length
+    }
+  }
+  const body = sel || placeholder
+  commit(val.slice(0, s) + openStr + body + close + val.slice(e), s + openStr.length, body.length)
 }
 
 const SIZE_OPTIONS = [
@@ -64,10 +118,10 @@ const SIZE_OPTIONS = [
   { label: '大', value: 24 },
 ]
 function applyColor(color: string | null) {
-  if (color) wrap(`⟦c:${color}⟧`, '⟦/c⟧')
+  if (color) applyTyped(`⟦c:${color}⟧`, /⟦c:#[0-9a-fA-F]{3,8}⟧/, '⟦/c⟧')
 }
 function applySize(px: number) {
-  wrap(`⟦s:${px}⟧`, '⟦/s⟧')
+  applyTyped(`⟦s:${px}⟧`, /⟦s:\d{1,3}⟧/, '⟦/s⟧')
 }
 </script>
 
