@@ -27,6 +27,7 @@ import {
 } from '@/api/question/index'
 import { uploadMotherImage } from '@/api/variant/index'
 import QuestionBlockRender from '@/components/business/QuestionBlockRender/index.vue'
+import RichTextBlock from '@/components/business/RichTextBlock/index.vue'
 import {
   emptyDoc,
   parseBlockDoc,
@@ -620,9 +621,8 @@ watch(questionId, async (newId) => {
 
                 <!-- 文字块 -->
                 <template v-if="cell.type === 'text'">
-                  <el-input
+                  <RichTextBlock
                     v-model="(cell as TextBlock).md"
-                    type="textarea"
                     :rows="3"
                     placeholder="支持 Markdown + $...$ 行内公式，例：求 $\sqrt{2}$ 的值"
                   />
@@ -685,9 +685,8 @@ watch(questionId, async (newId) => {
                     >
                       <!-- option 内文字 -->
                       <template v-if="sub.type === 'text'">
-                        <el-input
+                        <RichTextBlock
                           v-model="(sub as TextBlock).md"
-                          type="textarea"
                           :rows="2"
                           placeholder="选项文字（支持 $...$）"
                         />

@@ -77,5 +77,26 @@ export function renderRichText(text: string): string {
     result = result.replace(key, html)
   }
 
+  // ── Step 4：PRD-A-015 档 L — 受控内联样式标记 → HTML ──
+  // RichTextBlock 工具栏插入的标记（markdown 无原生语法的字号/颜色/上下标）。
+  // 用 ⟦⟧ 私用分隔符，markdown-it 视作普通文本透传，此处在最终 HTML 上还原。
+  // 值受正则约束（仅 hex 颜色 / 数字字号）+ v-safe-html DOMPurify 兜底，无注入面。
+  result = applyInlineMarkers(result)
+
   return result
+}
+
+/** 受控内联样式标记 → HTML（颜色/字号/上下标）。值经正则严格约束。 */
+function applyInlineMarkers(html: string): string {
+  return html
+    .replace(
+      /⟦c:(#[0-9a-fA-F]{3,8})⟧([\s\S]*?)⟦\/c⟧/g,
+      (_m, color: string, inner: string) => `<span style="color:${color}">${inner}</span>`,
+    )
+    .replace(/⟦s:(\d{1,3})⟧([\s\S]*?)⟦\/s⟧/g, (_m, size: string, inner: string) => {
+      const px = Math.min(48, Math.max(10, Number(size)))
+      return `<span style="font-size:${px}px">${inner}</span>`
+    })
+    .replace(/⟦sup⟧([\s\S]*?)⟦\/sup⟧/g, (_m, inner: string) => `<sup>${inner}</sup>`)
+    .replace(/⟦sub⟧([\s\S]*?)⟦\/sub⟧/g, (_m, inner: string) => `<sub>${inner}</sub>`)
 }
