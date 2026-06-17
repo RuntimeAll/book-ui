@@ -747,10 +747,22 @@ watch(questionId, async (newId) => {
 
       <!-- ══ 右：实时预览（QuestionBlockRender，所见即所得 = 三端一致）══ -->
       <div class="preview-pane">
-        <div class="preview-head">实时预览</div>
+        <div class="preview-head">实时预览（按最终展示宽度等比缩放）</div>
         <div class="preview-body">
-          <QuestionBlockRender :doc="doc" />
-          <div v-if="doc.rows.length === 0" class="preview-empty">预览区（添加块后显示）</div>
+          <!-- 在「代表真实展示宽度」的画布上渲染 + zoom 等比缩到栏宽 = 所见即最终（列表/详情/导出同一布局比例），
+               不再因预览栏窄导致 2 列选项挤压、间距与最终对不上。渲染器与四端完全同一组件。 -->
+          <div
+            v-if="doc.rows.length > 0"
+            class="preview-canvas"
+          >
+            <QuestionBlockRender :doc="doc" />
+          </div>
+          <div
+            v-else
+            class="preview-empty"
+          >
+            预览区（添加块后显示）
+          </div>
         </div>
       </div>
     </div>
@@ -1021,7 +1033,7 @@ watch(questionId, async (newId) => {
 
 /* 右预览栏 */
 .preview-pane {
-  width: 380px;
+  width: 440px;
   flex-shrink: 0;
   background: #fff;
   border: 1px solid #f2f3f5;
@@ -1045,8 +1057,16 @@ watch(questionId, async (newId) => {
 
 .preview-body {
   padding: 16px;
-  overflow-y: auto;
+  overflow: auto;
   flex: 1;
+}
+
+/* 代表真实展示宽度的画布，zoom 等比缩到栏宽 → 预览=最终布局比例（列表/详情/导出一致）。
+   700px ≈ 详情/卡片正文宽；440 栏 - 32 padding = 408 可视，700*0.58≈406 贴合不溢出。
+   zoom 在 Chromium(本应用运行环境) 影响布局盒，高度随缩放、无需 transform 补偿。 */
+.preview-canvas {
+  width: 700px;
+  zoom: 0.58;
 }
 
 .preview-empty {
