@@ -1449,6 +1449,33 @@ export async function composeVariantFigure(
   }
 }
 
+/**
+ * PRD-C-100 BC2 — 把变式配图的 OSS https url 回写进 toolkit state.items[index].figure_url。
+ *
+ * 用途：变式造图（composeVariantFigure）产 PNG base64 只在 FE 展示；老师认账入库前，FE 先把
+ * base64 经 uploadMotherImage 传 OSS 拿 https url，再调本端点回写 state。入库时 BE
+ * build_create_bo 据 figure_url 产 A-015 image 块 → 卷库/详情/PDF 走结构化渲染。
+ * figureUrl 传空 = 撤掉配图。index = 1-based（与 persist-one 同口径）。
+ */
+export async function setVariantFigureUrl(
+  threadId: string,
+  index: number,
+  figureUrl: string | null
+): Promise<void> {
+  const res = await fetch('/agent/variant/set-figure-url', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ thread_id: threadId, index, figure_url: figureUrl }),
+  })
+  if (!res.ok) {
+    const detail = await res
+      .json()
+      .then((d: { detail?: string; error?: string }) => d.detail || d.error)
+      .catch(() => '')
+    throw new Error(detail || `/variant/set-figure-url ${res.status}`)
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 母题图上传（book-server /teacher/variant/upload-image，misikt envelope）
 //

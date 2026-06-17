@@ -15,6 +15,7 @@ import {
   regenVariant,
   reorderVariant,
   reverifyVariantItem,
+  setVariantFigureUrl,
   streamVariant,
   undoRegenVariant,
   uploadMotherImage,
@@ -161,20 +162,44 @@ const motherFigureLoading = ref(false)
 const motherFigureNeeds = ref(false)
 const motherFigureReason = ref<string | null>(null)
 
-// 变式图态：按题 index（1-based）存。{png, loading, needs, reason}
+// 变式图态：按题 index（1-based）存。{png, loading, needs, reason, ossUrl}
 interface VariantFigureState {
   png: string | null
   loading: boolean
   needs: boolean
   reason: string | null
+  /** PRD-C-100 BC2：本图已传 OSS 后的 https url（base64→OSS 只传一次，防重复入库重传） */
+  ossUrl?: string | null
 }
 const variantFigures = reactive<Record<number, VariantFigureState>>({})
 
 function ensureVariantFigure(index: number): VariantFigureState {
   if (!variantFigures[index]) {
-    variantFigures[index] = { png: null, loading: false, needs: false, reason: null }
+    variantFigures[index] = { png: null, loading: false, needs: false, reason: null, ossUrl: null }
   }
   return variantFigures[index]
+}
+
+/**
+ * PRD-C-100 BC2：入库前把该题已生成的配图 base64 传 OSS → 回写 toolkit state.figure_url，
+ * 这样 BE build_create_bo 才能据 figure_url 产 A-015 image 块。
+ *   - 该题无配图 base64（纯文本变式）→ 直接返回，不调任何接口（无 image 块，符合契约）。
+ *   - 已传过（ossUrl 在）→ 复用，不重传。
+ *   - 上传/回写失败 → 抛错（由调用方落到 persist 的 catch，提示老师，不静默丢图）。
+ * PNG 无损：data:image/png;base64 → Blob → File(image/png) → uploadMotherImage（走 OSS 公读桶）。
+ */
+async function flushFigureToOss(index: number): Promise<void> {
+  const st = variantFigures[index]
+  if (!st || !st.png) return // 纯文本变式或未造图：无 image 块
+  let url = st.ossUrl || ''
+  if (!url) {
+    const blob = await (await fetch(`data:image/png;base64,${st.png}`)).blob()
+    const file = new File([blob], `variant_fig_${index}.png`, { type: 'image/png' })
+    const up = await uploadMotherImage(file)
+    url = up.url
+    st.ossUrl = url
+  }
+  await setVariantFigureUrl(threadId.value, index, url)
 }
 
 /** 母题切图（crop_mother）：从母题原图切出图形区。重切=再调一次。 */
@@ -652,6 +677,11 @@ async function persistAll() {
   sending.value = true
   scrollToBottom()
   try {
+    // 🔴 BC2：全部入库前，逐题把已生成的配图 base64 传 OSS + 回写 state.figure_url（无图的题空跑）。
+    //   串行（OSS 写 + state 回写有先后），任一失败抛错落 catch（不静默丢图）。
+    for (const k of Object.keys(variantFigures)) {
+      await flushFigureToOss(Number(k))
+    }
     const res = await persistVariantGroup(threadId.value, userStore.accessToken)
     if (res.reply) stream.value.push({ type: 'bubble', role: 'ai', kind: 'normal', text: res.reply })
     if (res.artifact) artifact.value = res.artifact
@@ -1024,6 +1054,8 @@ async function onPersistOne(index: number) {
   if (!item || item.persisted) return
   persistingIndex.value = index
   try {
+    // 🔴 BC2：入库前先把本题配图 base64 传 OSS + 回写 state.figure_url（无图则空跑）。
+    await flushFigureToOss(index)
     const res = await persistVariantOne(threadId.value, index, userStore.accessToken)
     if (res.artifact) artifact.value = res.artifact // 整量替换 → 该卡 persisted=true 持久
     if (res.ok) ElMessage.success('已收录入库')
@@ -1055,6 +1087,8 @@ async function onAddToBasket(index: number) {
       if (res.artifact) artifact.value = res.artifact
       id = res.id
     } else {
+      // 🔴 BC2：首次入库前先把本题配图传 OSS + 回写 state.figure_url（无图则空跑）。
+      await flushFigureToOss(index)
       const res = await persistVariantOne(threadId.value, index, userStore.accessToken)
       if (res.artifact) artifact.value = res.artifact
       id = res.id
