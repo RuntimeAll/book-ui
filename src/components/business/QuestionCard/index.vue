@@ -18,6 +18,8 @@ import { Edit, EditPen, Star, ShoppingCart, Key } from '@element-plus/icons-vue'
 import Icon from '@/components/Icon/index.vue'
 import FreeTagList from '@/components/business/FreeTagList/index.vue'
 import QuestionContent from '@/components/business/QuestionContent/index.vue'
+import QuestionBlockRender from '@/components/business/QuestionBlockRender/index.vue'
+import { parseBlockDoc } from '@/utils/blockSchema'
 import type { QuestionItem } from '@/api/question/index'
 
 // PRD-A-015 — 'edit' 为可选 action（opt-in，默认 actions 不含），仅「我的题库」等本人题场景启用。
@@ -56,6 +58,10 @@ const emit = defineEmits<{
   (e: 'draft', q: QuestionItem): void
   (e: 'edit', q: QuestionItem): void
 }>()
+
+// PRD-A-015 — 结构化题：blockJson 能解析成非空文档则走 QuestionBlockRender 网格渲染
+// （图片/选项/公式与详情/卷库/PDF 四端一致）；老题（无 blockJson）回落扁平 QuestionContent。
+const parsedBlock = computed(() => parseBlockDoc(props.question.blockJson))
 
 const showDraft = computed(() => props.actions.includes('draft'))
 const showFavorite = computed(() => props.actions.includes('favorite'))
@@ -143,9 +149,14 @@ function getQuestionTypeTag(type: number): 'success' | 'warning' | 'info' | 'pri
       <span class="q-id-text">{{ question.id }}</span>
     </div>
 
-    <!-- 题干内容（富文本 / 图片 / 占位，统一走 QuestionContent） -->
+    <!-- 题干内容：结构化题(blockJson)走 QuestionBlockRender 网格；老题回落 QuestionContent 扁平 -->
     <div class="card-stem">
+      <QuestionBlockRender
+        v-if="parsedBlock"
+        :doc="parsedBlock"
+      />
       <QuestionContent
+        v-else
         :text="question.stemText"
         :img-url="question.stemImg"
         alt="题干"

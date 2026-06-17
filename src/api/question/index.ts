@@ -65,6 +65,13 @@ export interface QuestionItem {
   freeTag?: string | null              // 老字段（字符串），段③字典化后保留兼容
   freeTags?: FreeTagVo[]               // X 卡 段② BE 新字段，position asc 已排序
   isFavorite?: boolean                 // J 卡 段② BE LEFT JOIN biz_question_favorite 返回，FE 列表心形态判断
+  /**
+   * PRD-A-015 — 结构化网格块 JSON（biz_question_block.block_json）。
+   * null/缺省 = 该题未结构化，渲染回落旧富文本/图（QuestionContent 链）。
+   * 回填端点：分页 page（我的题库/题库列表卡片走 QuestionBlockRender）、
+   * 单题 select/{id}、批量 list?ids=（卷库预览/PDF）——四端一致结构化渲染。
+   */
+  blockJson?: string | null
 }
 
 // page 接口响应（PageHelper 结构）
@@ -103,15 +110,7 @@ export interface QuestionDetail extends QuestionItem {
   explain?: string | null             // 解析文本（旧字段，兼容保留）
   answerTextContent?: string | null   // 富文本答案（Markdown + $...$ LaTeX）
   analyzeTextContent?: string | null  // 富文本解析（Markdown + $...$ LaTeX）
-  /**
-   * PRD-A-015 — 结构化网格块 JSON（biz_question_block.block_json）。
-   * null/缺省 = 该题未结构化，渲染回落旧富文本/图（QuestionContent 链）。
-   * 单题 POST /teacher/question/select/{id} 与批量 GET /teacher/question/list?ids=
-   * （selectQuestionDetailById / listByIds）均回填此字段——卷库预览/PDF 也吃结构化渲染。
-   */
-  blockJson?: string | null
-  // 以下字段 QuestionItem 已声明（fileBin / questionStdKnowledges 全部可选），
-  // 列表 page 端点空返，list / select 详情端点才真有值 — 这里不重复声明。
+  // blockJson 已上移至基类 QuestionItem（page/list/select 三端均回填），此处不重复声明。
 }
 
 // ── PRD-A-015 录题/编辑 入参 ──────────────────────────────────────

@@ -145,6 +145,76 @@ function removeCell(ri: number, ci: number) {
   if (row.cells.length === 0) doc.value.rows.splice(ri, 1)
 }
 
+// ── 选项组列数/换行快改（用户要的「快速格式化」）──────────────────────────────
+// 模型：一「选项组」= 连续若干「全是 option 块」的行。切列数 = 把组内所有选项重新按 N/行 排版；
+//      增/删选项 = 追加/去尾后按当前列数重排；任何变动都重排标号 A/B/C/D…（按顺序）。
+function isOptionRow(row: { cells: Block[] } | undefined): boolean {
+  return !!row && row.cells.length > 0 && row.cells.every((c) => c.type === 'option')
+}
+/** 该行是否为某选项组的首行（上一行不是 option 行）→ 只在首行挂组控件，避免重复 */
+function isGroupStart(ri: number): boolean {
+  if (!isOptionRow(doc.value.rows[ri])) return false
+  return ri === 0 || !isOptionRow(doc.value.rows[ri - 1])
+}
+/** 返回包含 ri 的连续 option 行组 [start, end] */
+function optionGroupRange(ri: number): [number, number] {
+  const rows = doc.value.rows
+  let s = ri
+  while (s > 0 && isOptionRow(rows[s - 1])) s--
+  let e = ri
+  while (e + 1 < rows.length && isOptionRow(rows[e + 1])) e++
+  return [s, e]
+}
+function collectGroupOptions(s: number, e: number): OptionBlock[] {
+  const out: OptionBlock[] = []
+  for (let i = s; i <= e; i++) {
+    for (const c of doc.value.rows[i].cells) out.push(c as OptionBlock)
+  }
+  return out
+}
+/** 顺序重排标号 A/B/C/D… */
+function relabelOptions(opts: OptionBlock[]) {
+  opts.forEach((o, i) => { o.label = String.fromCharCode(65 + i) })
+}
+function chunkRows(opts: OptionBlock[], cols: number): { cells: Block[] }[] {
+  const c = Math.max(1, cols)
+  const rows: { cells: Block[] }[] = []
+  for (let i = 0; i < opts.length; i += c) rows.push({ cells: opts.slice(i, i + c) as Block[] })
+  return rows
+}
+/** 当前组的列数（= 首行 cell 数） */
+function groupCols(ri: number): number {
+  const [s] = optionGroupRange(ri)
+  return doc.value.rows[s]?.cells.length ?? 1
+}
+function groupSize(ri: number): number {
+  const [s, e] = optionGroupRange(ri)
+  return collectGroupOptions(s, e).length
+}
+function applyGroup(s: number, e: number, opts: OptionBlock[], cols: number) {
+  relabelOptions(opts)
+  doc.value.rows.splice(s, e - s + 1, ...chunkRows(opts, cols))
+  nextTick(() => initSortable())
+}
+/** 切列数：把整组选项重排成 cols/行 */
+function reflowGroup(ri: number, cols: number) {
+  const [s, e] = optionGroupRange(ri)
+  applyGroup(s, e, collectGroupOptions(s, e), cols)
+}
+function addGroupOption(ri: number) {
+  const [s, e] = optionGroupRange(ri)
+  const opts = collectGroupOptions(s, e)
+  opts.push({ type: 'option', label: '', content: [{ type: 'text', md: '' } as TextBlock] })
+  applyGroup(s, e, opts, doc.value.rows[s].cells.length)
+}
+function removeGroupOption(ri: number) {
+  const [s, e] = optionGroupRange(ri)
+  const opts = collectGroupOptions(s, e)
+  if (opts.length <= 1) return // 至少留一个选项
+  opts.pop()
+  applyGroup(s, e, opts, doc.value.rows[s].cells.length)
+}
+
 // ── option 块内子内容增删 ─────────────────────────────────────────────────────
 function addOptionText(opt: OptionBlock) {
   opt.content.push({ type: 'text', md: '' } as TextBlock)
@@ -486,6 +556,32 @@ watch(questionId, async (newId) => {
             <div class="row-head">
               <el-icon class="row-drag-handle" title="拖拽换行"><List /></el-icon>
               <span class="row-tag">第 {{ ri + 1 }} 行 · {{ row.cells.length }} 列</span>
+
+              <!-- 选项组快改：仅挂在组首行，控整组列数/换行 + 增删选项 -->
+              <span v-if="isGroupStart(ri)" class="opt-group-ctrl">
+                <span class="opt-group-label">选项组 · {{ groupSize(ri) }} 项</span>
+                <el-radio-group
+                  :model-value="groupCols(ri)"
+                  size="small"
+                  @change="(v: string | number | boolean) => reflowGroup(ri, Number(v))"
+                >
+                  <el-radio-button :value="1">1列</el-radio-button>
+                  <el-radio-button :value="2">2列</el-radio-button>
+                  <el-radio-button :value="4">4列</el-radio-button>
+                </el-radio-group>
+                <el-button link size="small" :icon="Plus" @click="addGroupOption(ri)">选项</el-button>
+                <el-button
+                  link
+                  size="small"
+                  type="danger"
+                  :icon="Delete"
+                  :disabled="groupSize(ri) <= 1"
+                  @click="removeGroupOption(ri)"
+                >
+                  选项
+                </el-button>
+              </span>
+
               <el-button
                 link
                 type="danger"
@@ -797,6 +893,23 @@ watch(questionId, async (newId) => {
   font-size: 12px;
   color: #86909c;
   flex: 1;
+}
+
+/* 选项组快改控件（组首行） */
+.opt-group-ctrl {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 8px;
+  background: #f0f7f7;
+  border: 1px solid #d4eaea;
+  border-radius: 6px;
+}
+.opt-group-label {
+  font-size: 12px;
+  color: #1e8a8a;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 /* cell 网格 */
