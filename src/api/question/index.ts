@@ -111,6 +111,26 @@ export interface QuestionDetail extends QuestionItem {
   answerTextContent?: string | null   // 富文本答案（Markdown + $...$ LaTeX）
   analyzeTextContent?: string | null  // 富文本解析（Markdown + $...$ LaTeX）
   // blockJson 已上移至基类 QuestionItem（page/list/select 三端均回填），此处不重复声明。
+
+  // ── PRD-A-015 批1「题目属性编辑页」— select/{id} 已返全部属性维度字段（皆可选，BE 端可能为 null） ──
+  // dim3Skill / auxTags 是 JSON 字符串（FE 自行 JSON.parse）；motherQuestionId 雪花用 string。
+  dim1KpId?: string | null            // AI 维度1：知识点 id
+  dim2Qtype?: number | null           // AI 维度2：题型
+  dim3Skill?: string | null           // AI 维度3：思维方法（JSON 字符串 → 数组）
+  dim4Difficulty?: number | null      // AI 维度4：难度
+  dim5Structure?: string | null       // AI 维度5：结构指纹
+  auxTags?: string | null             // 辅标签（JSON 字符串 → 对象 key:value）
+  labelConfidence?: number | null     // 打标置信度
+  labeledBy?: string | null           // 打标者
+  labeledAt?: number | string | null  // 打标时间（时间戳/字符串）
+  baseScore?: number | null           // 标准分值
+  importSource?: string | null        // 导入来源
+  regionCode?: string | null          // 地域编码
+  sourceType?: number | null          // 来源类型（1中考真题/2模拟/3期末/4月考/5单元/6自编/9其他）
+  motherQuestionId?: string | null    // 母题 id（雪花 string）
+  variantRelation?: string | null     // 变式关系
+  annotateVersion?: number | null     // 标注版本
+  annotateStatus?: number | null      // 标注完整度（0未标/1已标全/2部分）
 }
 
 // ── PRD-A-015 录题/编辑 入参 ──────────────────────────────────────
@@ -402,6 +422,39 @@ export const createQuestion = (payload: CreateQuestionPayload) =>
  */
 export const updateQuestion = (payload: UpdateQuestionPayload) =>
   request.post<QuestionDetail, QuestionDetail>('/teacher/question/update', payload)
+
+// ── PRD-A-015 批1「题目属性编辑页」— 属性回写端点 ────────────────────────────
+// POST /teacher/question/update-attrs（全字段可选，BE 只回写传了的非 null 列，不碰 blockJson/题干）。
+// 返回更新后的 QuestionDetail。雪花 id（questionId / motherQuestionId）一律 string。
+export interface UpdateAttrsPayload {
+  questionId: string
+  subjectId?: string
+  questionType?: number
+  difficult?: number
+  dim1KpId?: string
+  dim2Qtype?: number
+  dim3Skill?: string[]
+  dim4Difficulty?: number
+  dim5Structure?: string
+  auxTags?: Record<string, unknown>
+  labelStatus?: number
+  labelConfidence?: number
+  labeledBy?: string
+  baseScore?: number
+  sourceType?: number
+  regionCode?: string
+  variantRelation?: string
+  motherQuestionId?: string
+  annotateStatus?: number
+}
+
+/**
+ * PRD-A-015 批1 — 回写题目属性（基础设置 + 各维度，本批仅基础设置生效）。
+ * POST /teacher/question/update-attrs（UpdateAttrsBo），envelope `/teacher/**` 由拦截器解包。
+ * 返回更新后的 QuestionDetail（含刷新后的全部属性维度字段）。
+ */
+export const updateQuestionAttrs = (payload: UpdateAttrsPayload) =>
+  request.post<QuestionDetail, QuestionDetail>('/teacher/question/update-attrs', payload)
 
 
 // Q' 卡 段① BE 新端点 — 按 ids 批查完整字段（含 answer / explain / freeTags / questionStdKnowledges）。

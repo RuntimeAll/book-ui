@@ -13,6 +13,7 @@ declare module 'vue' {
   export interface GlobalComponents {
     AiStageRail: typeof import('./src/components/AiStageRail.vue')['default']
     BaseButton: typeof import('./src/components/BaseButton/index.vue')['default']
+    ChapterPicker: typeof import('./src/components/business/ChapterPicker/index.vue')['default']
     ContentWrap: typeof import('./src/components/ContentWrap/index.vue')['default']
     ElAlert: typeof import('element-plus/es')['ElAlert']
     ElAside: typeof import('element-plus/es')['ElAside']
@@ -57,6 +58,7 @@ declare module 'vue' {
     ElTag: typeof import('element-plus/es')['ElTag']
     ElTooltip: typeof import('element-plus/es')['ElTooltip']
     ElTree: typeof import('element-plus/es')['ElTree']
+    ElTreeSelect: typeof import('element-plus/es')['ElTreeSelect']
     ElUpload: typeof import('element-plus/es')['ElUpload']
     FavoriteFolderDrawer: typeof import('./src/components/FavoriteFolderDrawer/index.vue')['default']
     FreeTagList: typeof import('./src/components/business/FreeTagList/index.vue')['default']

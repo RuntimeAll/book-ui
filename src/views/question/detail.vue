@@ -10,6 +10,7 @@ import {
   EditPen,
   ShoppingCart,
   ChatDotRound,
+  Tools,
 } from '@element-plus/icons-vue'
 import {
   getQuestionDetail,
@@ -71,6 +72,10 @@ const canEdit = computed(() => {
 })
 function goEdit() {
   router.push(`/question/editor/${questionId.value}`)
+}
+// PRD-A-015 批1 — 跳题目属性编辑页（同 canEdit 门控）
+function goAttributes() {
+  router.push(`/question/attributes/${questionId.value}`)
 }
 
 async function loadQuestion() {
@@ -368,6 +373,17 @@ watch(questionId, async () => {
               @click="goEdit"
             >
               <el-icon><EditPen /></el-icon>编辑
+            </el-button>
+            <!-- 属性（PRD-A-015 批1）：同 canEdit 门控，跳题目属性编辑页 -->
+            <el-button
+              v-if="canEdit"
+              size="small"
+              type="primary"
+              plain
+              class="action-btn"
+              @click="goAttributes"
+            >
+              <el-icon><Tools /></el-icon>属性
             </el-button>
             <!-- 草稿 -->
             <el-button size="small" class="action-btn" @click="sketchVisible = true">

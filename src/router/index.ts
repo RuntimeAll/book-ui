@@ -59,6 +59,12 @@ const router = createRouter({
           name: 'QuestionEditorEdit',
           component: () => import('@/views/question/editor.vue'),
         },
+        // PRD-A-015 批1 — 题目属性编辑页（基础设置可改 + AI 打标维度/元数据/高级属性只读展示）
+        {
+          path: '/question/attributes/:id',
+          name: 'QuestionAttributes',
+          component: () => import('@/views/question/attributes.vue'),
+        },
         // PRD-C-009「我的题库」——只看当前登录老师自己的题（mine:true），复用题库详情页
         {
           path: '/my-question',
