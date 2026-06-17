@@ -52,8 +52,11 @@ const isEditMode = computed(() => !!questionId.value)
 const userStore = useUserStore()
 // 编辑态加载到的题 createUser ≠ 当前登录 id → 公共题/他人题，FE 锁保存（硬保护在 BE update）。
 const detailOwnerId = ref<string | null>(null)
+// 可保存 = 新建态 / 本人题 / superadmin（角色，对齐 BE LoginHelper.isSuperAdmin）。
+// teacher 仅本人题；BE update 硬校验兜底，FE 这里只是体验闸（拿不到判定信息时不锁死）。
 const isOwner = computed(() => {
   if (!isEditMode.value) return true // 新建态 = 自己创建
+  if (userStore.isSuperAdmin) return true // 超管可编辑任意题
   const uid = userStore.userInfo?.id
   if (uid == null || detailOwnerId.value == null) return true // 拿不到判定信息时不锁死（BE 兜底）
   return String(detailOwnerId.value) === String(uid)

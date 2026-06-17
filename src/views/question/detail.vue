@@ -7,6 +7,7 @@ import {
   ArrowLeft,
   Star,
   Edit,
+  EditPen,
   ShoppingCart,
   ChatDotRound,
 } from '@element-plus/icons-vue'
@@ -32,6 +33,8 @@ import QuestionContent from '@/components/business/QuestionContent/index.vue'
 import QuestionBlockRender from '@/components/business/QuestionBlockRender/index.vue'
 import { parseBlockDoc } from '@/utils/blockSchema'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
+import { useUserStore } from '@/store/user'
+import { getCurrentUser } from '@/api/user'
 
 // ── 路由 ────────────────────────────────────────────────────
 const route = useRoute()
@@ -54,6 +57,21 @@ const loading = ref(false)
 
 // PRD-A-015 — 题干结构化 block 文档（非法/空返 null → 题干区回落旧富文本/图渲染）
 const parsedBlock = computed(() => parseBlockDoc(question.value?.blockJson))
+
+// ── 编辑权限（PRD-A-015）──────────────────────────────────────
+// 本人题（createUser=登录 id）或 superadmin（角色，对齐 BE LoginHelper.isSuperAdmin）才可编辑。
+// teacher 仅本人题；非本人非超管 → 不显示编辑按钮（BE update 同步硬校验，防御纵深）。
+const userStore = useUserStore()
+const canEdit = computed(() => {
+  if (!question.value) return false
+  if (userStore.isSuperAdmin) return true
+  const uid = userStore.userInfo?.id
+  const owner = question.value.createUser
+  return uid != null && owner != null && String(owner) === String(uid)
+})
+function goEdit() {
+  router.push(`/question/editor/${questionId.value}`)
+}
 
 async function loadQuestion() {
   loading.value = true
@@ -262,6 +280,15 @@ function goToPaperSource(paperId: string) {
 
 // ── 初始化 ───────────────────────────────────────────────────
 onMounted(async () => {
+  // 兜底拉当前用户（权限判定需 userInfo.id/roles；内存态刷新会丢，与 editor.vue 同款兜底）
+  if (!userStore.userInfo) {
+    try {
+      const info = await getCurrentUser()
+      if (info) userStore.setUserInfo(info)
+    } catch (e) {
+      console.warn('[detail] getCurrentUser 兜底失败', e)
+    }
+  }
   await loadQuestion()
   // 并行加载侧边栏数据
   Promise.allSettled([loadNotes(), loadSources()])
@@ -331,6 +358,17 @@ watch(questionId, async () => {
             <span v-else class="knowledge-empty">暂无</span>
           </div>
           <div class="meta-right">
+            <!-- 编辑（PRD-A-015）：本人题 / superadmin 才显示；BE update 同步硬校验 -->
+            <el-button
+              v-if="canEdit"
+              size="small"
+              type="primary"
+              plain
+              class="action-btn"
+              @click="goEdit"
+            >
+              <el-icon><EditPen /></el-icon>编辑
+            </el-button>
             <!-- 草稿 -->
             <el-button size="small" class="action-btn" @click="sketchVisible = true">
               <el-icon><Edit /></el-icon>草稿
