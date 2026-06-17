@@ -302,6 +302,12 @@ function destroySortable() {
   sortableInstances = []
 }
 
+// 重入合并：initSortable 会被多处（onEnd / rows.length watch / applyGroup）在同一 tick 内
+// 连环触发。原实现「同步 destroy + nextTick push」在一 tick 多次调用时会先 destroy 两遍、
+// 再 push 两套 Sortable 到同一 DOM → 重复绑定（拖一次触发两遍 onEnd）+ 旧实例泄漏。
+// 用 pending 标志把同 tick 的多次调用合并成「destroy 一次 + 仅最后一次真正重建」。
+let sortablePending = false
+
 function rebuildFromDom() {
   const rowEls = Array.from(
     rowsContainerRef.value?.querySelectorAll<HTMLElement>(':scope > .editor-row') ?? [],
@@ -324,8 +330,16 @@ function rebuildFromDom() {
 }
 
 function initSortable() {
+  // 同 tick 内多次调用只重建一次（防重复绑定 + 旧实例泄漏，见 sortablePending 注释）。
+  if (sortablePending) return
+  sortablePending = true
   destroySortable()
   nextTick(() => {
+    sortablePending = false
+    // 组件已卸载（nextTick 期间 unmount）则不再绑定
+    if (!rowsContainerRef.value) return
+    // nextTick 真正重建前再清一次：合并窗口内若已有同步 destroy 漏网，确保零残留
+    destroySortable()
     // 行间拖拽
     if (rowsContainerRef.value) {
       sortableInstances.push(
@@ -710,7 +724,7 @@ watch(questionId, async (newId) => {
                     </div>
                     <div
                       v-for="(sub, si) in asOption(cell).content"
-                      :key="si"
+                      :key="keyOf(sub)"
                       class="opt-sub"
                     >
                       <!-- option 内文字 -->
