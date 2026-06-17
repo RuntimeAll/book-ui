@@ -578,7 +578,9 @@ function saveHard() {
 .mc-thumb img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  /* 🔴 母题图多为竖长条(题干+选项)，cover 会裁成中间一条 sliver(只露某个选项行)；
+     contain = 整图缩进框、可辨认(守恒锚视觉提示，点开看大图)。 */
+  object-fit: contain;
 }
 /* PRD-C-100 B6：母题切图（图形区） */
 .mc-figure {
