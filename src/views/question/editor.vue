@@ -65,8 +65,12 @@ const isOwner = computed(() => {
 })
 
 // ── 题目元信息 ────────────────────────────────────────────────────────────────
+// 题型全集（对齐 QuestionCard/workbench 权威映射，含库里在用的 2 判断 / 3 应用，
+// 否则旧题 type=3 在 el-select 里裸显数字码 "3"）。
 const QUESTION_TYPES = [
   { label: '选择题', value: 1 },
+  { label: '判断题', value: 2 },
+  { label: '应用题', value: 3 },
   { label: '填空题', value: 4 },
   { label: '简答题', value: 5 },
 ]
