@@ -303,6 +303,16 @@ export interface VariantArtifactItem {
   motherDirtyDims: string[]
   /** 本题可「撤销重生」（批4 重生前存了快照）→ true 时显示撤销入口（缺口12） */
   canUndoRegen: boolean
+  /**
+   * 🔴 PRD-C-100 BC3：已入库题在库雪花 id（toolkit _persist_id 透传）。非空 → 可「手动排版」
+   * （跳 A-015 网格编辑器 /question/editor/:id round-trip blockJson）；未入库为 ''（编辑器需 questionId）。
+   */
+  questionId: string
+  /**
+   * 🔴 PRD-C-100 BC3：本题被老师手动排版过（A-015 网格编辑器存过 blockJson，toolkit 标 manual_block）。
+   * → 卡显「手动排版」印记；重生前据 manualEdited（含此态）弹二次确认。
+   */
+  manualBlock: boolean
 }
 
 /**
@@ -718,6 +728,13 @@ function pickArtifact(msg: ToolkitChatMessage): VariantArtifact | null {
         ? strArr(o.mother_dirty_dims)
         : strArr(o.motherDirtyDims),
       canUndoRegen: o.can_undo_regen === true || o.canUndoRegen === true,
+      // 🔴 PRD-C-100 BC3：已入库题在库 id（雪花 string，禁 number 截尾）→ FE 据它进 A-015 编辑器
+      questionId:
+        o.question_id === null || o.question_id === undefined
+          ? ''
+          : String(o.question_id),
+      // 🔴 PRD-C-100 BC3：手动排版印记（兼容下划线/驼峰）
+      manualBlock: o.manual_block === true || o.manualBlock === true,
     })
   }
   const h = (a.header && typeof a.header === 'object' ? a.header : {}) as Record<string, unknown>
@@ -1474,6 +1491,33 @@ export async function setVariantFigureUrl(
       .catch(() => '')
     throw new Error(detail || `/variant/set-figure-url ${res.status}`)
   }
+}
+
+/**
+ * PRD-C-100 BC3 — 标/清「老师手动排版过」印记（toolkit state.items[index].manual_block）。
+ *
+ * 用途：老师对已入库变式点「手动排版」→ FE 跳 A-015 网格编辑器存 blockJson → 回会话调本端点
+ * （edited=true）把该题标 manual_block + manual_edited（卡显印记 + 重生前二次确认）。
+ * 确认重生时先调 edited=false 清印记，再走既有 regen。index = 1-based。返回刷新后的 artifact。
+ */
+export async function markVariantManualBlock(
+  threadId: string,
+  index: number,
+  edited: boolean = true
+): Promise<VariantArtifact | null> {
+  const res = await fetch('/agent/variant/mark-manual-block', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ thread_id: threadId, index, edited }),
+  })
+  if (!res.ok) {
+    const detail = await res
+      .json()
+      .then((d: { detail?: string; error?: string }) => d.detail || d.error)
+      .catch(() => '')
+    throw new Error(detail || `/variant/mark-manual-block ${res.status}`)
+  }
+  return unpackEditResult(await res.json())
 }
 
 // ---------------------------------------------------------------------------

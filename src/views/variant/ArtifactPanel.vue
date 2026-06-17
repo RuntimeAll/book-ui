@@ -96,6 +96,8 @@ const emit = defineEmits<{
   (e: 'compose-figure', payload: { index: number; correctionPrompt?: string }): void
   /** 🔴 PRD-C-100 B6：点开看大图（含切图 / 配图 data URL；宿主弹大图遮罩） */
   (e: 'preview', url: string): void
+  /** 🔴 PRD-C-100 BC3：已入库变式「手动排版」（宿主标印记 + 跳 A-015 网格编辑器） */
+  (e: 'manual-layout', index: number): void
 }>()
 
 // G13 ⑤：头部主考点（知识点树弹层）/ 年级（下拉）可改
@@ -455,6 +457,7 @@ function regenAll() {
             @edit-models="(p) => emit('edit-models', p)"
             @compose-figure="(p) => emit('compose-figure', p)"
             @preview="(u: string) => emit('preview', u)"
+            @manual-layout="(i: number) => emit('manual-layout', i)"
           />
         </div>
         <!-- PRD-C-012 P2：增量帧期的「生成中」占位卡（题号顺延已完成题，定稿帧到达即消失） -->

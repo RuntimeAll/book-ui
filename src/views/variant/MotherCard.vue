@@ -96,6 +96,8 @@ const emit = defineEmits<{
   (e: 'preview', url: string): void
   /** 🔴 PRD-C-100 B6：切母题图（宿主调 cropMotherFigure；重切=再点） */
   (e: 'crop-figure'): void
+  /** 🔴 PRD-C-100 BC3：母题「手动排版」（仅已入库；宿主跳 A-015 网格编辑器 round-trip blockJson） */
+  (e: 'manual-layout-mother'): void
 }>()
 
 // 折叠态（默认展开让老师过目母题基准；过目后可收起腾地方·AC7）
@@ -267,6 +269,18 @@ function saveHard() {
         @click="emit('persist-mother')"
       >
         {{ persisted ? '✓ 已入库' : '母题入库' }}
+      </el-button>
+      <!-- 🔴 PRD-C-100 BC3：母题手动排版（跳 A-015 网格编辑器，仅已入库才可点） -->
+      <el-button
+        v-if="persisted"
+        size="small"
+        class="mc-layout"
+        plain
+        :disabled="sending"
+        title="打开网格编辑器手动排版母题（拖拉拽布局）"
+        @click="emit('manual-layout-mother')"
+      >
+        🎨 手动排版
       </el-button>
     </header>
 
@@ -530,6 +544,12 @@ function saveHard() {
 }
 .mc-persist {
   font-size: 12px;
+}
+/* 🔴 PRD-C-100 BC3 母题手动排版按钮（violet 系） */
+.mc-layout {
+  font-size: 12px;
+  color: #5b4fd6;
+  border-color: #cfc7f3;
 }
 /* 🔴 PRD-C-017 B5「开始举一反三」主按钮 */
 .mc-start {

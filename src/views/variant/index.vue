@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { useRouter } from 'vue-router'
 import { useUserStore } from '@/store/user'
 import {
   composeVariantFigure,
@@ -9,6 +10,7 @@ import {
   editVariantItem,
   fetchVariantArtifact,
   fetchVariantHistory,
+  markVariantManualBlock,
   persistVariantGroup,
   persistVariantOne,
   pickMotherCard,
@@ -32,7 +34,7 @@ import type {
   VariantStreamHandle,
 } from '@/api/variant'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
-import { createQuestionWithDna } from '@/api/question/index'
+import { createQuestionWithDna, deleteQuestionBlock } from '@/api/question/index'
 import type { CreateQuestionWithDnaBo, QuestionItem } from '@/api/question/index'
 import MarkdownMath from '@/components/MarkdownMath.vue'
 import AiStageRail from '@/components/AiStageRail.vue'
@@ -44,6 +46,8 @@ import GradeChapterConfirmDialog from './GradeChapterConfirmDialog.vue'
 const userStore = useUserStore()
 // PRD-C-014 T2：试题篮（全局 singleton composable，与库内列表共用计数/LS）—— 透明入库后加篮、计数+1。
 const basket = useQuestionBasket()
+// PRD-C-100 BC3：手动排版跳 A-015 网格编辑器全页路由（/question/editor/:id）。
+const router = useRouter()
 
 // ---------------------------------------------------------------------------
 // PRD-C-009/C-011 — 图片举一反三 agent（toolkit :8093 variant agent，/agent proxy）。
@@ -937,12 +941,92 @@ async function onEditDna(payload: {
 // 都是确定性/单题动作，不进对话流。失败报错气泡不静默。
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// 🔴 PRD-C-100 BC3 (c) 定稿态 — 手动排版 + 重生前二次确认 + 清脏 block。
+//   手动排版 = 老师对【已入库】变式/母题点入口 → 标 manual_block 印记 → 跳 A-015 网格编辑器
+//     （/question/editor/:questionId，按 questionId round-trip blockJson 编辑 → /update-block 存）。
+//   重生定稿闸 = 重生待重生题里若有 manual_edited（含手动排版）题 → 弹二次确认「会覆盖手改」；
+//     确认 → 对每道手动排版题清脏 block（delete-block，避免详情/卷库按旧布局渲染新题面）+ 清印记
+//     → 再走正常重生。
+// ---------------------------------------------------------------------------
+
+/** 已入库变式「手动排版」：标印记 → 跳 A-015 网格编辑器全页（按 questionId round-trip blockJson）。 */
+async function onManualLayout(index: number) {
+  if (sending.value || regeneratingIndexes.value.length > 0) return
+  const item = findItem(index)
+  if (!item) return
+  if (!item.persisted || !item.questionId) {
+    ElMessage.info('请先「收录入库」再手动排版（编辑器按已入库题载入排版）')
+    return
+  }
+  try {
+    // 标 manual_block 印记（重生前据此弹二次确认；编辑器存盘是另一全页路由，回来后印记已在）。
+    const a = await markVariantManualBlock(threadId.value, index, true)
+    if (a) artifact.value = a
+  } catch (e) {
+    // 标印记失败不阻断进编辑器（编辑器存盘仍生效）；仅提示，不静默
+    ElMessage.warning(`手动排版印记登记失败（仍可编辑）：${e instanceof Error ? e.message : String(e)}`)
+  }
+  router.push(`/question/editor/${item.questionId}`)
+}
+
+/** 已入库母题「手动排版」：跳 A-015 网格编辑器全页（母题印记走 BE update-block，不经 toolkit 会话）。 */
+function onManualLayoutMother() {
+  if (sending.value) return
+  if (!motherPersisted.value || !motherQuestionId.value) {
+    ElMessage.info('请先「母题入库」再手动排版（编辑器按已入库题载入排版）')
+    return
+  }
+  router.push(`/question/editor/${motherQuestionId.value}`)
+}
+
+/**
+ * 重生定稿闸：targets 里命中「老师手改过」(manual_edited，含手动排版 manual_block) 的题 → 弹二次确认。
+ * 返回 true=放行（已对手动排版题清脏 block + 清印记），false=老师取消。无手改题直接放行。
+ */
+async function confirmRegenIfManual(targets: number[]): Promise<boolean> {
+  const manualItems = (artifact.value?.items ?? []).filter(
+    (it) => targets.includes(it.index) && (it.manualEdited || it.manualBlock)
+  )
+  if (manualItems.length === 0) return true
+  const ns = manualItems.map((it) => it.index).join('、')
+  try {
+    await ElMessageBox.confirm(
+      `第 ${ns} 题你手动排版/改过，重生会按新题面重出、覆盖你的手动排版。确定重生？`,
+      '确认重生',
+      { type: 'warning', confirmButtonText: '覆盖并重生', cancelButtonText: '取消' }
+    )
+  } catch {
+    return false // 老师取消
+  }
+  // 确认 → 对手动排版（manual_block）且已入库的题清脏 block + 清印记（内容编辑 manual_edited 无 block，跳过 delete）。
+  for (const it of manualItems) {
+    if (it.manualBlock && it.persisted && it.questionId) {
+      try {
+        await deleteQuestionBlock(it.questionId)
+      } catch (e) {
+        // 清 block 失败仅警告（重生仍继续；旧 block 可能残留，老师可再手动排版）
+        ElMessage.warning(`第 ${it.index} 题清排版失败：${e instanceof Error ? e.message : String(e)}`)
+      }
+    }
+    try {
+      const a = await markVariantManualBlock(threadId.value, it.index, false)
+      if (a) artifact.value = a
+    } catch {
+      /* 清印记失败不阻断重生 */
+    }
+  }
+  return true
+}
+
 /** 重生：indexes 省略 = 全待重生集合（D-merge8）；命中题驱动 loading。 */
 async function runRegen(indexes?: number[]) {
   if (sending.value || regeneratingIndexes.value.length > 0) return
   // loading 目标：指定 indexes，否则取当前 header.regen_pending（含母题脏波及）
   const targets =
     indexes && indexes.length ? indexes : (artifact.value?.header.regenPending ?? [])
+  // 🔴 BC3 (c) 定稿态：手改/手动排版题重生前二次确认 + 清脏 block（取消则不重生）
+  if (!(await confirmRegenIfManual(targets))) return
   regeneratingIndexes.value = targets.length ? [...targets] : [-1] // -1 占位让按钮转圈
   try {
     const res = await regenVariant(threadId.value, indexes)
@@ -1504,6 +1588,7 @@ onBeforeUnmount(() => {
       @regen-all="onRegenAll"
       @compose-figure="onComposeVariantFigure"
       @preview="(u: string) => (previewUrl = u)"
+      @manual-layout="onManualLayout"
     >
       <!-- AC7 收窄移位 + AC4 母题卡先出（全 10 维）+ M8 难点空文案 + G12 母题入库 -->
       <template #mother-card>
@@ -1528,6 +1613,7 @@ onBeforeUnmount(() => {
           @start-variants="onStartVariants"
           @preview="(u: string) => (previewUrl = u)"
           @crop-figure="onCropMotherFigure"
+          @manual-layout-mother="onManualLayoutMother"
         />
       </template>
     </ArtifactPanel>

@@ -500,6 +500,15 @@ export const createQuestion = (payload: CreateQuestionPayload) =>
 export const updateBlock = (payload: UpdateBlockPayload) =>
   request.post<QuestionDetail, QuestionDetail>('/teacher/question/update-block', payload)
 
+/**
+ * PRD-C-100 BC3 — 清掉某题的结构化排版（删 biz_question_block 行）。
+ * POST /teacher/question/delete-block?questionId={id}。
+ * 用途：举一反三里手动排版过的变式被「重生」（题面已变）→ 旧布局对不上 → 确认重生前清脏 block，
+ * 让详情/卷库回落纯文本渲染。block 不存在幂等成功。
+ */
+export const deleteQuestionBlock = (questionId: string) =>
+  request.post<void, void>(`/teacher/question/delete-block?questionId=${encodeURIComponent(questionId)}`)
+
 // ── PRD-A-015 批1「题目属性编辑页」— 属性回写端点 ────────────────────────────
 // POST /teacher/question/update-attrs（全字段可选，BE 只回写传了的非 null 列，不碰 blockJson/题干）。
 // 返回更新后的 QuestionDetail。雪花 id（questionId / motherQuestionId）一律 string。

@@ -111,6 +111,8 @@ const emit = defineEmits<{
   (e: 'compose-figure', payload: { index: number; correctionPrompt?: string }): void
   /** 🔴 PRD-C-100 B6：点开看大图（含切图 / 配图的 data URL） */
   (e: 'preview', url: string): void
+  /** 🔴 PRD-C-100 BC3：已入库变式「手动排版」（宿主标印记 + 跳 A-015 网格编辑器 round-trip blockJson） */
+  (e: 'manual-layout', index: number): void
 }>()
 
 const showSolution = ref(false)
@@ -371,6 +373,12 @@ function onUndoRegen() {
   emit('undo-regen', props.item.index)
 }
 
+// 🔴 PRD-C-100 BC3：手动排版（仅已入库题；宿主标印记 + 跳 A-015 网格编辑器 round-trip blockJson）。
+function onManualLayout() {
+  if (props.sending || props.regenerating) return
+  emit('manual-layout', props.item.index)
+}
+
 // ---------------------------------------------------------------------------
 // PRD-C-014 T2 — 题目 DNA 面板（默认收起 = 🧬 chip；点开展开全维，老师可逐维改）。
 // ---------------------------------------------------------------------------
@@ -573,7 +581,8 @@ function saveFieldEdit() {
         class="dirty-tag"
         :title="`改了 ${[...allDirtyDims].join('、')}，点「重生」按新 DNA 重出（重生前入库会被拦）`"
       >⏳ 待重生</span>
-      <span v-if="item.manualEdited" class="manual-tag" title="本题有维度被手动编辑过">✎ 手动编辑</span>
+      <span v-if="item.manualBlock" class="manual-tag is-layout" title="本题被老师手动排版过（A-015 网格编辑器存过 blockJson）">🎨 手动排版</span>
+      <span v-else-if="item.manualEdited" class="manual-tag" title="本题有维度被手动编辑过">✎ 手动编辑</span>
       <span v-if="item.persisted" class="persisted-tag">已收录</span>
       <span v-if="geneBadge" class="gene-badge" :class="geneBadge.cls">{{ geneBadge.text }}</span>
       <!-- 重新验算中：徽章位展示 loading 态 -->
@@ -1224,6 +1233,16 @@ function saveFieldEdit() {
         >
           编辑
         </button>
+        <!-- 🔴 PRD-C-100 BC3：手动排版（跳 A-015 网格编辑器，仅已入库题；未入库置灰提示先入库） -->
+        <button
+          type="button"
+          class="knob-btn is-layout"
+          :disabled="sending || regenerating || !item.persisted || !item.questionId"
+          :title="!item.persisted || !item.questionId ? '请先「收录入库」再手动排版' : '打开网格编辑器手动排版（拖拉拽布局）'"
+          @click="onManualLayout"
+        >
+          🎨 手动排版
+        </button>
         <button
           v-if="isManual"
           type="button"
@@ -1374,6 +1393,13 @@ function saveFieldEdit() {
   border: 1px solid #d4dede;
   border-radius: 6px;
   padding: 1px 8px;
+}
+/* 🔴 PRD-C-100 BC3：手动排版徽章（violet 系，区分于「手动编辑」中性灰） */
+.manual-tag.is-layout {
+  color: #5b4fd6;
+  background: #f2f0fe;
+  border-color: #cfc7f3;
+  font-weight: 600;
 }
 
 /* PRD-C-015 批5：待重生角标（卡头）——amber 醒目，提示先重生再入库 */
@@ -2127,6 +2153,15 @@ function saveFieldEdit() {
 }
 .knob-btn.is-undo:hover:not(:disabled) {
   background: #f5f8f8;
+}
+/* 🔴 PRD-C-100 BC3「手动排版」：violet 描边（跳网格编辑器，与重新验算同 AI/编辑色系） */
+.knob-btn.is-layout {
+  color: #5b4fd6;
+  border-color: #cfc7f3;
+}
+.knob-btn.is-layout:hover:not(:disabled) {
+  background: #f2f0fe;
+  border-color: #7b6cf0;
 }
 
 /* ============ 编辑态：textarea + 实时预览双栏 ============ */
