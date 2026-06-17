@@ -28,6 +28,8 @@ import {
 import { uploadMotherImage } from '@/api/variant/index'
 import QuestionBlockRender from '@/components/business/QuestionBlockRender/index.vue'
 import RichTextBlock from '@/components/business/RichTextBlock/index.vue'
+import ChapterPicker from '@/components/business/ChapterPicker/index.vue'
+import type { FreeTagVo } from '@/api/question/index'
 import {
   emptyDoc,
   parseBlockDoc,
@@ -69,11 +71,13 @@ const QUESTION_TYPES = [
   { label: '简答题', value: 5 },
 ]
 const questionType = ref<number>(1)
-// subjectId（学科/章节）必填。当前仓无独立可复用的轻量学科选择组件（题库页是整棵懒加载树），
-// 这里务实用 el-input 直接填 subjectId 编码字符串（雪花/数字 string）。
-// TODO: 若后续抽出 SubjectPicker 组件可替换此 input。
+// subjectId（学科/章节）必填。用可复用 ChapterPicker（biz_subject 整树选择，显示节点名）。
+// 🔴 历史题 78% 的 subject_id 是 misikt 旧路径码（不在新章节树里），ChapterPicker 会降级
+//    展示「原始码·未匹配」；编辑时选一个真实章节节点保存即修正该题归类。
 const subjectId = ref<string>('')
 const difficult = ref<number>(0) // 0 = 未设；1-4 星
+// 自由标签（只读展示，编辑态从 detail.freeTags 回填；标签增删走专门的标签管理，本页只呈现）
+const freeTags = ref<FreeTagVo[]>([])
 
 // ── 核心数据模型：整题 block 文档 ────────────────────────────────────────────
 const doc = ref<QuestionBlockDoc>(emptyDoc())
@@ -92,6 +96,7 @@ async function loadDetail() {
     if (detail?.questionType != null) questionType.value = Number(detail.questionType)
     if (detail?.difficult != null) difficult.value = Number(detail.difficult)
     if (detail?.subjectId != null) subjectId.value = String(detail.subjectId)
+    freeTags.value = Array.isArray(detail?.freeTags) ? detail.freeTags : []
     // block 文档无损还原（G2 FE 侧）：parseBlockDoc 接受 JSON 字符串
     const parsed = parseBlockDoc(detail?.blockJson)
     if (parsed && parsed.rows.length > 0) {
@@ -532,17 +537,26 @@ watch(questionId, async (newId) => {
             </el-select>
           </div>
           <div class="meta-item">
-            <span class="meta-label">学科/章节</span>
-            <el-input
-              v-model="subjectId"
-              placeholder="填 subjectId 编码（必填）"
-              style="width: 220px"
-              clearable
-            />
-          </div>
-          <div class="meta-item">
             <span class="meta-label">难度</span>
             <el-rate v-model="difficult" :max="4" />
+          </div>
+          <div class="meta-item meta-item-chapter">
+            <span class="meta-label">章节</span>
+            <ChapterPicker v-model="subjectId" />
+          </div>
+          <div class="meta-item meta-item-tags">
+            <span class="meta-label">自由标签</span>
+            <template v-if="freeTags.length > 0">
+              <el-tag
+                v-for="ft in freeTags"
+                :key="ft.id"
+                size="small"
+                class="meta-free-tag"
+              >
+                {{ ft.name }}
+              </el-tag>
+            </template>
+            <span v-else class="meta-empty">暂无</span>
           </div>
         </div>
 
@@ -855,6 +869,26 @@ watch(questionId, async (newId) => {
   color: #4e5969;
   font-weight: 500;
   white-space: nowrap;
+}
+
+/* 章节选择器占一段固定宽（ChapterPicker 内部 width:100%） */
+.meta-item-chapter {
+  flex: 0 0 320px;
+}
+.meta-item-chapter :deep(.chapter-picker) {
+  width: 240px;
+}
+
+/* 自由标签可换行 */
+.meta-item-tags {
+  flex-wrap: wrap;
+}
+.meta-free-tag {
+  margin-right: 4px;
+}
+.meta-empty {
+  font-size: 13px;
+  color: #c9cdd4;
 }
 
 /* 工具栏 */

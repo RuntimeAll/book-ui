@@ -383,7 +383,7 @@ watch(questionId, async () => {
               class="action-btn"
               @click="goAttributes"
             >
-              <el-icon><Tools /></el-icon>属性
+              <el-icon><Tools /></el-icon>高级属性
             </el-button>
             <!-- 草稿 -->
             <el-button size="small" class="action-btn" @click="sketchVisible = true">
