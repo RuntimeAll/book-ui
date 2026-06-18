@@ -186,17 +186,22 @@ const variantFigures = reactive<Record<number, VariantFigureState>>({})
 //   在此一处兜底最稳、partial 增量帧也天然覆盖（某题 stem 跨帧变化只作废它自己）。
 const figureStemAtIndex = reactive<Record<number, string>>({})
 
-// 🔴 修2（第一张图直出）：每「一组」变式只自动触发一次首图（母题切图 + 第一道变式造图），
-//   用一次性 guard 防 reactivity tick 重复打。换一批 / 改范围 = 新的一组 → guard 重置后重新自动出第一张。
-//   这两个 guard 在 onArtifact 检测到「新的一组题」（首题题面变了）时复位，clearCanvas 也复位。
+// 🔴 修2（首轮配图全覆盖，B 家族）：母题切图每组一次性 guard 不变；变式造图改为
+//   「逐题已自动触发集合」（autoComposedIndexes）—— 第一轮定稿后，对该组所有「还没图且不在 loading」
+//   的题各自动触发一次造图（不再只第一道），并发限流（AUTO_FIGURE_CONCURRENCY）防一次性 N 个把中转打挂。
+//   换一批 / 改范围 = 新的一组 → 集合清空后重新全量自动出图；clearCanvas 也清空。
 let autoCropMotherDone = false
-let autoComposeFirstDone = false
+// 已自动触发过造图的题 index（1-based）集合；按 index 逐题去重，避免一道触发后整组被单布尔挡住。
+const autoComposedIndexes = new Set<number>()
+// 🔴 首轮自动造图并发上限：sui-xiang 中转稳定性随机，一次性 N 并发易打挂 → 分批 3 张。
+const AUTO_FIGURE_CONCURRENCY = 3
 
 /**
  * 修1 核心：onArtifact 整量替换前，按 stem 作废受影响 index 的旧配图。
  *   - 新快照里某 index 的 stem ≠ 该 index 已缓存图对应的 stem → 删 variantFigures[index]（旧图作废）。
  *   - 当前快照里不存在的 index（题被删 / 组变小）→ 连带清掉残留图，免下一组复用。
- *   - 首题（index 最小，通常 1）题面变了 = 这是「新的一组」→ 复位 autoComposeFirstDone，让首图重新自动出。
+ *   - 首题（index 最小，通常 1）题面变了 = 这是「新的一组」→ 清空 autoComposedIndexes，让首轮配图全量重出。
+ *   - 题面变了的某 index：除作废旧图外，还从 autoComposedIndexes 摘除，使该题重新进入「自动出图」候选。
  *   纯 partial 增量帧（同组逐题上屏）里 stem 不变 → 不误删已生成的图（只新增 index 登记）。
  */
 function invalidateStaleFigures(next: VariantArtifact | null) {
@@ -204,27 +209,29 @@ function invalidateStaleFigures(next: VariantArtifact | null) {
   const nextStems = new Map<number, string>()
   for (const it of items) nextStems.set(it.index, it.stem || '')
 
-  // 1) 当前快照已不含的 index：清残留图 + 登记
+  // 1) 当前快照已不含的 index：清残留图 + 登记 + 摘除自动触发记录
   for (const k of Object.keys(variantFigures)) {
     const idx = Number(k)
     if (!nextStems.has(idx)) {
       delete variantFigures[idx]
       delete figureStemAtIndex[idx]
+      autoComposedIndexes.delete(idx)
     }
   }
-  // 2) 题面变了的 index：作废旧图（让新题用自己的题面重画）
+  // 2) 题面变了的 index：作废旧图（让新题用自己的题面重画）+ 摘除自动触发记录（该题待重新自动出图）
   let firstItemChanged = false
   const minIndex = items.length ? Math.min(...items.map((it) => it.index)) : 0
   for (const [idx, stem] of nextStems) {
     const prev = figureStemAtIndex[idx]
     if (prev !== undefined && prev !== stem) {
       delete variantFigures[idx] // 旧图作废，绝不串到新题
+      autoComposedIndexes.delete(idx) // 题面已变 → 允许该题重新自动造图
       if (idx === minIndex) firstItemChanged = true
     }
     figureStemAtIndex[idx] = stem
   }
-  // 3) 首题题面变了 = 新的一组 → 复位首图自动 guard（换一批 / 改范围重出后重新直出第一张）
-  if (firstItemChanged) autoComposeFirstDone = false
+  // 3) 首题题面变了 = 新的一组 → 清空自动触发集合（换一批 / 改范围重出后首轮配图全量重出）
+  if (firstItemChanged) autoComposedIndexes.clear()
 }
 
 function ensureVariantFigure(index: number): VariantFigureState {
@@ -235,11 +242,15 @@ function ensureVariantFigure(index: number): VariantFigureState {
 }
 
 /**
- * 修2：拿到一组题后，自动出「第一张图」（低频=至少一张，不全手动）。
+ * 修2（B 家族·首轮配图全覆盖）：拿到一组题后，对**所有**还没图的变式题自动出图（不再只第一道）。
  *   - 母题「切图形」：母题确有原图（motherImg 非空）且本组未自动切过 → 触发一次 cropMotherFigure。
- *   - 变式第一道造图：当前快照已有变式题、第一道尚无图、本组未自动造过 → 触发一次 composeVariantFigure。
- *   每组只触发一次（autoCropMotherDone / autoComposeFirstDone 一次性 guard），且只对还没图的题触发；
- *   定稿帧才自动造变式图（partial 增量帧首题题面可能还在变，等定稿再造避免造废）。母题切图便宜，不 gate partial。
+ *   - 变式造图：仅**定稿帧**（`!a.partial`）触发；遍历该组所有 items，对「未自动触发过（不在
+ *     autoComposedIndexes）且还没图（!st.png）且不在 loading」的题各触发一次造图。
+ *   并发限流（AUTO_FIGURE_CONCURRENCY=3）：分批 await，避免一次性 N 个并发把中转打挂。
+ *   逐题去重靠 autoComposedIndexes（Set），一道触发不挡其余；换一批/改范围 = invalidateStaleFigures 清集合后全量重出。
+ *   partial 增量帧不触发变式造图（题面还在变，避免造废图）；母题切图便宜不 gate partial。
+ *   needs_figure 降级：某题画不出由 onComposeVariantFigure 内部落 ⚠待补图，自动触发集合仍记其 index（已尝试过），
+ *     不卡其余题（老师可手动重切单题）。
  */
 function maybeAutoFirstFigures(a: VariantArtifact | null) {
   // 母题切图（裁图便宜，没理由 gate；母题原图在即可，partial/定稿都可）
@@ -247,15 +258,32 @@ function maybeAutoFirstFigures(a: VariantArtifact | null) {
     autoCropMotherDone = true
     void onCropMotherFigure()
   }
-  // 变式第一道造图：仅定稿帧（无 partial）才自动造，避免对还在变的增量首题造废图
-  if (a && !a.partial && !autoComposeFirstDone && a.items.length) {
-    const first = a.items.reduce((m, it) => (it.index < m.index ? it : m), a.items[0])
-    const st = variantFigures[first.index]
-    const hasFig = !!(st && st.png)
-    if (!hasFig && !(st && st.loading)) {
-      autoComposeFirstDone = true
-      void onComposeVariantFigure({ index: first.index })
+  // 变式造图：仅定稿帧（无 partial）才自动造，避免对还在变的增量题面造废图
+  if (a && !a.partial && a.items.length) {
+    // 候选 = 未自动触发过 + 还没图 + 不在 loading，按 index 升序（首题优先出）
+    const pending = a.items
+      .filter((it) => {
+        if (autoComposedIndexes.has(it.index)) return false
+        const st = variantFigures[it.index]
+        return !(st && st.png) && !(st && st.loading)
+      })
+      .sort((x, y) => x.index - y.index)
+    if (pending.length) {
+      // 先登记（防 reactivity tick 内重复入队），再分批限流跑
+      for (const it of pending) autoComposedIndexes.add(it.index)
+      void runAutoFiguresBatched(pending.map((it) => it.index))
     }
+  }
+}
+
+/**
+ * 并发限流跑首轮自动造图：每批 AUTO_FIGURE_CONCURRENCY 个并发，批间 await，控住中转压力。
+ *   onComposeVariantFigure 自带 st.loading 单题去重锁 + needs_figure 降级，逐题失败不互相牵连。
+ */
+async function runAutoFiguresBatched(indexes: number[]) {
+  for (let i = 0; i < indexes.length; i += AUTO_FIGURE_CONCURRENCY) {
+    const batch = indexes.slice(i, i + AUTO_FIGURE_CONCURRENCY)
+    await Promise.allSettled(batch.map((index) => onComposeVariantFigure({ index })))
   }
 }
 
@@ -1299,7 +1327,7 @@ function onEditHeaderGrade(grade: string) {
 function resetFigureCachesForNewGroup() {
   for (const k of Object.keys(variantFigures)) delete variantFigures[Number(k)]
   for (const k of Object.keys(figureStemAtIndex)) delete figureStemAtIndex[Number(k)]
-  autoComposeFirstDone = false
+  autoComposedIndexes.clear()
 }
 
 /** 换一批：重发初始出题 utterance（整组重新出，agent 重新分析母题） */
@@ -1344,10 +1372,10 @@ function clearCanvas() {
   motherFigureNeeds.value = false
   motherFigureReason.value = null
   for (const k of Object.keys(variantFigures)) delete variantFigures[Number(k)]
-  // 🔴 修1/修2：stem 作废表 + 首图自动 guard 随会话重置（新会话/切会话从零开始自动出第一张）
+  // 🔴 修1/修2：stem 作废表 + 自动造图集合随会话重置（新会话/切会话从零开始首轮配图全量重出）
   for (const k of Object.keys(figureStemAtIndex)) delete figureStemAtIndex[Number(k)]
   autoCropMotherDone = false
-  autoComposeFirstDone = false
+  autoComposedIndexes.clear()
 }
 
 /** 新会话（原「新母题」）：换新 thread；首条消息发出时才登记进会话列表 */
