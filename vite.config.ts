@@ -20,11 +20,11 @@ import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 //    master-ai = C 线 → BE :8090 / dev :8091。目录+端口双隔离。
 const BOOK_SERVER_TARGET = 'http://localhost:8080'
 
-// 🔴 PRD-C-004：AI 编排服务 ai-orchestrator（Python/FastAPI, :8092）。
-//    前端调 /ai/chat → vite proxy rewrite 掉 /ai → 转 http://localhost:8092/chat。
+// 🔴 PRD-C-004：AI 编排服务 ai-orchestrator（Python/FastAPI）。端口归属：A 线(master-A)=:8094 / C 线=:8092。
+//    前端调 /ai/chat → vite proxy rewrite 掉 /ai → 转 <AI_ORCHESTRATOR_TARGET>/chat。
 //    走同源避免浏览器直连跨端口 CORS。ai-orchestrator 返回裸 JSON（非 misikt envelope），
 //    所以聊天调用独立封装（src/api/chat），不复用 /api 那套 misikt 拦截器。
-const AI_ORCHESTRATOR_TARGET = 'http://localhost:8092'
+const AI_ORCHESTRATOR_TARGET = 'http://localhost:8094'
 
 // 🔴 PRD-C-009：举一反三 agent 跑在 agent-service-toolkit（LangGraph/FastAPI）—— 与
 //    ai-orchestrator(:8092) 是两个独立 Python 服务。前端调 /agent/variant/stream → vite proxy
