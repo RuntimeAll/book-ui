@@ -107,6 +107,12 @@ const motherImg = ref('') // 已发出的母题图，顶部小徽章常驻（守
 const previewUrl = ref('') // 点开看大图（el-image-viewer / 简易遮罩）
 const sending = ref(false)
 const thinking = ref(false) // LLM token 流期的「思考中」动效
+// 🔴 思考过程开关（老师手动开/关思考链）：开 → 本轮经 agent_config(thinking_stream=true)
+//   回传 toolkit，BE 路由到支持 extended-thinking 的中转站(aigeek) + bind reasoning_effort，
+//   reasoning 帧流式外显（点亮已就绪的可折叠「思考中」块）；走付费站、reasoning 按输出计费。
+//   关（默认）→ 维持现状（走主站、不带 thinking、便宜）。开了但成交站不支持 → 参数静默忽略，
+//   思考块不显示，绝不报错（graceful，见 streamVariant onReasoning 向后兼容）。
+const thinkingStream = ref(false)
 // 当前轮 rail 锚点（onStage 只更新它；新一轮 send 换新锚点，旧轮 rail 冻结留存）
 const currentRail = ref<RailItem | null>(null)
 // PRD-C-011：右栏卡片栅数据源 = artifact 快照帧（snapshot 全量，整量替换）
@@ -681,6 +687,8 @@ function dispatch(
       confirmedGradeBookId: confirmCtx?.confirmedGradeBookId,
       gradeBookName: confirmCtx?.gradeBookName,
       startVariants: confirmCtx?.startVariants,
+      // 🔴 思考过程开关：开 → BE 路由 aigeek + 开 extended-thinking，reasoning 流式外显（付费）。
+      thinkingStream: thinkingStream.value,
     },
     {
       onToken: (delta) => {
@@ -1640,6 +1648,23 @@ onBeforeUnmount(() => {
             出题后可直接点右侧卡片上的「换数字 / 换场景 / 答疑」，或在这里说
             「删第2」「难一点」「补2道同第3」，最后说「可以了」入库。
           </p>
+          <!-- 🔴 思考过程开关：开 → 走支持思考链的中转站，流式展示 AI 思考过程（更慢 + 付费）。
+               关（默认）→ 走主站、不展示思考、更快更省。开了但站点不支持则静默忽略、不报错。 -->
+          <div class="thinking-toggle-bar">
+            <el-switch
+              v-model="thinkingStream"
+              size="small"
+              :disabled="sending"
+              data-testid="thinking-stream-switch"
+            />
+            <span class="thinking-toggle-label">思考过程</span>
+            <el-tooltip
+              placement="top"
+              content="开启后展示 AI 的思考过程（可折叠），会走支持思考链的通道，稍慢且按思考输出额外计费；关闭则更快更省，不展示思考。"
+            >
+              <span class="thinking-toggle-hint">ⓘ</span>
+            </el-tooltip>
+          </div>
         </div>
       </div>
 
@@ -1992,6 +2017,23 @@ onBeforeUnmount(() => {
   font-size: 12px;
   line-height: 1.6;
   color: #86909c;
+}
+
+/* 思考过程开关条 */
+.thinking-toggle-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 2px 0;
+}
+.thinking-toggle-label {
+  font-size: 12px;
+  color: #4e5969;
+}
+.thinking-toggle-hint {
+  font-size: 12px;
+  color: #a9aeb8;
+  cursor: help;
 }
 
 .chat-stream {

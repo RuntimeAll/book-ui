@@ -49,6 +49,14 @@ export interface VariantRequest {
    * 经 agent_config(config.configurable.grade_book_name) 回传，省 toolkit 一次树查、同步年级显示。
    */
   gradeBookName?: string
+  /**
+   * 🔴 思考过程开关（老师手动开/关思考链）：true → 经 agent_config(config.configurable.thinking_stream)
+   * 回传 toolkit，BE 把本轮 LLM 调用路由到支持 extended-thinking 的中转站(aigeek) + bind
+   * reasoning_effort，reasoning 帧流式外显（点亮可折叠思考块），走付费站、reasoning 按输出计费。
+   * false/省略（默认）→ 维持现状（主站、不带 thinking、不外显、便宜）。
+   * 🔴 graceful：开了但成交站不支持/不可用 failover → 参数被忽略、无 reasoning 帧、思考块不显示，绝不报错。
+   */
+  thinkingStream?: boolean
 }
 
 /** toolkit ChatMessage（只取前端用得到的字段，其余宽松忽略） */
@@ -886,6 +894,9 @@ export function streamVariant(
   // 🔴 PRD-C-017 B5：母题硬停 resume 信号 + 年级册人话名（接 B5-toolkit 契约）
   if (payload.startVariants) agentConfig.start_variants = true
   if (payload.gradeBookName) agentConfig.grade_book_name = payload.gradeBookName
+  // 🔴 思考过程开关：进 config.configurable.thinking_stream → toolkit _ainvoke_text 据它路由 aigeek
+  //   + 开 extended-thinking + 挂 on_reasoning 外显（关时不传，BE 维持默认便宜路径）。
+  if (payload.thinkingStream) agentConfig.thinking_stream = true
   if (Object.keys(agentConfig).length) body.agent_config = agentConfig
 
   fetchEventSource('/agent/variant/stream', {
