@@ -271,6 +271,14 @@ export interface VariantArtifactItem {
   /** check.verify 或 check.review（证明类只有 review 键，如 proof_needs_human） */
   verify: string | null
   /**
+   * 🔴 PRD-A-017 R1·验算可查真证据（BE 透传 sympy verify() 的 detail/computed）：
+   *   verifyDetail = 逐步核对话术（如「computed=46.0, claimed=46.0, tol=1e-6: within tolerance」）；
+   *   verifyComputed = 真算出的解集/真值（如「[46]」）。VariantCard 验算徽章展开层渲染。
+   *   证明/开放/作图类无 sympy 证据 → null（如实留空不伪造，禁假数据铁律）。旧后端缺 → null。
+   */
+  verifyDetail: string | null
+  verifyComputed: string | null
+  /**
    * 4d 外显层级（PRD-C-012 _apply_visibility）：verified/self_ok/proof/silent/both_low；
    * PRD-C-013 P2b：增量帧首发该题时无 tier（闸链未跑完）→ null，VariantCard 渲染「验算中…」
    * 过渡态；闸链完成后 BE 原位重发同 seq 带 tier。可显式取 'checking' 表过渡（向前兼容）。
@@ -720,6 +728,11 @@ function pickArtifact(msg: ToolkitChatMessage): VariantArtifact | null {
       difficulty: typeof o.difficulty === 'number' ? o.difficulty : Number(o.difficulty) || 0,
       level: typeof o.level === 'string' && o.level ? o.level : 'normal',
       verify: typeof o.verify === 'string' && o.verify ? o.verify : null,
+      // 🔴 PRD-A-017 R1·验算可查真证据（缺/非串 → null，证明类如实留空）
+      verifyDetail:
+        typeof o.verify_detail === 'string' && o.verify_detail ? o.verify_detail : null,
+      verifyComputed:
+        typeof o.verify_computed === 'string' && o.verify_computed ? o.verify_computed : null,
       tier,
       gene: typeof o.gene === 'string' && o.gene ? o.gene : null,
       persisted: o.persisted === true,
