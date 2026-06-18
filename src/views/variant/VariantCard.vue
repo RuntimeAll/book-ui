@@ -281,12 +281,15 @@ const displayChoice = computed(() => {
   if (editKind.value !== 'choice') return null
   const parsed = parseChoiceStem(props.item.stem || '')
   if (!parsed.options.length) return null // 解析不出 → 回退整段 MarkdownMath
-  const maxLen = parsed.options.reduce((m, o) => Math.max(m, o.length), 0)
+  // A2 SSOT 封顶：选择题展示封顶到 CHOICE_LETTERS（A-D），绝不渲染 label=? 的项
+  // （与 parseChoiceStem 去重/封顶 + BE/入库 一字不差）。
+  const opts = parsed.options.slice(0, CHOICE_LETTERS.length)
+  const maxLen = opts.reduce((m, o) => Math.max(m, o.length), 0)
   // 任一选项过长（>14 字符，约含分式/长文）→ 单列；否则 2 列（2×2）
-  const twoCol = maxLen <= 14 && parsed.options.length <= 4
+  const twoCol = maxLen <= 14 && opts.length <= 4
   return {
     stem: parsed.stem,
-    options: parsed.options.map((o, i) => ({ letter: CHOICE_LETTERS[i] || '?', content: o })),
+    options: opts.map((o, i) => ({ letter: CHOICE_LETTERS[i], content: o })),
     twoCol,
     answer: ((props.item.answer || '').trim().toUpperCase().match(/[A-D]/) || [''])[0],
   }

@@ -129,12 +129,22 @@ export function parseChoiceStem(stem: string): ParsedChoice {
   // 先规范成「一行一项」，让内联选项也能按行解析
   const lines = normalizeChoice(normalizeBlanks(stem)).split('\n')
   const stemLines: string[] = []
+  // A2 SSOT（与 BE qtype_format / 入库 _split_choice_blocks 一字不差）：按 label 去重 + 封顶 + 连续重排。
+  //   ① 同字母 label 只留首次出现（后续重复块丢弃）；
+  //   ② 封顶到字母序长度 letters.length（绝不渲染/落库 label=? 的项）；
+  //   ③ 解析出的 options 为纯内容数组，顺序即 A/B/C/D… 连续重排（labels 由位置派生，见 assembleChoiceStem/displayChoice）。
+  const LETTERS = 'ABCDEFGH'
+  const seen = new Set<string>()
   const options: string[] = []
   let seenOption = false
   for (const line of lines) {
     const m = line.match(OPTION_LINE_RE)
     if (m) {
       seenOption = true
+      const label = m[1].toUpperCase()
+      if (seen.has(label)) continue // 重复 label → 丢弃（保留首次）
+      if (options.length >= LETTERS.length) continue // 封顶，绝不产出 ? 项
+      seen.add(label)
       options.push(m[2].trim())
     } else if (!seenOption) {
       stemLines.push(line)
@@ -161,7 +171,9 @@ export function assembleChoiceStem(stem: string, options: string[]): string {
   if (!/[（(]\s*[）)]\s*$/.test(head) && !/[（(].{0,3}[）)]\s*$/.test(head)) {
     head = `${head}（ ）`
   }
-  const optLines = options.map((o, i) => `${letters[i] || '?'}. ${(o || '').trim()}`)
+  // A2 SSOT 封顶：超出字母序的项丢弃，绝不产出 label=? 的项（与 parse/BE/入库 一字不差）。
+  const capped = options.slice(0, letters.length)
+  const optLines = capped.map((o, i) => `${letters[i]}. ${(o || '').trim()}`)
   return `${head}\n\n${optLines.join('\n')}`
 }
 
