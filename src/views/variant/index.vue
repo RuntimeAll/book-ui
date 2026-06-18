@@ -370,6 +370,9 @@ async function onComposeVariantFigure(payload: { index: number; correctionPrompt
   if (!item) return
   st.loading = true
   st.reason = null
+  // 单元1：本地点亮「画图配图」灯（变式造图，按 index 区分防多图并发串台）
+  const stageKey = figureStageKey(payload.index)
+  upsertFigureStage(stageKey, 'running', `第 ${payload.index} 题`)
   try {
     const res = await composeVariantFigure(threadId.value, userStore.accessToken, {
       stem: item.stem,
@@ -391,12 +394,20 @@ async function onComposeVariantFigure(payload: { index: number; correctionPrompt
       // 成功时存住本版命令（供下次图片重生作增量基准）；BE 没回命令则保留上一版 commands。
       const cmds = normalizeCommands(res.commands)
       if (cmds.length) st.commands = cmds
+      // 单元1：成功 → 灯 done
+      upsertFigureStage(stageKey, 'done', `第 ${payload.index} 题`)
     } else {
       // 失败/降级：旧图（若有）保留，仅当本来就没图时才标 ⚠待补图。
       st.needs = res.needsFigure && !st.png
       // 🔴 主动引导：BE 标 needUserDesc（画不准/画不出且本应有图）→ FE 提示补描述（无旧图时才催，避免对已有好图误催）。
       st.needUserDesc = res.needUserDesc && !st.png
       st.directionReview = false
+      // 单元1：无新图 → 本有旧图则 done（沿用旧图），否则 warn（待补图）
+      upsertFigureStage(
+        stageKey,
+        st.png ? 'done' : 'warn',
+        st.png ? `第 ${payload.index} 题·沿用上一版图` : `第 ${payload.index} 题·待补图`
+      )
     }
     st.reason = res.reason
   } catch (e) {
@@ -404,6 +415,8 @@ async function onComposeVariantFigure(payload: { index: number; correctionPrompt
     //   🔴 P7：仅当本来无图时才落「⚠待补图」徽章；已有好图保留（重造失败不抹旧图）。
     st.needs = !st.png
     st.reason = `配图失败：${e instanceof Error ? e.message : String(e)}`
+    // 单元1：异常 → 灯 warn
+    upsertFigureStage(stageKey, 'warn', `第 ${payload.index} 题·配图失败`)
   } finally {
     st.loading = false
   }
@@ -634,6 +647,42 @@ function settleStages() {
       ? { ...s, status: 'warn' as const, detail: s.detail ? `${s.detail}·已中断` : '已中断' }
       : s
   )
+}
+
+// ---------------------------------------------------------------------------
+// 🔴 PRD-C-100 bug-002 单元1 — 进度条补「画图配图」灯（纯 FE 本地灯）。
+//   阶段灯走 /variant/stream 的 SSE（onStage），但配图是独立 POST（composeVariantFigure /
+//   母题切图）不经 SSE writer → figure 阶段从不发。这里在调配图 POST 时本地往【当前轮 rail】
+//   push 一盏「画图配图」灯（running），promise 终态改 done/warn —— 复用 onStage 的「同 key 原地
+//   更新、新 key 追加」机制，不另造渲染。
+//   🔴 防串台：每张图用独立 key（母题切图 = figure-mother；变式造图 = figure-v<index>），
+//     多图并发时各亮各的灯、互不覆盖；落到 onStage 同款 rail.stages，AiStageRail 原样渲染。
+// ---------------------------------------------------------------------------
+
+/** 母题切图灯 key */
+const FIGURE_STAGE_MOTHER = 'figure-mother'
+/** 变式造图灯 key（按 1-based index 区分，防多图并发串台） */
+function figureStageKey(index: number): string {
+  return `figure-v${index}`
+}
+
+/**
+ * 往【当前轮 rail】upsert 一盏配图灯（同 onStage:705 机制：同 key 原地更新、新 key 追加）。
+ *   - 无当前轮 rail（极少见：手动切图发生在任何对话轮之前）→ 静默不渲染灯，不报错（配图本体照常跑）。
+ *   - title 固定「画图配图」；detail 外显具体张/原因，缺省省略。
+ */
+function upsertFigureStage(
+  key: string,
+  status: VariantStage['status'],
+  detail?: string
+) {
+  const rail = currentRail.value
+  if (!rail) return
+  const stage: VariantStage = { key, title: '画图配图', status, detail }
+  const idx = rail.stages.findIndex((s) => s.key === key)
+  if (idx >= 0) rail.stages[idx] = stage
+  else rail.stages.push(stage)
+  scrollToBottom()
 }
 
 /**
