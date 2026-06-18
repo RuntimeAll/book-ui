@@ -27,6 +27,7 @@ import {
 } from '@/api/variant'
 import { tagsByKp as fetchTagsByKp } from '@/api/question'
 import MarkdownMath from '@/components/MarkdownMath.vue'
+import InlineMath from '@/components/InlineMath.vue'
 import KpTreeDialog from './KpTreeDialog.vue'
 import {
   normalizeStem,
@@ -916,7 +917,7 @@ function saveFieldEdit() {
             </span>
             <span class="dna-v">
               <template v-if="dna.secondaryKps.length">
-                <span v-for="kp in dna.secondaryKps" :key="kp" class="kp-pill sec">{{ kp }}</span>
+                <span v-for="kp in dna.secondaryKps" :key="kp" class="kp-pill sec"><InlineMath :content="kp" /></span>
               </template>
               <button type="button" class="dna-min-btn" :disabled="sending" @click="openKpDialog('secondary')">
                 {{ dna.secondaryKps.length ? '改' : '＋ 选副考点' }}
@@ -988,7 +989,7 @@ function saveFieldEdit() {
             <span class="dna-v dna-full">
               <!-- 🔴 PRD-C-017 B5：场景点击直改（去「说一句改」自然语言框） -->
               <template v-if="editingField !== 'scene'">
-                <span class="dna-text">{{ dna.scene || '未标' }}</span>
+                <span class="dna-text"><InlineMath :content="dna.scene || '未标'" /></span>
                 <span v-if="dimDirty('scene')" class="dim-dirty">待重生⏳</span>
                 <button type="button" class="dna-min-btn" :disabled="sending || reverifying" @click="openFieldEdit('scene')">
                   改
@@ -1046,7 +1047,7 @@ function saveFieldEdit() {
             </span>
             <span class="dna-v dna-full">
               <template v-if="dna.models.length">
-                <span v-for="m in dna.models" :key="m.id" class="model-pill">{{ m.name || m.id }}</span>
+                <span v-for="m in dna.models" :key="m.id" class="model-pill"><InlineMath :content="m.name || m.id" /></span>
               </template>
               <span v-else class="dna-muted">未标</span>
               <span v-if="dimDirty('models')" class="dim-dirty">待重生⏳</span>
@@ -1089,7 +1090,7 @@ function saveFieldEdit() {
             </span>
             <span class="dna-v dna-full">
               <template v-if="dna.hardPoints.length">
-                <span v-for="hp in dna.hardPoints" :key="hp" class="hard-pill">{{ hp }}</span>
+                <span v-for="hp in dna.hardPoints" :key="hp" class="hard-pill"><InlineMath :content="hp" /></span>
               </template>
               <span v-else class="dna-muted">无（基础题 · 宁空不凑）</span>
             </span>
@@ -1101,7 +1102,7 @@ function saveFieldEdit() {
             </span>
             <span class="dna-v dna-full">
               <template v-if="dna.tags.length">
-                <span v-for="t in dna.tags" :key="t" class="ftag">{{ t }}</span>
+                <span v-for="t in dna.tags" :key="t" class="ftag"><InlineMath :content="t" /></span>
               </template>
               <span v-else class="dna-muted">未标</span>
               <el-popover

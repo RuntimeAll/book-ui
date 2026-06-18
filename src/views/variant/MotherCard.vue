@@ -35,6 +35,7 @@ import {
   type VariantMotherCard,
 } from '@/api/variant'
 import MarkdownMath from '@/components/MarkdownMath.vue'
+import InlineMath from '@/components/InlineMath.vue'
 import KpTreeDialog from './KpTreeDialog.vue'
 
 const props = defineProps<{
@@ -364,7 +365,7 @@ function saveHard() {
           <span class="mc-k">副考点 <span class="mc-edit-tag">可改</span></span>
           <span class="mc-v">
             <template v-if="dna?.secondaryKps.length">
-              <span v-for="kp in dna.secondaryKps" :key="kp" class="mc-pill sec">{{ kp }}</span>
+              <span v-for="kp in dna.secondaryKps" :key="kp" class="mc-pill sec"><InlineMath :content="kp" /></span>
             </template>
             <span v-else class="mc-muted">未标</span>
             <button type="button" class="mc-min-btn" :disabled="sending" @click="kpDialog = true">
@@ -388,7 +389,7 @@ function saveHard() {
           </span>
 
           <span class="mc-k">场景</span>
-          <span class="mc-v">{{ dna?.scene || '纯代数' }}</span>
+          <span class="mc-v"><InlineMath :content="dna?.scene || '纯代数'" /></span>
 
           <!-- 🔴 PRD-C-017 B5 难度行（1-4 星 + 档位文案，与变式卡同风格） -->
           <span class="mc-k">难度</span>
@@ -411,7 +412,7 @@ function saveHard() {
           <span class="mc-v mc-full">
             <template v-if="!hardEditing">
               <template v-if="hardPoints.length">
-                <span v-for="hp in hardPoints" :key="hp" class="mc-hard">{{ hp }}</span>
+                <span v-for="hp in hardPoints" :key="hp" class="mc-hard"><InlineMath :content="hp" /></span>
               </template>
               <!-- ④ M8：难点空 → 显式文案，不留白（送分题难点空是诚实正确） -->
               <span v-else class="mc-muted">此题无显著难点</span>
@@ -436,7 +437,7 @@ function saveHard() {
           <span class="mc-k">解题模型</span>
           <span class="mc-v">
             <template v-if="dna?.models.length">
-              <span v-for="m in dna.models" :key="m.id" class="mc-model">{{ m.name || m.id }}</span>
+              <span v-for="m in dna.models" :key="m.id" class="mc-model"><InlineMath :content="m.name || m.id" /></span>
             </template>
             <span v-else class="mc-muted">未标</span>
           </span>
@@ -444,7 +445,7 @@ function saveHard() {
           <span class="mc-k">标签</span>
           <span class="mc-v">
             <template v-if="dna?.tags.length">
-              <span v-for="t in dna.tags" :key="t" class="mc-tag">{{ t }}</span>
+              <span v-for="t in dna.tags" :key="t" class="mc-tag"><InlineMath :content="t" /></span>
             </template>
             <span v-else class="mc-muted">未标</span>
           </span>

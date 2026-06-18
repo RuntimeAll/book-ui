@@ -13,6 +13,7 @@
  */
 import katex from 'katex'
 import MarkdownIt from 'markdown-it'
+import { normalizeMath } from '@/utils/mathNormalize'
 
 // markdown-it 实例：html:false 防注入；linkify 自动识别 URL；breaks 换行=<br>
 const md: MarkdownIt = new MarkdownIt({
@@ -27,6 +28,11 @@ const md: MarkdownIt = new MarkdownIt({
  */
 export function renderRichText(text: string): string {
   if (!text) return ''
+
+  // ── Step 0：净化口径与聊天页(MarkdownMath)对齐（P2，2026-06-18 SSOT util）──
+  // 此前 renderRichText 只认 $...$，不做 \(\)→$ / 字面 \n→换行 / $ 外裸 \quad 清除，
+  // 导致同一题聊天页正常、题库/卷库/PDF 面裸露。统一过 normalizeMath（与 BE 同口径）。
+  text = normalizeMath(text)
 
   // ── Step 1：LaTeX 替换（先替换块公式再替换行内公式，避免 $$ 被 $ 误匹配）──
   // 使用占位字典：把渲染后的 HTML 先存字典，防止 markdown-it 对 HTML 内容做二次转义
