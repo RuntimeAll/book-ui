@@ -340,6 +340,30 @@ const verifyBadge = computed(() => {
   return null
 })
 
+// ---------------------------------------------------------------------------
+// 验算证据展开（PRD-A-017 批2c 核心）：徽章点开 = 真证据面板。
+//   item.verifyComputed = sympy 真算出的解集/真值（如 "[46]"）；
+//   item.verifyDetail   = 逐步核对话术（如 "computed=46.0, claimed=46.0, tol=1e-6: within tolerance"）。
+//   证明/作图/开放类无 sympy 证据 → 两字段都是 null（如实留空，禁伪造一个假的验算明细）。
+// 🔴 禁翻译/篡改真值：detail 是程序英文输出，原样展示，只在前面加中文引导「sympy 验算明细」。
+// ---------------------------------------------------------------------------
+const verifyOpen = ref(false)
+/** 是否有可展开的真证据（任一非空）→ 徽章加可点标识；两者皆 null = 诚实留空，不假装可展开 */
+const hasVerifyEvidence = computed(
+  () => !!(props.item.verifyComputed || props.item.verifyDetail)
+)
+/**
+ * 仅「有真证据」的徽章可展开（无证据的不假装可点；改点②第4条）。
+ * 过渡态 / 重算中徽章不参与（那些走独立 vb-checking，本就无 verifyBadge）。
+ */
+const verifyExpandable = computed(
+  () => !!verifyBadge.value && hasVerifyEvidence.value && !isChecking.value && !props.reverifying
+)
+function toggleVerify() {
+  if (!verifyExpandable.value) return
+  verifyOpen.value = !verifyOpen.value
+}
+
 const geneBadge = computed(() => {
   // 4d：只说好——warn 等负面值一律沉默（双闸低由 verifyBadge 的 ⚠ 承担）
   return props.item.gene === 'pass' ? { cls: 'gb-teal', text: '平行度 ✓' } : null
@@ -614,10 +638,34 @@ function saveFieldEdit() {
       <span v-else-if="isChecking" class="verify-badge vb-checking">
         <span class="check-dot" />验算中…
       </span>
-      <span v-else-if="verifyBadge" class="verify-badge" :class="verifyBadge.cls">
+      <button
+        v-else-if="verifyBadge"
+        type="button"
+        class="verify-badge"
+        :class="[verifyBadge.cls, { 'is-expandable': verifyExpandable, 'is-open': verifyOpen }]"
+        :title="verifyExpandable ? '点开看程序验算证据' : undefined"
+        @click="toggleVerify"
+      >
         {{ verifyBadge.text }}
-      </span>
+        <span v-if="verifyExpandable" class="vb-caret">{{ verifyOpen ? '▴' : '▾' }}</span>
+      </button>
     </header>
+
+    <!-- ============ 验算证据面板（PRD-A-017 批2c）：徽章点开 = 真证据，禁伪造 ============ -->
+    <div v-if="verifyOpen && verifyExpandable" class="verify-evidence">
+      <div class="ve-head">
+        <span class="ve-title">验算证据</span>
+        <span class="ve-sub">程序输出，原样呈现</span>
+      </div>
+      <div v-if="item.verifyComputed" class="ve-row">
+        <span class="ve-k">程序算得</span>
+        <code class="ve-v mono">{{ item.verifyComputed }}</code>
+      </div>
+      <div v-if="item.verifyDetail" class="ve-row ve-detail-row">
+        <span class="ve-k">sympy 验算明细</span>
+        <code class="ve-v mono">{{ item.verifyDetail }}</code>
+      </div>
+    </div>
 
     <!-- ============ 编辑态：按题型拆字段 + 实时 MarkdownMath 预览 + 智能输入（失焦转 LaTeX） ============ -->
     <template v-if="editing">
@@ -1331,20 +1379,20 @@ function saveFieldEdit() {
 </template>
 
 <style scoped>
-/* DESIGN token：card #FFF / border #E3E9E9 / ink-900 #1D2A2E / teal-600 #1E8A8A
-   green-600 #0E9F6E / amber-500 #E0A23C / violet-600 #7B6CF0 / violet-50 #F2F0FE */
+/* PRD-A-017 换皮：颜色统一走 variant-theme.css token（var(--teal/violet/green/amber/...)，
+   作用域 .variant-page）。本组件不再硬编码业务色 hex；唯一例外 = #fff 白字（token 表无 --white）。 */
 /* G13 ②：卡片解剖顺序 = 顶部色条 → 题号/题型/星级 → 题干 → 选项 → 🧬 DNA chip → 解析 → 旋钮 */
 .variant-card {
   position: relative;
-  background: #fff;
-  border: 1px solid #e7e3da;
-  border-radius: 16px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
   padding: 16px 18px;
   display: flex;
   flex-direction: column;
   gap: 10px;
   overflow: hidden;
-  box-shadow: 0 1px 2px rgba(22, 48, 47, 0.05), 0 2px 8px rgba(22, 48, 47, 0.04);
+  box-shadow: var(--shadow);
   container-type: inline-size; /* 编辑态双栏的 @container 查询锚点 */
 }
 /* 顶部色条（深青渐变；已收录卡转 violet） */
@@ -1355,14 +1403,14 @@ function saveFieldEdit() {
   right: 0;
   top: 0;
   height: 3px;
-  background: linear-gradient(90deg, #1e8a8a, #7fc0bd);
+  background: linear-gradient(90deg, var(--teal), var(--teal-100));
 }
 .variant-card.is-persisted {
-  background: #efecfb; /* violet-50：已收录态弱高亮 */
-  border-color: #6d5fd0;
+  background: var(--violet-50); /* 已收录态弱高亮 */
+  border-color: var(--violet);
 }
 .variant-card.is-persisted::before {
-  background: linear-gradient(90deg, #6d5fd0, #b3a7f0);
+  background: linear-gradient(90deg, var(--violet), var(--violet-100));
 }
 
 .card-head {
@@ -1375,7 +1423,7 @@ function saveFieldEdit() {
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  background: #1e8a8a; /* teal-600 */
+  background: var(--teal);
   color: #fff;
   font-size: 13px;
   font-weight: 700;
@@ -1386,14 +1434,14 @@ function saveFieldEdit() {
 }
 .meta-tag {
   font-size: 12px;
-  color: #33464c; /* ink-700 */
-  background: #edf2f2; /* bg-100 */
-  border-radius: 6px;
+  color: var(--ink-2);
+  background: var(--bg);
+  border-radius: var(--r-xs);
   padding: 1px 8px;
 }
 .meta-tag.is-hard {
-  color: #b8741a;
-  background: #fbf1e0;
+  color: var(--amber);
+  background: var(--amber-50);
 }
 .head-spacer {
   flex: 1;
@@ -1409,88 +1457,108 @@ function saveFieldEdit() {
   cursor: default;
 }
 .star.is-full {
-  color: #b8741a; /* amber-600（v3 暖琥珀） */
+  color: var(--amber);
 }
 .star.is-empty {
-  color: #d9d3c6;
+  color: var(--faint);
 }
 /* 可点星级（难度覆盖）：hover 提示可改 */
 .star.is-click {
   cursor: pointer;
 }
 .star.is-click:hover {
-  color: #b8741a;
+  color: var(--amber);
 }
 
 /* 手动编辑徽章（任一 DNA 维被改过） */
 .manual-tag {
   font-size: 12px;
-  color: #5b6770;
-  background: #eef1f3;
-  border: 1px solid #d4dede;
-  border-radius: 6px;
+  color: var(--ink-2);
+  background: var(--line-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs);
   padding: 1px 8px;
 }
 /* 🔴 PRD-C-100 BC3：手动排版徽章（violet 系，区分于「手动编辑」中性灰） */
 .manual-tag.is-layout {
-  color: #5b4fd6;
-  background: #f2f0fe;
-  border-color: #cfc7f3;
+  color: var(--violet-700);
+  background: var(--violet-50);
+  border-color: var(--violet-line);
   font-weight: 600;
 }
 
 /* PRD-C-015 批5：待重生角标（卡头）——amber 醒目，提示先重生再入库 */
 .dirty-tag {
   font-size: 12px;
-  color: #b8741a;
-  background: #fbeed6;
-  border: 1px solid #ecc98f;
-  border-radius: 6px;
+  color: var(--amber);
+  background: var(--amber-50);
+  border: 1px solid var(--amber-line);
+  border-radius: var(--r-xs);
   padding: 1px 8px;
   font-weight: 700;
 }
 
-/* 验证角标：⚠ 比 ✓ 醒目（实底白字 + ⚠ 加粗） */
+/* 验证角标：⚠ 比 ✓ 醒目（实底白字 + ⚠ 加粗）。可展开徽章 = <button>，重置默认样式。 */
 .verify-badge {
   font-size: 12px;
   color: #fff;
   border-radius: 6px;
   padding: 2px 8px;
+  font: inherit;
+  font-size: 12px;
+  border: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  line-height: 1.5;
+}
+/* 有真证据 → 可点（下划虚线 + 小三角提示） */
+.verify-badge.is-expandable {
+  cursor: pointer;
+  text-decoration: underline dotted rgba(255, 255, 255, 0.6);
+  text-underline-offset: 2px;
+}
+.verify-badge.is-expandable:hover {
+  filter: brightness(1.06);
+}
+.vb-caret {
+  font-size: 9px;
+  opacity: 0.85;
 }
 .vb-green {
-  background: #0e9f6e; /* green-600 */
+  background: var(--green); /* 验算通过 */
 }
 .vb-amber {
-  background: #e0a23c; /* amber-500 */
+  background: var(--amber);
   font-weight: 700;
 }
 .vb-red {
-  background: #d9444b;
+  background: var(--red);
   font-weight: 700;
 }
 .vb-violet {
-  background: #7b6cf0; /* violet-600 */
+  background: var(--violet); /* 转人工复核 = AI/中性 */
 }
 /* 手动编辑（验算待重跑）：中性灰底深字，不抢 ✓/⚠ 权重，暗示需重新验算 */
 .vb-manual {
-  background: #eef1f3;
-  color: #5b6770;
-  border: 1px solid #d4dede;
+  background: var(--line-soft);
+  color: var(--ink-2);
+  border: 1px solid var(--line);
 }
 /* P2b 验算中过渡态：中性灰底 + 呼吸点，不抢 ✓/⚠ 的视觉权重 */
 .vb-checking {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  color: #5b6770;
-  background: #edf2f2; /* bg-100 */
+  color: var(--ink-2);
+  background: var(--bg);
   animation: vb-breathe 1.4s infinite ease-in-out;
 }
 .check-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #7b6cf0; /* violet-600：AI 在场 */
+  background: var(--violet); /* AI 在场 */
 }
 @keyframes vb-breathe {
   0%,
@@ -1502,34 +1570,83 @@ function saveFieldEdit() {
   }
 }
 
+/* ============ 验算证据面板（PRD-A-017 批2c）：青紫冷浅 + 绿调表「通过」，像程序输出（张校长招牌） ============ */
+.verify-evidence {
+  margin-top: 2px;
+  background: var(--green-50);
+  border: 1px solid var(--green-line);
+  border-left: 3px solid var(--green);
+  border-radius: var(--r-sm);
+  padding: 9px 12px;
+}
+.ve-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.ve-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--green);
+}
+.ve-sub {
+  font-size: 10.5px;
+  color: var(--muted);
+}
+.ve-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 12px;
+}
+.ve-k {
+  flex-shrink: 0;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.ve-v {
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--green-line);
+  border-radius: var(--r-xs);
+  padding: 1px 7px;
+  word-break: break-all;
+}
+.ve-detail-row .ve-v {
+  font-size: 11.5px;
+  color: var(--ink-2);
+}
+
 .gene-badge {
   font-size: 12px;
   border-radius: 6px;
   padding: 1px 8px;
 }
 .gb-teal {
-  color: #176e6e; /* teal-700 */
-  background: #e6f2f2; /* teal-50 */
+  color: var(--teal-700);
+  background: var(--teal-50);
 }
 .gb-amber {
-  color: #b8741a;
-  background: #fbf1e0;
+  color: var(--amber);
+  background: var(--amber-50);
   font-weight: 600;
 }
 
 .persisted-tag {
   font-size: 12px;
-  color: #5b4fd6; /* violet-700 */
+  color: var(--violet-700);
   background: #fff;
-  border: 1px solid #7b6cf0;
-  border-radius: 6px;
+  border: 1px solid var(--violet);
+  border-radius: var(--r-xs);
   padding: 1px 8px;
   font-weight: 600;
 }
 
 .card-stem {
   font-size: 14px;
-  color: #1d2a2e; /* ink-900 */
+  color: var(--ink);
 }
 
 /* PRD-C-100 B6：配图区 */
@@ -1539,10 +1656,10 @@ function saveFieldEdit() {
 .vc-figure {
   display: inline-block;
   max-width: 100%;
-  border: 1px dashed #7b6cf0;
-  border-radius: 8px;
+  border: 1px dashed var(--violet);
+  border-radius: var(--r-sm);
   overflow: hidden;
-  background: #faf9ff;
+  background: var(--violet-50);
   cursor: zoom-in;
 }
 .vc-figure img {
@@ -1553,27 +1670,27 @@ function saveFieldEdit() {
 }
 .vc-figure-warn {
   font-size: 12px;
-  color: #b8741a;
-  background: #fdf6ec;
-  border: 1px dashed #f0c78a;
-  border-radius: 8px;
+  color: var(--amber);
+  background: var(--amber-50);
+  border: 1px dashed var(--amber-line);
+  border-radius: var(--r-sm);
   padding: 6px 10px;
 }
 /* 🔴 配图主动引导：⚠待补图区里的「补一句图形描述」提示 */
 .vc-figure-desc-hint {
   margin-top: 6px;
   font-size: 12px;
-  color: #b8741a;
+  color: var(--amber);
   line-height: 1.5;
 }
 /* 🔴 方向待确认徽章（造图成功但含方向元素 → 引导确认方向） */
 .vc-figure-direction {
   margin-top: 6px;
   font-size: 12px;
-  color: #c0392b;
-  background: #fdeceb;
-  border: 1px dashed #f0a8a0;
-  border-radius: 8px;
+  color: var(--red);
+  background: var(--red-50);
+  border: 1px dashed var(--red-line);
+  border-radius: var(--r-sm);
   padding: 6px 10px;
   line-height: 1.5;
 }
@@ -1581,7 +1698,7 @@ function saveFieldEdit() {
 .vc-fig-desc-cta {
   border: none;
   background: transparent;
-  color: #7b6cf0;
+  color: var(--violet);
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
@@ -1611,11 +1728,11 @@ function saveFieldEdit() {
   cursor: pointer;
 }
 .vc-fig-cancel {
-  background: #f2f3f5;
-  color: #4e5969;
+  background: var(--bg);
+  color: var(--ink-2);
 }
 .vc-fig-regen {
-  background: #7b6cf0;
+  background: var(--violet);
   color: #fff;
 }
 .vc-fig-regen:disabled {
@@ -1624,7 +1741,7 @@ function saveFieldEdit() {
 }
 .vc-figure-reason {
   font-size: 11px;
-  color: #a0a8b3;
+  color: var(--faint);
   line-height: 1.5;
   margin: 4px 0 0;
 }
@@ -1653,17 +1770,17 @@ function saveFieldEdit() {
   gap: 6px;
 }
 .choice-item.is-answer {
-  background: #e6f2f2; /* teal-50：标出正确项 */
-  border-radius: 6px;
+  background: var(--teal-50); /* 标出正确项 */
+  border-radius: var(--r-xs);
   padding: 0 6px;
 }
 .choice-letter {
   font-weight: 700;
-  color: #33464c; /* ink-700 */
+  color: var(--ink-2);
   flex-shrink: 0;
 }
 .choice-item.is-answer .choice-letter {
-  color: #176e6e; /* teal-700 */
+  color: var(--teal-700);
 }
 .choice-content :deep(.md-math) {
   font-size: var(--md-font-size, 14px);
@@ -1683,21 +1800,21 @@ function saveFieldEdit() {
   gap: 7px;
   font-size: 12.5px;
   font-weight: 600;
-  color: #0f6e6e; /* teal-700 */
-  background: #e7f3f1; /* teal-50 */
-  border: 1px solid #cfe6e3;
+  color: var(--teal-700);
+  background: var(--teal-50);
+  border: 1px solid var(--teal-line);
   border-radius: 999px;
   padding: 5px 13px 5px 11px;
   cursor: pointer;
   transition: 0.15s;
 }
 .dna-chip:hover {
-  background: #dcefec;
-  border-color: #7fc0bd;
+  background: var(--teal-100);
+  border-color: var(--teal);
 }
 .dna-chip.open {
   background: #fff;
-  border-color: #7fc0bd;
+  border-color: var(--teal);
 }
 .dna-spiral {
   font-size: 13px;
@@ -1710,9 +1827,9 @@ function saveFieldEdit() {
 /* 展开态面板 */
 .dna-panel {
   margin-top: 11px;
-  background: #f7faf9;
-  border: 1px solid #e7e3da; /* line */
-  border-radius: 12px;
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
   padding: 13px 15px;
 }
 .dna-top {
@@ -1723,8 +1840,8 @@ function saveFieldEdit() {
 }
 .dna-note {
   font-size: 11.5px;
-  color: #0f6e6e;
-  background: #e7f3f1;
+  color: var(--teal-700);
+  background: var(--teal-50);
   border-radius: 999px;
   padding: 2px 10px;
 }
@@ -1733,7 +1850,7 @@ function saveFieldEdit() {
   margin: -4px 0 11px;
   font-size: 11px;
   line-height: 1.5;
-  color: #9fb0ad; /* ink-300 */
+  color: var(--faint);
 }
 /* 维度网格：标签列 + 值列（窄屏单列） */
 .dna-grid {
@@ -1744,7 +1861,7 @@ function saveFieldEdit() {
   align-items: baseline;
 }
 .dna-k {
-  color: #6b817e; /* ink-500 */
+  color: var(--muted);
   white-space: nowrap;
   display: inline-flex;
   align-items: center;
@@ -1763,40 +1880,40 @@ function saveFieldEdit() {
 }
 .rc-hard_anchor {
   /* 硬锚：深红描边（改=立即重锚，整组重出，最重） */
-  color: #c0392b;
-  background: #fdecea;
-  border: 1px solid #f0b8b1;
+  color: var(--red);
+  background: var(--red-50);
+  border: 1px solid var(--red-line);
 }
 .rc-soft_regen {
   /* 软重生：amber（改→待重生，点重生统一重出） */
-  color: #b8741a;
-  background: #fbeed6;
-  border: 1px solid #ecc98f;
+  color: var(--amber);
+  background: var(--amber-50);
+  border: 1px solid var(--amber-line);
 }
 .rc-rewrite_solve {
   /* 重写解析：violet（改→重写解析过闸B，AI 在场） */
-  color: #5b4fd6;
-  background: #f2f0fe;
-  border: 1px solid #cfc7f3;
+  color: var(--violet-700);
+  background: var(--violet-50);
+  border: 1px solid var(--violet-line);
 }
 .rc-meta {
   /* 只标注：灰（改→即时生效不重出，最轻） */
-  color: #6b817e;
-  background: #eef1f3;
-  border: 1px solid #d9dfe1;
+  color: var(--muted);
+  background: var(--line-soft);
+  border: 1px solid var(--line);
 }
 
 /* 维级「待重生⏳」角标（该维被改、未重生） */
 .dim-dirty {
   font-size: 10.5px;
-  color: #b8741a;
-  background: #fbeed6;
+  color: var(--amber);
+  background: var(--amber-50);
   border-radius: 4px;
   padding: 0 6px;
   font-weight: 600;
 }
 .dna-v {
-  color: #16302f; /* ink-900 */
+  color: var(--ink);
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -1823,17 +1940,17 @@ function saveFieldEdit() {
 }
 .diff-label {
   font-size: 12px;
-  color: #6b817e;
+  color: var(--muted);
 }
 .dna-muted {
-  color: #9fb0ad; /* ink-300 */
+  color: var(--faint);
   font-size: 12.5px;
 }
 
 /* 知识点药丸：主考点实心深青、副考点描边 */
 .kp-pill {
   font-size: 12px;
-  background: #0f6e6e; /* teal-700 */
+  background: var(--teal-700);
   color: #fff;
   border: none;
   border-radius: 999px;
@@ -1854,24 +1971,24 @@ function saveFieldEdit() {
 }
 .kp-pill.sec {
   background: #fff;
-  color: #0f6e6e;
-  border: 1px solid #7fc0bd;
+  color: var(--teal-700);
+  border: 1px solid var(--teal);
   cursor: default;
 }
 .hard-pill {
   font-size: 12px;
-  background: #fbeed6; /* amber-100 */
-  color: #b8741a;
-  border-radius: 5px;
+  background: var(--amber-50);
+  color: var(--amber);
+  border-radius: var(--r-xs);
   padding: 1px 8px;
   font-weight: 600;
 }
 /* PRD-C-015 块②：解题模型药丸（violet 系，呼应重写解析维） */
 .model-pill {
   font-size: 12px;
-  background: #f2f0fe; /* violet-50 */
-  color: #5b4fd6; /* violet-700 */
-  border: 1px solid #cfc7f3;
+  background: var(--violet-50);
+  color: var(--violet-700);
+  border: 1px solid var(--violet-line);
   border-radius: 999px;
   padding: 2px 9px;
   display: inline-block;
@@ -1882,40 +1999,40 @@ function saveFieldEdit() {
 .tag-pop-note {
   margin: 8px 0 0;
   font-size: 11px;
-  color: #5b4fd6;
-  background: #f2f0fe;
-  border-radius: 6px;
+  color: var(--violet-700);
+  background: var(--violet-50);
+  border-radius: var(--r-xs);
   padding: 4px 8px;
 }
 .ftag {
   font-size: 12px;
-  background: #f4f1ea;
-  color: #385350;
-  border: 1px solid #e9e3d6;
+  background: var(--bg);
+  color: var(--ink-2);
+  border: 1px solid var(--line);
   border-radius: 999px;
   padding: 2px 9px;
   display: inline-block;
 }
 /* 骨架最难步高亮（BE 用【】包裹，这里也给视觉提示，由 MarkdownMath 渲染纯文本则保留括号） */
 .dna-text.skel :deep(.hard) {
-  background: #fbeed6;
-  color: #b8741a;
-  border-radius: 5px;
+  background: var(--amber-50);
+  color: var(--amber);
+  border-radius: var(--r-xs);
   padding: 0 6px;
   font-weight: 600;
 }
 /* DNA 维级小动作按钮（选副考点 / 说一句改 / 加标签） */
 .dna-min-btn {
   font-size: 12px;
-  color: #0f6e6e;
+  color: var(--teal-700);
   background: #fff;
-  border: 1px solid #7fc0bd;
-  border-radius: 8px;
+  border: 1px solid var(--teal);
+  border-radius: var(--r-sm);
   padding: 2px 10px;
   cursor: pointer;
 }
 .dna-min-btn:hover:not(:disabled) {
-  background: #e7f3f1;
+  background: var(--teal-50);
 }
 .dna-min-btn:disabled {
   opacity: 0.5;
@@ -1931,8 +2048,8 @@ function saveFieldEdit() {
   flex-basis: 100%;
   width: 100%;
   background: #fff;
-  border: 1px solid #e7e3da;
-  border-radius: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
   padding: 8px;
 }
 .inline-edit-actions {
@@ -1949,17 +2066,17 @@ function saveFieldEdit() {
   cursor: pointer;
 }
 .inline-cancel {
-  color: #5b6770;
+  color: var(--ink-2);
   background: #fff;
-  border: 1px solid #e7e3da;
+  border: 1px solid var(--line);
 }
 .inline-save {
   color: #fff;
-  background: #1e8a8a; /* teal-600：老师拍板 */
-  border: 1px solid #1e8a8a;
+  background: var(--teal); /* 老师拍板 */
+  border: 1px solid var(--teal);
 }
 .inline-save:hover {
-  background: #176e6e;
+  background: var(--teal-700);
 }
 
 /* T4（已下线）：点击-说话内联输入框样式保留（无引用，不影响） */
@@ -1967,8 +2084,8 @@ function saveFieldEdit() {
   flex-basis: 100%;
   margin-top: 8px;
   background: #fff;
-  border: 1px solid #efecfb;
-  border-radius: 10px;
+  border: 1px solid var(--violet-50);
+  border-radius: var(--r-sm);
   padding: 8px;
 }
 .revise-box.whole-revise {
@@ -1988,17 +2105,17 @@ function saveFieldEdit() {
   cursor: pointer;
 }
 .revise-cancel {
-  color: #5b6770;
+  color: var(--ink-2);
   background: #fff;
-  border: 1px solid #e7e3da;
+  border: 1px solid var(--line);
 }
 .revise-go {
   color: #fff;
-  background: #6d5fd0; /* violet-600：AI 在场（生成维） */
-  border: 1px solid #6d5fd0;
+  background: var(--violet); /* AI 在场（生成维） */
+  border: 1px solid var(--violet);
 }
 .revise-go:hover {
-  background: #5447b8;
+  background: var(--violet-700);
 }
 
 /* 标签多选弹层 */
@@ -2006,7 +2123,7 @@ function saveFieldEdit() {
   margin: 8px 0 4px;
   font-size: 12px;
   font-weight: 700;
-  color: #385350;
+  color: var(--ink-2);
 }
 .tag-pop-title:first-child {
   margin-top: 0;
@@ -2023,18 +2140,18 @@ function saveFieldEdit() {
   overflow-y: auto;
 }
 .ftag.is-chosen {
-  background: #e7f3f1;
-  color: #0f6e6e;
-  border-color: #7fc0bd;
+  background: var(--teal-50);
+  color: var(--teal-700);
+  border-color: var(--teal);
   cursor: pointer;
 }
 .ftag.is-cand {
   cursor: pointer;
 }
 .ftag.is-cand.is-picked {
-  background: #e7f3f1;
-  color: #0f6e6e;
-  border-color: #7fc0bd;
+  background: var(--teal-50);
+  color: var(--teal-700);
+  border-color: var(--teal);
 }
 .tag-pop-input {
   display: flex;
@@ -2046,18 +2163,18 @@ function saveFieldEdit() {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 8px;
-  border-top: 1px dashed #e7e3da;
+  border-top: 1px dashed var(--line);
   padding-top: 8px;
 }
 
 /* 整卡重做按钮：violet 描边（AI 生成动作） */
 .knob-btn.is-redo {
-  color: #5447b8;
-  border-color: #cfc7f3;
+  color: var(--violet-700);
+  border-color: var(--violet-line);
 }
 .knob-btn.is-redo:hover:not(:disabled) {
-  background: #efecfb;
-  border-color: #6d5fd0;
+  background: var(--violet-50);
+  border-color: var(--violet);
 }
 
 @container (max-width: 460px) {
@@ -2072,7 +2189,7 @@ function saveFieldEdit() {
 }
 
 .solution-block {
-  border-top: 1px dashed #e3e9e9;
+  border-top: 1px dashed var(--line);
   padding-top: 6px;
 }
 .solution-toggle {
@@ -2080,38 +2197,38 @@ function saveFieldEdit() {
   background: none;
   padding: 2px 0;
   font-size: 13px;
-  color: #1e8a8a; /* teal-600 */
+  color: var(--teal);
   cursor: pointer;
 }
 .solution-toggle:hover {
-  color: #176e6e;
+  color: var(--teal-700);
 }
 .solution-body {
   margin-top: 6px;
-  background: #f5f8f8; /* bg-50 内嵌 */
-  border-radius: 8px;
+  background: var(--bg-soft); /* 内嵌 */
+  border-radius: var(--r-sm);
   padding: 10px 12px;
 }
 .solution-label {
   margin: 4px 0 2px;
   font-size: 12px;
   font-weight: 700;
-  color: #33464c;
+  color: var(--ink-2);
 }
 .solution-empty {
   margin: 0;
   font-size: 12px;
-  color: #86909c;
+  color: var(--muted);
 }
 
 /* PRD-C-015 批5：dirty 题入库拦截提示条（amber 暖底，醒目但不报错色） */
 .dirty-block-hint {
   font-size: 12px;
   line-height: 1.6;
-  color: #92590f;
-  background: #fdf4e3;
-  border: 1px solid #ecc98f;
-  border-radius: 8px;
+  color: var(--amber);
+  background: var(--amber-50);
+  border: 1px solid var(--amber-line);
+  border-radius: var(--r-sm);
   padding: 7px 11px;
 }
 
@@ -2122,7 +2239,7 @@ function saveFieldEdit() {
 }
 .bank-btn {
   font-size: 13px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   padding: 4px 14px;
   cursor: pointer;
   border: 1px solid transparent;
@@ -2133,31 +2250,31 @@ function saveFieldEdit() {
 /* 收录入库：teal 实心（老师拍板色系，与右栏「全部入库」一致语汇） */
 .bank-btn.is-persist {
   color: #fff;
-  background: #1e8a8a; /* teal-600 */
-  border-color: #1e8a8a;
+  background: var(--teal);
+  border-color: var(--teal);
 }
 .bank-btn.is-persist:hover:not(:disabled) {
-  background: #176e6e;
-  border-color: #176e6e;
+  background: var(--teal-700);
+  border-color: var(--teal-700);
 }
 .bank-btn.is-persist:disabled:not(.is-done) {
-  background: #b9d8d8;
-  border-color: #b9d8d8;
+  background: var(--teal-line);
+  border-color: var(--teal-line);
 }
 /* 已收录态：弱化为 violet-50 描边（与卡片 is-persisted 弱高亮呼应），非禁用灰 */
 .bank-btn.is-persist.is-done {
-  color: #5b4fd6; /* violet-700 */
-  background: #f2f0fe; /* violet-50 */
-  border-color: #c8c0f7;
+  color: var(--violet-700);
+  background: var(--violet-50);
+  border-color: var(--violet-line);
 }
 /* 加入试题篮：teal 描边（始终可点；不抢实心入库的视觉权重） */
 .bank-btn.is-basket {
-  color: #176e6e; /* teal-700 */
+  color: var(--teal-700);
   background: #fff;
-  border-color: #b9d8d8;
+  border-color: var(--teal-line);
 }
 .bank-btn.is-basket:hover:not(:disabled) {
-  background: #e6f2f2; /* teal-50 */
+  background: var(--teal-50);
 }
 .bank-btn.is-basket:disabled {
   opacity: 0.55;
@@ -2169,16 +2286,16 @@ function saveFieldEdit() {
 }
 .knob-btn {
   font-size: 13px;
-  color: #33464c;
+  color: var(--ink-2);
   background: none;
-  border: 1px solid #e3e9e9;
-  border-radius: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
   padding: 3px 12px;
   cursor: pointer;
 }
 .knob-btn:hover:not(:disabled) {
-  color: #1e8a8a;
-  border-color: #1e8a8a;
+  color: var(--teal);
+  border-color: var(--teal);
 }
 .knob-btn:disabled {
   opacity: 0.5;
@@ -2186,53 +2303,52 @@ function saveFieldEdit() {
 }
 /* 「编辑」突出：teal 描边（老师拍板色系） */
 .knob-btn.is-edit {
-  color: #176e6e;
-  border-color: #b9d8d8;
+  color: var(--teal-700);
+  border-color: var(--teal-line);
 }
 .knob-btn.is-edit:hover:not(:disabled) {
-  background: #e6f2f2;
+  background: var(--teal-50);
 }
 /* 「重新验算」：violet 描边（AI 在场） */
 .knob-btn.is-reverify {
-  color: #5b4fd6;
-  border-color: #c8c0f7;
+  color: var(--violet-700);
+  border-color: var(--violet-line);
 }
 .knob-btn.is-reverify:hover:not(:disabled) {
-  background: #f2f0fe;
-  border-color: #7b6cf0;
+  background: var(--violet-50);
+  border-color: var(--violet);
 }
 /* PRD-C-015 批5：「重生」amber 实心（dirty 题的主动作，最醒目） */
 .knob-btn.is-regen {
   color: #fff;
-  background: #b8741a; /* 暖琥珀（v3） */
-  border-color: #b8741a;
+  background: var(--amber);
+  border-color: var(--amber);
   font-weight: 600;
 }
 .knob-btn.is-regen:hover:not(:disabled) {
-  background: #9a6015;
-  border-color: #9a6015;
+  filter: brightness(0.92);
 }
 /* 「撤销重生」：灰描边（次动作，回上一版） */
 .knob-btn.is-undo {
-  color: #5b6770;
-  border-color: #d4dede;
+  color: var(--ink-2);
+  border-color: var(--line);
 }
 .knob-btn.is-undo:hover:not(:disabled) {
-  background: #f5f8f8;
+  background: var(--bg-soft);
 }
 /* 🔴 PRD-C-100 BC3「手动排版」：violet 描边（跳网格编辑器，与重新验算同 AI/编辑色系） */
 .knob-btn.is-layout {
-  color: #5b4fd6;
-  border-color: #cfc7f3;
+  color: var(--violet-700);
+  border-color: var(--violet-line);
 }
 .knob-btn.is-layout:hover:not(:disabled) {
-  background: #f2f0fe;
-  border-color: #7b6cf0;
+  background: var(--violet-50);
+  border-color: var(--violet);
 }
 
 /* ============ 编辑态：textarea + 实时预览双栏 ============ */
 .variant-card.is-editing {
-  border-color: #7b6cf0; /* violet-600：编辑中 = AI 在场 */
+  border-color: var(--violet); /* 编辑中 = AI 在场 */
   box-shadow: 0 0 0 2px rgba(123, 108, 240, 0.12);
 }
 .variant-card.is-reverifying {
@@ -2251,31 +2367,31 @@ function saveFieldEdit() {
 .edit-label {
   font-size: 12px;
   font-weight: 700;
-  color: #33464c;
+  color: var(--ink-2);
 }
 .norm-btn {
   font-size: 12px;
-  color: #176e6e;
-  background: #e6f2f2;
-  border: 1px solid #b9d8d8;
-  border-radius: 6px;
+  color: var(--teal-700);
+  background: var(--teal-50);
+  border: 1px solid var(--teal-line);
+  border-radius: var(--r-xs);
   padding: 1px 10px;
   cursor: pointer;
 }
 .norm-btn:hover {
-  background: #d3eaea;
+  background: var(--teal-100);
 }
 .edit-hint {
   font-size: 11px;
-  color: #86909c;
+  color: var(--muted);
 }
 /* 智能输入提示条 */
 .smart-hint {
   margin: 0;
   font-size: 12px;
-  color: #5b4fd6; /* violet-700：AI 辅助 */
-  background: #f2f0fe; /* violet-50 */
-  border-radius: 6px;
+  color: var(--violet-700); /* AI 辅助 */
+  background: var(--violet-50);
+  border-radius: var(--r-xs);
   padding: 4px 10px;
 }
 /* 选项编辑行：字母圈 + 双栏（输入/预览） */
@@ -2289,8 +2405,8 @@ function saveFieldEdit() {
   height: 22px;
   margin-top: 4px;
   border-radius: 50%;
-  background: #edf2f2; /* bg-100 */
-  color: #33464c;
+  background: var(--bg);
+  color: var(--ink-2);
   font-size: 12px;
   font-weight: 700;
   display: inline-flex;
@@ -2331,12 +2447,12 @@ function saveFieldEdit() {
 }
 .edit-preview {
   position: relative;
-  background: #f5f8f8; /* bg-50 */
-  border: 1px solid #e3e9e9;
-  border-radius: 8px;
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
   padding: 18px 12px 10px;
   font-size: 14px;
-  color: #1d2a2e;
+  color: var(--ink);
   min-height: 40px;
   overflow-x: auto;
 }
@@ -2345,37 +2461,37 @@ function saveFieldEdit() {
   top: 2px;
   left: 8px;
   font-size: 10px;
-  color: #a0a8b3;
+  color: var(--faint);
 }
 .edit-actions {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  border-top: 1px dashed #e3e9e9;
+  border-top: 1px dashed var(--line);
   padding-top: 8px;
 }
 .edit-cancel,
 .edit-save {
   font-size: 13px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   padding: 4px 16px;
   cursor: pointer;
 }
 .edit-cancel {
-  color: #5b6770;
+  color: var(--ink-2);
   background: #fff;
-  border: 1px solid #e3e9e9;
+  border: 1px solid var(--line);
 }
 .edit-cancel:hover {
-  background: #f5f8f8;
+  background: var(--bg-soft);
 }
 .edit-save {
   color: #fff;
-  background: #1e8a8a; /* teal-600：老师拍板 */
-  border: 1px solid #1e8a8a;
+  background: var(--teal); /* 老师拍板 */
+  border: 1px solid var(--teal);
 }
 .edit-save:hover {
-  background: #176e6e;
-  border-color: #176e6e;
+  background: var(--teal-700);
+  border-color: var(--teal-700);
 }
 </style>
