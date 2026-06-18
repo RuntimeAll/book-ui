@@ -22,7 +22,7 @@ import {
   undoRegenVariant,
   uploadMotherImage,
 } from '@/api/variant'
-import type { DnaEditValue, DnaField } from '@/api/variant'
+import type { DnaEditValue, DnaField, MotherFigureItem } from '@/api/variant'
 import type {
   ToolkitChatMessage,
   VariantArtifact,
@@ -167,7 +167,12 @@ const motherQuestionId = ref('') // 入库后的母题题 id（雪花 string）
 //   变式造图（compose_variant）：每道变式按需造图 + 「图歪了？重新生成」（带 correctionPrompt）。
 // ---------------------------------------------------------------------------
 // 母题切图态
-const motherFigurePng = ref<string | null>(null)
+// 🔴 PRD-C-100 bug-002 单元3：母题多图。motherFigures = 全部成功切图（按检出顺序，v-for 渲染）。
+//   motherFigurePng（首图 computed）保留供老路径/兜底引用，不再是真相源。
+const motherFigures = ref<MotherFigureItem[]>([])
+const motherFigurePng = computed<string | null>(() =>
+  motherFigures.value.length ? motherFigures.value[0].pngBase64 : null
+)
 const motherFigureLoading = ref(false)
 const motherFigureNeeds = ref(false)
 const motherFigureReason = ref<string | null>(null)
@@ -342,19 +347,35 @@ async function onCropMotherFigure() {
   if (motherFigureLoading.value || !motherImg.value) return
   motherFigureLoading.value = true
   motherFigureReason.value = null
+  // 单元1：本地点亮「画图配图」灯（母题切图）
+  upsertFigureStage(FIGURE_STAGE_MOTHER, 'running', '母题切图')
   try {
     const res = await cropMotherFigure(threadId.value, userStore.accessToken, motherImg.value)
-    // 🔴 PRD-C-100 P7：重切成功（有 png）才覆盖；失败（needs_figure/无 png）保留上一版好图，只更原因，
-    //   不让一次失败的重切把已切好的母题图清成 ⚠待补图（UX 退步）。
-    if (res.pngBase64) {
-      motherFigurePng.value = res.pngBase64
+    // 🔴 PRD-C-100 P7 + 单元3：重切成功（切出 ≥1 张）才覆盖；失败（needs_figure/无图）保留上一版好图，
+    //   只更原因，不让一次失败的重切把已切好的母题图清成 ⚠待补图（UX 退步）。
+    if (res.figures.length) {
+      motherFigures.value = res.figures // 多图整组替换（v-for 渲染全部）
       motherFigureNeeds.value = false
+      // 单元3：成功数 < 检出数（部分降级）→ 灯标 done 但 detail 外显「成功 N/M 张」（reason 已含文案）
+      const partial = res.nFigures > res.figures.length
+      upsertFigureStage(
+        FIGURE_STAGE_MOTHER,
+        partial ? 'warn' : 'done',
+        partial ? `母题切图 ${res.figures.length}/${res.nFigures} 张` : `母题切图 ${res.figures.length} 张`
+      )
     } else {
-      motherFigureNeeds.value = res.needsFigure && !motherFigurePng.value
+      motherFigureNeeds.value = res.needsFigure && !motherFigures.value.length
+      // 无图：本来就有旧图则 done（保留旧图）；否则 warn（待补图）
+      upsertFigureStage(
+        FIGURE_STAGE_MOTHER,
+        motherFigures.value.length ? 'done' : 'warn',
+        res.reason || (motherFigures.value.length ? '沿用上一版图' : '未切出图形')
+      )
     }
     motherFigureReason.value = res.reason
   } catch (e) {
     motherFigureReason.value = `切图失败：${e instanceof Error ? e.message : String(e)}`
+    upsertFigureStage(FIGURE_STAGE_MOTHER, 'warn', '切图失败')
   } finally {
     motherFigureLoading.value = false
   }
@@ -370,6 +391,9 @@ async function onComposeVariantFigure(payload: { index: number; correctionPrompt
   if (!item) return
   st.loading = true
   st.reason = null
+  // 单元1：本地点亮「画图配图」灯（变式造图，按 index 区分防多图并发串台）
+  const stageKey = figureStageKey(payload.index)
+  upsertFigureStage(stageKey, 'running', `第 ${payload.index} 题`)
   try {
     const res = await composeVariantFigure(threadId.value, userStore.accessToken, {
       stem: item.stem,
@@ -391,12 +415,20 @@ async function onComposeVariantFigure(payload: { index: number; correctionPrompt
       // 成功时存住本版命令（供下次图片重生作增量基准）；BE 没回命令则保留上一版 commands。
       const cmds = normalizeCommands(res.commands)
       if (cmds.length) st.commands = cmds
+      // 单元1：成功 → 灯 done
+      upsertFigureStage(stageKey, 'done', `第 ${payload.index} 题`)
     } else {
       // 失败/降级：旧图（若有）保留，仅当本来就没图时才标 ⚠待补图。
       st.needs = res.needsFigure && !st.png
       // 🔴 主动引导：BE 标 needUserDesc（画不准/画不出且本应有图）→ FE 提示补描述（无旧图时才催，避免对已有好图误催）。
       st.needUserDesc = res.needUserDesc && !st.png
       st.directionReview = false
+      // 单元1：无新图 → 本有旧图则 done（沿用旧图），否则 warn（待补图）
+      upsertFigureStage(
+        stageKey,
+        st.png ? 'done' : 'warn',
+        st.png ? `第 ${payload.index} 题·沿用上一版图` : `第 ${payload.index} 题·待补图`
+      )
     }
     st.reason = res.reason
   } catch (e) {
@@ -404,6 +436,8 @@ async function onComposeVariantFigure(payload: { index: number; correctionPrompt
     //   🔴 P7：仅当本来无图时才落「⚠待补图」徽章；已有好图保留（重造失败不抹旧图）。
     st.needs = !st.png
     st.reason = `配图失败：${e instanceof Error ? e.message : String(e)}`
+    // 单元1：异常 → 灯 warn
+    upsertFigureStage(stageKey, 'warn', `第 ${payload.index} 题·配图失败`)
   } finally {
     st.loading = false
   }
@@ -634,6 +668,42 @@ function settleStages() {
       ? { ...s, status: 'warn' as const, detail: s.detail ? `${s.detail}·已中断` : '已中断' }
       : s
   )
+}
+
+// ---------------------------------------------------------------------------
+// 🔴 PRD-C-100 bug-002 单元1 — 进度条补「画图配图」灯（纯 FE 本地灯）。
+//   阶段灯走 /variant/stream 的 SSE（onStage），但配图是独立 POST（composeVariantFigure /
+//   母题切图）不经 SSE writer → figure 阶段从不发。这里在调配图 POST 时本地往【当前轮 rail】
+//   push 一盏「画图配图」灯（running），promise 终态改 done/warn —— 复用 onStage 的「同 key 原地
+//   更新、新 key 追加」机制，不另造渲染。
+//   🔴 防串台：每张图用独立 key（母题切图 = figure-mother；变式造图 = figure-v<index>），
+//     多图并发时各亮各的灯、互不覆盖；落到 onStage 同款 rail.stages，AiStageRail 原样渲染。
+// ---------------------------------------------------------------------------
+
+/** 母题切图灯 key */
+const FIGURE_STAGE_MOTHER = 'figure-mother'
+/** 变式造图灯 key（按 1-based index 区分，防多图并发串台） */
+function figureStageKey(index: number): string {
+  return `figure-v${index}`
+}
+
+/**
+ * 往【当前轮 rail】upsert 一盏配图灯（同 onStage:705 机制：同 key 原地更新、新 key 追加）。
+ *   - 无当前轮 rail（极少见：手动切图发生在任何对话轮之前）→ 静默不渲染灯，不报错（配图本体照常跑）。
+ *   - title 固定「画图配图」；detail 外显具体张/原因，缺省省略。
+ */
+function upsertFigureStage(
+  key: string,
+  status: VariantStage['status'],
+  detail?: string
+) {
+  const rail = currentRail.value
+  if (!rail) return
+  const stage: VariantStage = { key, title: '画图配图', status, detail }
+  const idx = rail.stages.findIndex((s) => s.key === key)
+  if (idx >= 0) rail.stages[idx] = stage
+  else rail.stages.push(stage)
+  scrollToBottom()
 }
 
 /**
@@ -1421,8 +1491,8 @@ function clearCanvas() {
   motherPersisting.value = false
   motherPersisted.value = false
   motherQuestionId.value = ''
-  // PRD-C-100 B6：带图态随会话重置
-  motherFigurePng.value = null
+  // PRD-C-100 B6：带图态随会话重置（单元3：清母题多图数组，motherFigurePng 为派生 computed 随之归零）
+  motherFigures.value = []
   motherFigureLoading.value = false
   motherFigureNeeds.value = false
   motherFigureReason.value = null
@@ -1808,6 +1878,7 @@ onBeforeUnmount(() => {
           :regenerating="regeneratingIndexes.length > 0"
           :sending="sending"
           :figure-png="motherFigurePng"
+          :figures="motherFigures"
           :figure-loading="motherFigureLoading"
           :figure-needs-figure="motherFigureNeeds"
           :figure-reason="motherFigureReason"

@@ -32,6 +32,7 @@ import {
   EXAM_TYPES,
   type DnaEditValue,
   type DnaField,
+  type MotherFigureItem,
   type VariantMotherCard,
 } from '@/api/variant'
 import MarkdownMath from '@/components/MarkdownMath.vue'
@@ -68,7 +69,12 @@ const props = defineProps<{
   /** 发送中：禁交互 */
   sending: boolean
   // ----- 🔴 PRD-C-100 B6 带图展示：母题切图（宿主调 crop_mother 后回填）-----
-  /** 切出的母题图 PNG base64（无损；展示 data:image/png;base64,...） */
+  /**
+   * 🔴 PRD-C-100 bug-002 单元3：母题多图（toolkit 升方案 a，全部成功切图按检出顺序）。
+   * 有值则 v-for 渲染全部；为空则回退用 figurePng 单图（向后兼容老路径）。
+   */
+  figures?: MotherFigureItem[]
+  /** 切出的母题图 PNG base64（=figures[0]，老路径兼容；展示 data:image/png;base64,...） */
   figurePng?: string | null
   /** 切图进行中 → 按钮 loading + 占位 */
   figureLoading?: boolean
@@ -221,6 +227,14 @@ function saveHard() {
   emit('edit-mother-dna', { field: 'hard_points', value: arr })
   hardEditing.value = false
 }
+
+// 🔴 PRD-C-100 bug-002 单元3：母题切图渲染列表。
+//   优先用多图 figures[]；为空（老路径/兜底）则回退 figurePng 单图 → 包成单元素数组，模板统一 v-for。
+const figureList = computed<string[]>(() => {
+  const list = props.figures
+  if (Array.isArray(list) && list.length) return list.map((f) => f.pngBase64).filter(Boolean)
+  return props.figurePng ? [props.figurePng] : []
+})
 </script>
 
 <template>
@@ -300,16 +314,19 @@ function saveHard() {
         <div class="mc-thumb" title="母题原图 · 点开看大图" @click="emit('preview', motherImg)">
           <img :src="motherImg" alt="母题" referrerpolicy="no-referrer" />
         </div>
-        <!-- 母题切图：切出的图形区（PNG 无损），点开看大图 -->
-        <div
-          v-if="figurePng"
-          class="mc-figure"
-          title="母题图形（切图）· 点开看大图"
-          @click="emit('preview', `data:image/png;base64,${figurePng}`)"
-        >
-          <img :src="`data:image/png;base64,${figurePng}`" alt="母题图形" />
-          <span class="mc-figure-tag">图形</span>
-        </div>
+        <!-- 🔴 PRD-C-100 bug-002 单元3：母题切图多图（PNG 无损），v-for 渲染全部，各自点开看大图 -->
+        <template v-if="figureList.length">
+          <div
+            v-for="(fig, i) in figureList"
+            :key="i"
+            class="mc-figure"
+            :title="`母题图形 ${i + 1}/${figureList.length}（切图）· 点开看大图`"
+            @click="emit('preview', `data:image/png;base64,${fig}`)"
+          >
+            <img :src="`data:image/png;base64,${fig}`" :alt="`母题图形 ${i + 1}`" />
+            <span class="mc-figure-tag">图形{{ figureList.length > 1 ? ` ${i + 1}` : '' }}</span>
+          </div>
+        </template>
         <!-- G4：需配图但没切出来 → ⚠待补图 -->
         <div v-else-if="figureNeedsFigure" class="mc-figure-warn">⚠ 待补图</div>
         <!-- 切图 / 重切按钮（loading 期转圈） -->
@@ -321,7 +338,7 @@ function saveHard() {
           :disabled="sending || figureLoading"
           @click="emit('crop-figure')"
         >
-          {{ figurePng ? '重新切图' : '切图形' }}
+          {{ figureList.length ? '重新切图' : '切图形' }}
         </el-button>
         <p v-if="figureReason" class="mc-figure-reason">{{ figureReason }}</p>
       </div>
