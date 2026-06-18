@@ -104,6 +104,13 @@ const emit = defineEmits<{
 // 折叠态（默认展开让老师过目母题基准；过目后可收起腾地方·AC7）
 const collapsed = ref(false)
 
+// 🔴 布局收窄（治「解析/答案超长把下方变式区+操作按钮挤没」）：
+//   解法骨架 / 答案 / 解析三块文本默认「限高折叠」（detailExpanded=false → 各块 max-height +
+//   渐隐遮罩 + 「展开全部」按钮），母题卡默认收窄、占位有上限；老师要看全点「展开全部」即去掉限高、
+//   改内部滚动（max-height 撑大 + overflow:auto，超长在块内滚，仍不撑爆卡片）。
+//   只折叠这三块「可能很长」的富文本，DNA 维网格 / chip / 图缩略 / 各「改」按钮一律不受影响（功能保留）。
+const detailExpanded = ref(false)
+
 const dna = computed(() => props.motherCard?.dna ?? null)
 const hasCard = computed(() => !!props.motherCard)
 
@@ -190,6 +197,8 @@ function openSkelEdit() {
   if (props.sending) return
   skelDraft.value = props.motherCard?.solutionSkeleton || dna.value?.skeleton || ''
   skelEditing.value = true
+  // 骨架编辑框在收窄区内 —— 打开时自动展开，避免限高 overflow:hidden 把编辑框截断
+  detailExpanded.value = true
 }
 function saveSkel() {
   emit('edit-mother-dna', { field: 'skeleton', value: skelDraft.value.trim() })
@@ -318,6 +327,10 @@ function saveHard() {
       </div>
 
       <div class="mc-main">
+        <!-- 🔴 收窄区：解法骨架 / 答案 / 解析三块「可能很长」的富文本默认限高折叠（detailExpanded=false）：
+             各块 max-height 限高 + 底部渐隐遮罩，超长不撑爆卡、不挤没下方变式区；
+             点「展开全部」→ 去限高、块内滚动看全。DNA 维网格等不在此区，始终完整显示。 -->
+        <div class="mc-detail" :class="{ 'is-expanded': detailExpanded }">
         <!-- 解法骨架（【】标最难步，高亮可视） + opus 解答 -->
         <div class="mc-block">
           <span class="mc-block-k">
@@ -356,6 +369,17 @@ function saveHard() {
           <span class="mc-block-k">解析</span>
           <div class="mc-answer"><MarkdownMath :content="analysisText" /></div>
         </div>
+        </div>
+        <!-- 🔴 展开/收起切换（仅在有可能超长的解法骨架/答案/解析时显示）：收窄态点「展开全部」看全，
+             展开态点「收起」回限高。默认收窄让母题卡占位小、下方变式区可见。 -->
+        <button
+          v-if="motherCard?.solutionSkeleton || answerText || analysisText"
+          type="button"
+          class="mc-detail-toggle"
+          @click="detailExpanded = !detailExpanded"
+        >
+          {{ detailExpanded ? '收起解法 / 解析 ▲' : '展开解法 / 解析全文 ▼' }}
+        </button>
 
         <!-- 全 10 维 DNA（副考点 / 考察类型 / 难点 可改 = C-015 守恒维） -->
         <div class="mc-dna-grid">
@@ -686,6 +710,48 @@ function saveHard() {
   border-left: 3px solid #e0a44a;
   border-radius: 0 6px 6px 0;
   padding: 6px 10px;
+}
+
+/* 🔴 收窄区（解法骨架 / 答案 / 解析三块富文本）：默认限高折叠 + 底部渐隐遮罩，
+   提示「内容被截断、点展开看全」；母题卡默认占位小，绝不把下方变式区/操作按钮挤没。 */
+.mc-detail {
+  position: relative;
+  max-height: 168px;
+  overflow: hidden;
+}
+.mc-detail::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 36px;
+  background: linear-gradient(to bottom, rgba(247, 250, 249, 0), #f7faf9 92%);
+  pointer-events: none;
+}
+/* 展开态：去限高、改内部滚动 —— 超长仍在本区内滚（不撑爆卡片），遮罩撤掉 */
+.mc-detail.is-expanded {
+  max-height: 46vh;
+  overflow-y: auto;
+}
+.mc-detail.is-expanded::after {
+  display: none;
+}
+/* 展开 / 收起切换按钮（低调文字按钮，居中） */
+.mc-detail-toggle {
+  display: block;
+  margin: 4px auto 2px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #0f6e6e;
+  background: #e7f3f1;
+  border: 1px solid #cfe6e3;
+  border-radius: 8px;
+  padding: 2px 14px;
+  cursor: pointer;
+}
+.mc-detail-toggle:hover {
+  background: #d8ece8;
 }
 
 .mc-dna-grid {

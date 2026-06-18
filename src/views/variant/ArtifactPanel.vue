@@ -405,8 +405,14 @@ function regenAll() {
     </header>
 
     <!-- PRD-C-017 B3·AC7 收窄移位：母题紧凑卡插槽——位于「变式题组」标题区下方
-         （原 C-015 全宽横条 MotherBar 收成本卡，宿主 index.vue 注入 MotherCard） -->
-    <slot name="mother-card" />
+         （原 C-015 全宽横条 MotherBar 收成本卡，宿主 index.vue 注入 MotherCard）。
+         🔴 布局闸（治「解析超长挤没下方变式区/操作按钮」）：插槽包一层 .mother-slot，
+            给母题卡区域设上限高（视口比例）+ overflow:auto —— 母题卡再长也只在本区内滚，
+            绝不撑爆把下方 .canvas-body（变式题组）顶出视口。操作按钮在 .canvas-head
+            （flex-shrink:0，在本插槽之上）天然常驻可见，不受影响。 -->
+    <div class="mother-slot">
+      <slot name="mother-card" />
+    </div>
 
     <!-- G13 ⑤：头部主考点的知识点树弹层（组级守恒锚） -->
     <KpTreeDialog
@@ -643,6 +649,15 @@ function regenAll() {
   background: #edf2f2; /* bg-100 */
   border-radius: 6px;
   padding: 2px 10px;
+}
+
+/* 🔴 母题卡插槽容器：限高 + 内滚，防母题卡（解析超长时）把下方变式区/操作按钮挤出视口。
+   max-height 取视口的合理比例（母题卡顶多占视口约 38%），超出部分本区内滚动；
+   flex-shrink:0 保证它先按内容/上限占位，剩余高度全留给下方 .canvas-body 滚动区。 */
+.mother-slot {
+  flex-shrink: 0;
+  max-height: 38vh;
+  overflow-y: auto;
 }
 
 .canvas-body {
