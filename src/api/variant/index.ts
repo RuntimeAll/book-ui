@@ -1425,6 +1425,8 @@ export async function cropMotherFigure(
  * compose_variant：为某道变式题造配图。带 correctionPrompt 即「图片重生」（人在回路修正）。
  * @param itemId  变式题在题组里的稳定标识（1-based index 或 seq；与 BE 约定一致）。
  * @param correctionPrompt 可选，老师对上一版图的修正提示词（重新生成时传）。
+ * @param prevCommands 可选（PRD-C-100 C），上一版 GeoGebra commands；与 correctionPrompt 同传时
+ *        BE 走「在上一版命令基础上增量调整」分支（不从零重画，保证图片重生继承上一版骨架）。
  */
 export async function composeVariantFigure(
   threadId: string,
@@ -1434,6 +1436,7 @@ export async function composeVariantFigure(
     answer?: string
     itemId: number | string
     correctionPrompt?: string
+    prevCommands?: string[]
   }
 ): Promise<ComposeFigureVariantResult> {
   const res = await fetch('/agent/variant/compose-figure', {
@@ -1447,6 +1450,9 @@ export async function composeVariantFigure(
       answer: params.answer,
       item_id: params.itemId,
       correction_prompt: params.correctionPrompt,
+      // 🔴 PRD-C-100 C：图片重生带上一版命令 → BE 增量改图。无（首次造图/未存）则不传，BE 退原行为。
+      prev_commands:
+        params.prevCommands && params.prevCommands.length ? params.prevCommands : undefined,
     }),
   })
   if (!res.ok) {

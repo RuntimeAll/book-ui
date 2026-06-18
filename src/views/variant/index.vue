@@ -166,7 +166,7 @@ const motherFigureLoading = ref(false)
 const motherFigureNeeds = ref(false)
 const motherFigureReason = ref<string | null>(null)
 
-// 变式图态：按题 index（1-based）存。{png, loading, needs, reason, ossUrl}
+// 变式图态：按题 index（1-based）存。{png, loading, needs, reason, ossUrl, commands}
 interface VariantFigureState {
   png: string | null
   loading: boolean
@@ -174,6 +174,21 @@ interface VariantFigureState {
   reason: string | null
   /** PRD-C-100 BC2：本图已传 OSS 后的 https url（base64→OSS 只传一次，防重复入库重传） */
   ossUrl?: string | null
+  /**
+   * 🔴 PRD-C-100 C：本图上一版 GeoGebra commands（compose 成功时存住）。图片重生（带 correctionPrompt）
+   * 时透传给后端 → BE 在上一版命令基础上增量改图，而非从零重画（继承上一版骨架）。
+   */
+  commands?: string[]
+}
+
+// 🔴 PRD-C-100 C：把 compose 返回的 commands（unknown）规整成 string[]（每条命令字符串）；非数组/空 → []。
+function normalizeCommands(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  const out: string[] = []
+  for (const c of raw) {
+    if (typeof c === 'string' && c.trim()) out.push(c)
+  }
+  return out
 }
 const variantFigures = reactive<Record<number, VariantFigureState>>({})
 
@@ -316,8 +331,14 @@ async function onCropMotherFigure() {
   motherFigureReason.value = null
   try {
     const res = await cropMotherFigure(threadId.value, userStore.accessToken, motherImg.value)
-    motherFigurePng.value = res.pngBase64
-    motherFigureNeeds.value = res.needsFigure && !res.pngBase64
+    // 🔴 PRD-C-100 P7：重切成功（有 png）才覆盖；失败（needs_figure/无 png）保留上一版好图，只更原因，
+    //   不让一次失败的重切把已切好的母题图清成 ⚠待补图（UX 退步）。
+    if (res.pngBase64) {
+      motherFigurePng.value = res.pngBase64
+      motherFigureNeeds.value = false
+    } else {
+      motherFigureNeeds.value = res.needsFigure && !motherFigurePng.value
+    }
     motherFigureReason.value = res.reason
   } catch (e) {
     motherFigureReason.value = `切图失败：${e instanceof Error ? e.message : String(e)}`
@@ -342,14 +363,27 @@ async function onComposeVariantFigure(payload: { index: number; correctionPrompt
       answer: item.answer || undefined,
       itemId: item.seq || item.index,
       correctionPrompt: payload.correctionPrompt,
+      // 🔴 PRD-C-100 C：图片重生（带 correctionPrompt）时把上一版命令透传 → BE 在其基础上增量改图。
+      //   首次造图（无 correctionPrompt）或没存到上一版（st.commands 空）则不传，BE 退原行为。
+      prevCommands: payload.correctionPrompt ? st.commands : undefined,
     })
-    st.png = res.pngBase64
-    st.needs = res.needsFigure && !res.pngBase64
+    // 🔴 PRD-C-100 P7：成功（有 png）才覆盖图；失败（needs_figure/无 png）只更原因，保留上一版好图，
+    //   不让一次失败的重造把已有好图清成 ⚠待补图（UX 退步）。
+    if (res.pngBase64) {
+      st.png = res.pngBase64
+      st.needs = false
+      // 成功时存住本版命令（供下次图片重生作增量基准）；BE 没回命令则保留上一版 commands。
+      const cmds = normalizeCommands(res.commands)
+      if (cmds.length) st.commands = cmds
+    } else {
+      // 失败/降级：旧图（若有）保留，仅当本来就没图时才标 ⚠待补图。
+      st.needs = res.needsFigure && !st.png
+    }
     st.reason = res.reason
   } catch (e) {
-    // 🔴 PRD-C-100 B3-配图：失败也落「⚠待补图」徽章（对齐 D9 降级 UI，不静默无图），
-    //   错误可读（API 已把 422 结构化 detail 摊成 message，不再 [object Object]）。
-    st.needs = true
+    // 🔴 PRD-C-100 B3-配图：失败时错误可读（API 已把 422 结构化 detail 摊成 message，不再 [object Object]）。
+    //   🔴 P7：仅当本来无图时才落「⚠待补图」徽章；已有好图保留（重造失败不抹旧图）。
+    st.needs = !st.png
     st.reason = `配图失败：${e instanceof Error ? e.message : String(e)}`
   } finally {
     st.loading = false
