@@ -1,0 +1,73 @@
+/* =============================================================================
+ * PRD-A-017 举一反三换皮 · 设计 token 单一事实源（青紫数学理性）
+ * 事实源 = workplace/产品规划/DESIGN.md + 锁稿 artifacts/design/restyle.html。
+ *
+ * 🔴 作用域钉死在 .variant-page —— token 只在举一反三页生效，绝不污染 admin/其它页。
+ *   所有 variant 视图组件（index/MotherCard/VariantCard/ArtifactPanel/AiStageRail 等）
+ *   的 <style scoped> 一律用 var(--xxx)，禁再硬编码 hex。CSS 自定义属性按 DOM 级联，
+ *   scoped 样式照样能取到祖先 .variant-page 上的变量。
+ *
+ * main.ts 全局 import（只挂选择器，不挂 :root，故无 app 级泄漏）。
+ * ========================================================================== */
+
+.variant-page {
+  /* 底/纸 —— 冷浅，非暖纸白 */
+  --bg: #eef3f3;
+  --bg-soft: #f5f8f8;
+  --paper: #ffffff;
+
+  /* 青 = 老师 / 主操作 / 可拍板结果 */
+  --teal: #1e8a8a;
+  --teal-700: #176e6e;
+  --teal-50: #e7f3f1;
+  --teal-100: #d4eae7;
+  --teal-line: #cbe2df;
+
+  /* 紫 = AI / 思路 / 进行中 */
+  --violet: #7b6cf0;
+  --violet-700: #5b4fd6;
+  --violet-50: #f2f0fe;
+  --violet-100: #e6e2fc;
+  --violet-line: #d9d3f6;
+
+  /* 语义：绿=验算通过 / 琥珀=待审告警 / 红=错误 */
+  --green: #1f9d6b;
+  --green-50: #e4f4ed;
+  --green-line: #bce3d2;
+  --amber: #c77e1e;
+  --amber-50: #fbf1df;
+  --amber-line: #ebd3a6;
+  --red: #d0564b;
+  --red-50: #fbeae8;
+  --red-line: #f2c5bf;
+
+  /* 墨/灰阶 */
+  --ink: #13302e;
+  --ink-2: #3c5654;
+  --muted: #6e8482;
+  --faint: #9dafad;
+  --line: #e0e9e8;
+  --line-soft: #eaf0ef;
+
+  /* 阴影 / 圆角 */
+  --shadow: 0 1px 2px rgba(20, 60, 58, 0.04), 0 6px 18px -8px rgba(20, 60, 58, 0.1);
+  --shadow-lg: 0 2px 6px rgba(20, 60, 58, 0.05), 0 18px 40px -16px rgba(20, 60, 58, 0.16);
+  --r: 14px;
+  --r-sm: 9px;
+  --r-xs: 6px;
+
+  /* 字体 —— IBM Plex 主导（缺则系统 sans 兜底，不阻塞） */
+  --sans: "IBM Plex Sans", "IBM Plex Sans SC", -apple-system, "PingFang SC", "Microsoft YaHei",
+    sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", monospace;
+
+  font-family: var(--sans);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 等宽 tabular 数字工具类（题号/计数/验算值用） */
+.variant-page .mono {
+  font-family: var(--mono);
+  font-feature-settings: "tnum" 1;
+}

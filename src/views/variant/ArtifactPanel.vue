@@ -27,12 +27,6 @@ interface VariantFigureState {
   /** 🔴 方向待确认：含方向元素（旋转/箭头/镜像/平移）→ 配图下方「⚠ 方向待确认」徽章 */
   directionReview?: boolean
 }
-import KpTreeDialog from './KpTreeDialog.vue'
-import FontSizeSwitch from '@/components/business/FontSizeSwitch/index.vue'
-import { useFontScale } from '@/composables/useFontScale'
-
-// 题面展示字号（小/中/大）—— 与个人题库共用同一状态，注入 --md-font-size 级联给卡片 MarkdownMath
-const { cssVars: fontVars } = useFontScale()
 
 const props = defineProps<{
   artifact: VariantArtifact | null
@@ -103,22 +97,6 @@ const emit = defineEmits<{
   /** 🔴 PRD-C-100 BC3：已入库变式「手动排版」（宿主标印记 + 跳 A-015 网格编辑器） */
   (e: 'manual-layout', index: number): void
 }>()
-
-// G13 ⑤：头部主考点（知识点树弹层）/ 年级（下拉）可改
-const headerKpDialog = ref(false)
-const gradePopover = ref(false)
-const GRADE_OPTIONS = [
-  '七年级上', '七年级下', '八年级上', '八年级下', '九年级上', '九年级下',
-  '高一上', '高一下', '高二上', '高二下', '高三',
-]
-function onPickHeaderKp(value: { id: string; name: string }) {
-  emit('edit-header-kp', value)
-  headerKpDialog.value = false
-}
-function pickGrade(g: string) {
-  gradePopover.value = false
-  emit('edit-header-grade', g)
-}
 
 // ---------------------------------------------------------------------------
 // PRD-C-013 P2b 逐题上屏 — 按 seq 原位 merge（不再整组重渲）。
@@ -341,13 +319,12 @@ function regenAll() {
 </script>
 
 <template>
-  <section class="artifact-panel" data-testid="variant-artifact-panel" :style="fontVars">
+  <section class="artifact-panel" data-testid="variant-artifact-panel">
     <!-- 画布头：标题 + 守恒/配方徽章 + 画布级动作（右上） -->
     <header class="canvas-head">
       <div class="head-line">
         <h2 class="canvas-title">变式题组<template v-if="items.length"> · {{ items.length }} 道</template></h2>
         <span class="head-spacer" />
-        <FontSizeSwitch class="head-font-switch" />
         <!-- PRD-C-015 批5：待重生集合非空 → 「重生 N 题」按钮（D-merge8 一键重出全集合） -->
         <el-button
           v-if="regenPendingIndexes.length > 0"
@@ -385,22 +362,10 @@ function regenAll() {
           第 {{ regenPendingIndexes.join('、') }} 题改了还没重生，点「重生」按新 DNA 重出后才能入库。
         </template>
       </div>
-      <!-- G13 ⑤：头部「主考点 / 年级」固定显示且可改（点 ✎ 调知识点树 / 年级下拉） -->
-      <div v-if="artifact" class="head-badges">
-        <button type="button" class="keep-badge editable" :disabled="sending" @click="headerKpDialog = true">
-          主考点 <b>{{ artifact.header.kp || '未锚定' }}</b><span class="edit-pen">✎</span>
-        </button>
-        <el-popover :visible="gradePopover" placement="bottom-start" :width="220" trigger="manual">
-          <template #reference>
-            <button type="button" class="keep-badge editable" :disabled="sending" @click="gradePopover = !gradePopover">
-              年级 <b>{{ artifact.header.grade || '未定' }}</b><span class="edit-pen">✎</span>
-            </button>
-          </template>
-          <div class="grade-pop">
-            <span v-for="g in GRADE_OPTIONS" :key="g" class="grade-opt" @click="pickGrade(g)">{{ g }}</span>
-          </div>
-        </el-popover>
-        <span v-if="artifact.header.recipe" class="recipe-badge">{{ artifact.header.recipe }}</span>
+      <!-- PRD-A-017 改点④：去掉头部「主考点 / 年级」重复 badge（锚定 chip 由母题卡 MotherCard 承载，
+           此处与之重复）。仅保留配方提示（母题卡不含配方信息）。 -->
+      <div v-if="artifact && artifact.header.recipe" class="head-badges">
+        <span class="recipe-badge">{{ artifact.header.recipe }}</span>
       </div>
     </header>
 
@@ -413,14 +378,6 @@ function regenAll() {
     <div class="mother-slot">
       <slot name="mother-card" />
     </div>
-
-    <!-- G13 ⑤：头部主考点的知识点树弹层（组级守恒锚） -->
-    <KpTreeDialog
-      v-model="headerKpDialog"
-      mode="single"
-      title="选择整组主考点"
-      @pick="onPickHeaderKp"
-    />
 
     <!-- 卡片列 -->
     <div ref="listEl" class="canvas-body">
@@ -511,14 +468,14 @@ function regenAll() {
 </template>
 
 <style scoped>
-/* DESIGN token：bg-50 #F5F8F8 / card #FFF / border #E3E9E9 / ink-900 #1D2A2E
-   teal-50 #E6F2F2 / teal-600 #1E8A8A / teal-700 #176E6E / bg-100 #EDF2F2 / ink-700 #33464C */
+/* PRD-A-017 换皮：青紫数学理性。颜色一律取 .variant-page 上的 token（variant-theme.css）。
+   青 var(--teal)=老师/主操作/可拍板；紫 var(--violet)=AI/进行中；琥珀 var(--amber)=待审/重生。 */
 .artifact-panel {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: #fbfaf6; /* 暖纸白 paper（v3 设计语言） */
-  border-radius: 16px;
+  background: var(--bg-soft);
+  border-radius: var(--r);
   overflow: hidden;
 }
 
@@ -528,8 +485,8 @@ function regenAll() {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  border-bottom: 1px solid #e7e3da;
-  background: #fbfaf6;
+  border-bottom: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.5);
 }
 .head-line {
   display: flex;
@@ -540,50 +497,48 @@ function regenAll() {
   margin: 0;
   font-size: 20px;
   font-weight: 700;
-  color: #1d2a2e; /* ink-900 */
+  color: var(--ink);
 }
 .head-spacer {
   flex: 1;
 }
-.head-font-switch {
-  margin-right: 4px;
-}
 /* 老师拍板动作 = teal（不是紫）：右栏不出现紫色实心按钮 */
 .persist-btn {
-  background: #1e8a8a;
-  border-color: #1e8a8a;
+  background: var(--teal);
+  border-color: var(--teal);
   color: #fff;
 }
 .persist-btn:hover:not(:disabled) {
-  background: #176e6e;
-  border-color: #176e6e;
+  background: var(--teal-700);
+  border-color: var(--teal-700);
   color: #fff;
 }
 .persist-btn:disabled {
-  background: #b9d8d8;
-  border-color: #b9d8d8;
+  background: var(--teal-100);
+  border-color: var(--teal-100);
   color: #fff;
 }
 
 /* PRD-C-015 批5：「重生 N 题」按钮（amber 实心，与卡内重生按钮同色语） */
 .regen-all-btn {
-  background: #b8741a;
-  border-color: #b8741a;
+  background: var(--amber);
+  border-color: var(--amber);
   color: #fff;
 }
 .regen-all-btn:hover:not(:disabled) {
-  background: #9a6015;
-  border-color: #9a6015;
+  background: var(--amber);
+  border-color: var(--amber);
   color: #fff;
+  filter: brightness(0.92);
 }
 /* PRD-C-015 批5：母题脏 / 待重生入库拦截提示条 */
 .dirty-banner {
   font-size: 12px;
   line-height: 1.6;
-  color: #92590f;
-  background: #fdf4e3;
-  border: 1px solid #ecc98f;
-  border-radius: 8px;
+  color: var(--amber);
+  background: var(--amber-50);
+  border: 1px solid var(--amber-line);
+  border-radius: var(--r-sm);
   padding: 6px 11px;
 }
 
@@ -592,62 +547,12 @@ function regenAll() {
   gap: 8px;
   flex-wrap: wrap;
 }
-.keep-badge {
-  font-size: 12px;
-  color: #385350; /* ink-700 */
-  background: #fff;
-  border: 1px solid #e7e3da;
-  border-radius: 999px;
-  padding: 4px 11px;
-  font-weight: 500;
-}
-.keep-badge b {
-  color: #0f6e6e; /* teal-700 */
-  margin: 0 2px;
-  font-weight: 700;
-}
-.keep-badge.editable {
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-}
-.keep-badge.editable:hover:not(:disabled) {
-  background: #e7f3f1;
-  border-color: #7fc0bd;
-}
-.keep-badge.editable:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-.edit-pen {
-  margin-left: 5px;
-  color: #1e8a8a;
-  font-size: 11px;
-}
-.grade-pop {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.grade-opt {
-  font-size: 12px;
-  color: #385350;
-  background: #f7faf9;
-  border: 1px solid #e7e3da;
-  border-radius: 8px;
-  padding: 4px 10px;
-  cursor: pointer;
-}
-.grade-opt:hover {
-  background: #e7f3f1;
-  border-color: #7fc0bd;
-  color: #0f6e6e;
-}
 .recipe-badge {
   font-size: 12px;
-  color: #33464c; /* ink-700 */
-  background: #edf2f2; /* bg-100 */
-  border-radius: 6px;
+  color: var(--teal-700);
+  background: var(--teal-50);
+  border: 1px solid var(--teal-line);
+  border-radius: var(--r-xs);
   padding: 2px 10px;
 }
 
@@ -687,17 +592,17 @@ function regenAll() {
   padding: 6px 0;
   border: none;
   background: none;
-  color: #c0c6cf;
+  color: var(--faint);
   font-size: 15px;
   line-height: 1;
   cursor: grab;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   touch-action: none;
   user-select: none;
 }
 .drag-handle:hover {
-  color: #1e8a8a; /* teal-600 */
-  background: #e6f2f2;
+  color: var(--teal);
+  background: var(--teal-50);
 }
 .drag-handle:active {
   cursor: grabbing;
@@ -707,11 +612,11 @@ function regenAll() {
   opacity: 0.4;
 }
 .card-ghost > .card-body {
-  border: 1px dashed #7b6cf0;
-  background: #f5f8f8;
+  border: 1px dashed var(--violet);
+  background: var(--bg-soft);
 }
 .card-chosen > .card-body {
-  box-shadow: 0 6px 18px rgba(29, 42, 46, 0.12);
+  box-shadow: var(--shadow-lg);
 }
 
 /* P2b 剔除题退场过渡：淡出 + 收高（与 scheduleDropRemoval 320ms 兜底对齐） */
@@ -733,9 +638,9 @@ function regenAll() {
 
 /* 生成中骨架卡：bg-100 脉动 + 120ms stagger */
 .skeleton-card {
-  background: #fff;
-  border: 1px solid #e3e9e9;
-  border-radius: 14px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
   padding: 16px;
   display: flex;
   flex-direction: column;
@@ -744,8 +649,8 @@ function regenAll() {
 }
 .sk-line {
   height: 14px;
-  border-radius: 6px;
-  background: #edf2f2; /* bg-100 */
+  border-radius: var(--r-xs);
+  background: var(--bg-soft);
 }
 .sk-w40 {
   width: 40%;
@@ -766,9 +671,9 @@ function regenAll() {
 /* PRD-C-012 P2 占位卡：与 VariantCard 同宽同圆角（白底 14px radius 14/16 padding），
    题号圆灰化 + 「生成中…」+ 淡灰 shimmer 行，复用 sk-pulse 脉动 */
 .pending-card {
-  background: #fff;
-  border: 1px dashed #d4dede;
-  border-radius: 14px;
+  background: var(--paper);
+  border: 1px dashed var(--line);
+  border-radius: var(--r);
   padding: 14px 16px;
   display: flex;
   flex-direction: column;
@@ -785,7 +690,7 @@ function regenAll() {
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  background: #c0c6cf;
+  background: var(--faint);
   color: #fff;
   font-size: 13px;
   font-weight: 700;
@@ -796,13 +701,13 @@ function regenAll() {
 }
 .pending-text {
   font-size: 13px;
-  color: #86909c;
+  color: var(--muted);
 }
 
 .canvas-empty {
   margin: auto;
   text-align: center;
-  color: #86909c;
+  color: var(--muted);
   max-width: 360px;
 }
 .empty-emoji {
@@ -811,12 +716,12 @@ function regenAll() {
 .empty-title {
   font-size: 14px;
   font-weight: 600;
-  color: #4e5969;
+  color: var(--ink-2);
   margin: 8px 0 4px;
 }
 .empty-tip {
   font-size: 12px;
-  color: #a0a8b3;
+  color: var(--faint);
   line-height: 1.7;
 }
 </style>

@@ -1606,9 +1606,53 @@ onMounted(() => {
   }
 })
 
+// ── 改点②：双栏比例可拖拽（纯前端样式态，不碰数据流）──
+// 左栏宽 px，clamp 320~620，localStorage 持久；中间 .variant-splitter 竖向 handle 拖动改它。
+const CHAT_W_KEY = 'variant-chat-w'
+const CHAT_W_MIN = 320
+const CHAT_W_MAX = 620
+const chatW = ref(
+  (() => {
+    try {
+      const v = Number(localStorage.getItem(CHAT_W_KEY))
+      if (v && v >= CHAT_W_MIN && v <= CHAT_W_MAX) return v
+    } catch {
+      /* ignore */
+    }
+    return 380
+  })(),
+)
+let dragStartX = 0
+let dragStartW = 380
+function onSplitterMove(e: MouseEvent) {
+  const next = dragStartW + (e.clientX - dragStartX)
+  chatW.value = Math.min(CHAT_W_MAX, Math.max(CHAT_W_MIN, next))
+}
+function onSplitterUp() {
+  document.removeEventListener('mousemove', onSplitterMove)
+  document.removeEventListener('mouseup', onSplitterUp)
+  document.body.style.userSelect = ''
+  document.body.style.cursor = ''
+  try {
+    localStorage.setItem(CHAT_W_KEY, String(chatW.value))
+  } catch {
+    /* ignore */
+  }
+}
+function onSplitterDown(e: MouseEvent) {
+  dragStartX = e.clientX
+  dragStartW = chatW.value
+  document.body.style.userSelect = 'none'
+  document.body.style.cursor = 'col-resize'
+  document.addEventListener('mousemove', onSplitterMove)
+  document.addEventListener('mouseup', onSplitterUp)
+}
+
 onBeforeUnmount(() => {
   handle?.abort()
   document.removeEventListener('paste', onPaste)
+  document.removeEventListener('mousemove', onSplitterMove)
+  document.removeEventListener('mouseup', onSplitterUp)
 })
 </script>
 
@@ -1640,7 +1684,11 @@ onBeforeUnmount(() => {
     <!-- 下方双栏：左聊天 / 右变式题组 -->
     <div class="variant-main">
     <!-- 左栏：AI 命题搭子（对话 + 思路条 + 输入） -->
-    <section class="variant-chat" data-testid="variant-chat-panel">
+    <section
+      class="variant-chat"
+      data-testid="variant-chat-panel"
+      :style="{ flex: '0 0 ' + chatW + 'px' }"
+    >
       <header class="chat-head">
         <span class="head-spark">✦</span>
         <span class="chat-title">AI 命题搭子</span>
@@ -1663,8 +1711,6 @@ onBeforeUnmount(() => {
               :class="{ 'is-active': s.id === threadId }"
               @click="s.id !== threadId && !sending && restoreSession(s.id)"
             >
-              <img v-if="s.img" :src="s.img" class="session-thumb" referrerpolicy="no-referrer" />
-              <span v-else class="session-thumb session-thumb-empty">🧮</span>
               <span class="session-title">{{ s.title }}</span>
               <span class="session-time">{{ sessionTime(s.at) }}</span>
               <el-button
@@ -1684,13 +1730,9 @@ onBeforeUnmount(() => {
         </el-button>
       </header>
 
-      <!-- 顶部：母题锚位（守恒锚小徽章）+ 图入口（Ctrl+V 粘贴截图 / 贴 URL） -->
+      <!-- 顶部：图入口（Ctrl+V 粘贴截图 / 贴 URL）。改点③：去掉冗余母题缩略徽章，
+           母题图已在用户气泡里展示（守恒锚靠右栏母题卡承载） -->
       <div class="mother-bar">
-        <!-- P10：母题不再是唯一展示位，顶部保留为当前母题小徽章（守恒锚视觉提示） -->
-        <div v-if="motherImg" class="mother-badge" title="当前母题（守恒锚）" @click="previewUrl = motherImg">
-          <img :src="motherImg" alt="母题" referrerpolicy="no-referrer" />
-          <span class="badge-tag">母题</span>
-        </div>
         <div class="mother-input">
           <el-input
             v-model="imageUrl"
@@ -1834,6 +1876,15 @@ onBeforeUnmount(() => {
       </footer>
     </section>
 
+    <!-- 改点②：竖向可拖拽分隔条，拖动改左栏宽（纯样式态，小屏隐藏） -->
+    <div
+      class="variant-splitter"
+      title="拖动调整左右栏宽度"
+      @mousedown.prevent="onSplitterDown"
+    >
+      <span class="splitter-grip" />
+    </div>
+
     <!-- 右栏：变式题组画布（artifact 快照帧驱动；动作全部冒泡回左栏 chat 通道） -->
     <ArtifactPanel
       class="variant-artifact"
@@ -1903,16 +1954,16 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-/* DESIGN token：bg-50 #F5F8F8 / card #FFF / border #E3E9E9 / ink-900 #1D2A2E
-   violet-600 #7B6CF0（AI 在场）/ teal-600 #1E8A8A（老师拍板） */
-/* G13 ① v3 设计语言：深青 #0F6E6E + 暖纸白 #FBFAF6 + 暖琥珀 #B8741A（还原语言非逐像素） */
+/* PRD-A-017 换皮：青紫数学理性。颜色一律取 .variant-page 上的 token（variant-theme.css），
+   禁硬编码 hex。青 var(--teal)=老师/主操作/可拍板结果；紫 var(--violet)=AI/思路/进行中；
+   冷浅底 var(--bg-soft)；纸白 var(--paper)。绿=验算通过 / 琥珀=待审 / 红=错误。 */
 /* PRD-C-015 批5·D-merge4：外层改纵向（顶部母题横条 + 下方双栏），双栏在 .variant-main */
 .variant-page {
   display: flex;
   flex-direction: column;
   height: 100%;
   min-height: 600px;
-  background: #fbfaf6; /* 暖纸白 paper */
+  background: var(--bg-soft); /* 冷浅底 */
   padding: 16px;
   box-sizing: border-box;
 }
@@ -1929,22 +1980,47 @@ onBeforeUnmount(() => {
   min-height: 0;
 }
 
-/* G13 ⑥：左命题搭子 ~380px / 右变式 flex */
+/* 左命题搭子（宽由 :style chatW 控，clamp 320~620）/ 右变式 flex */
 .variant-chat {
+  /* flex 由模板 :style 绑定 chatW；这里给布局兜底 */
   flex: 0 0 380px;
-  min-width: 340px;
+  min-width: 320px;
   display: flex;
   flex-direction: column;
-  background: #fff;
-  border: 1px solid #e7e3da; /* line */
-  border-radius: 16px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
   overflow: hidden;
 }
 .variant-artifact {
   flex: 1;
   min-width: 0;
-  border: 1px solid #e7e3da;
-  border-radius: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+}
+
+/* 改点②：竖向可拖拽分隔条 */
+.variant-splitter {
+  flex: 0 0 6px;
+  align-self: stretch;
+  margin: 0 -8px; /* 抵消 gap，热区更宽但视觉细 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: col-resize;
+  position: relative;
+  z-index: 2;
+}
+.variant-splitter .splitter-grip {
+  width: 2px;
+  height: 38px;
+  border-radius: 2px;
+  background: var(--line);
+  transition: background 0.15s, height 0.15s;
+}
+.variant-splitter:hover .splitter-grip {
+  background: var(--teal);
+  height: 56px;
 }
 
 /* 小屏（<1024px）上下堆叠，各自内部滚动 */
@@ -1957,9 +2033,13 @@ onBeforeUnmount(() => {
     flex: none;
   }
   .variant-chat {
-    flex: none;
+    flex: none !important; /* 覆盖 :style 的固定宽，小屏上下堆叠 */
     min-width: 0;
+    width: 100%;
     height: 70vh;
+  }
+  .variant-splitter {
+    display: none; /* 小屏隐藏拖拽条 */
   }
   .variant-artifact {
     flex: none;
@@ -1972,21 +2052,21 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
   padding: 14px 18px;
-  border-bottom: 1px solid #e3e9e9;
+  border-bottom: 1px solid var(--line-soft);
   flex-shrink: 0;
 }
 .head-spark {
-  color: #7b6cf0; /* violet-600：AI 在场 */
+  color: var(--violet); /* AI 在场 */
   font-size: 15px;
 }
 .chat-title {
   font-size: 15px;
   font-weight: 700;
-  color: #1d2a2e; /* ink-900 */
+  color: var(--ink);
 }
 .chat-sub {
   font-size: 12px;
-  color: #86909c;
+  color: var(--faint);
 }
 .sessions-btn {
   margin-left: auto;
@@ -1995,41 +2075,14 @@ onBeforeUnmount(() => {
   margin-left: 0;
 }
 
-/* 母题图入口 */
+/* 母题图入口（改点③：去母题缩略徽章后，仅余 URL/上传入口） */
 .mother-bar {
   display: flex;
   gap: 12px;
   padding: 12px 18px;
-  border-bottom: 1px solid #f5f5f5;
-  background: #fafbfc;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--bg-soft);
   flex-shrink: 0;
-}
-/* P10：母题小徽章（守恒锚视觉提示，比原 72px 缩略图更克制） */
-.mother-badge {
-  position: relative;
-  width: 48px;
-  height: 48px;
-  flex-shrink: 0;
-  border-radius: 8px;
-  overflow: hidden;
-  border: 1px solid #7b6cf0; /* violet-600：守恒锚 */
-  cursor: zoom-in;
-}
-.mother-badge img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-.badge-tag {
-  position: absolute;
-  left: 0;
-  bottom: 0;
-  right: 0;
-  font-size: 9px;
-  color: #fff;
-  text-align: center;
-  background: rgba(123, 108, 240, 0.78);
-  padding: 0 2px;
 }
 .mother-input {
   flex: 1;
@@ -2049,7 +2102,7 @@ onBeforeUnmount(() => {
   height: 56px;
   border-radius: 8px;
   overflow: hidden;
-  border: 1px solid #e5e6eb;
+  border: 1px solid var(--line);
 }
 .pending-thumb img {
   width: 100%;
@@ -2081,13 +2134,13 @@ onBeforeUnmount(() => {
 .uploading-hint {
   margin: 6px 2px 0;
   font-size: 12px;
-  color: #7b6cf0;
+  color: var(--violet);
 }
 .default-hint {
   margin: 8px 2px 0;
   font-size: 12px;
   line-height: 1.6;
-  color: #86909c;
+  color: var(--faint);
 }
 
 /* 思考过程开关条 */
@@ -2099,11 +2152,11 @@ onBeforeUnmount(() => {
 }
 .thinking-toggle-label {
   font-size: 12px;
-  color: #4e5969;
+  color: var(--ink-2);
 }
 .thinking-toggle-hint {
   font-size: 12px;
-  color: #a9aeb8;
+  color: var(--faint);
   cursor: help;
 }
 
@@ -2118,7 +2171,7 @@ onBeforeUnmount(() => {
 .chat-empty {
   margin: auto;
   text-align: center;
-  color: #86909c;
+  color: var(--faint);
 }
 .empty-emoji {
   font-size: 36px;
@@ -2126,12 +2179,12 @@ onBeforeUnmount(() => {
 .empty-title {
   font-size: 14px;
   font-weight: 600;
-  color: #4e5969;
+  color: var(--ink-2);
   margin: 8px 0 4px;
 }
 .empty-tip {
   font-size: 12px;
-  color: #a0a8b3;
+  color: var(--faint);
   max-width: 420px;
   line-height: 1.7;
 }
@@ -2155,8 +2208,9 @@ onBeforeUnmount(() => {
   word-break: break-word;
 }
 .is-user .bubble {
-  background: #4080ff;
-  color: #fff;
+  background: var(--teal-50);
+  color: var(--ink);
+  border: 1px solid var(--teal-line);
   border-bottom-right-radius: 4px;
 }
 
@@ -2181,14 +2235,15 @@ onBeforeUnmount(() => {
   display: block;
 }
 .ai-normal {
-  background: #f2f3f5;
-  color: #1d2129;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  color: var(--ink-2);
   border-bottom-left-radius: 4px;
 }
 .ai-error {
-  background: #fff1f0;
-  border: 1px solid #ffccc7;
-  color: #cf1322;
+  background: var(--red-50);
+  border: 1px solid var(--red-line);
+  color: var(--red);
   border-bottom-left-radius: 4px;
 }
 
@@ -2202,9 +2257,9 @@ onBeforeUnmount(() => {
 .reasoning-block {
   max-width: 86%;
   min-width: 280px;
-  border: 1px dashed #d6cffb;
-  border-radius: 10px;
-  background: #faf9ff;
+  border: 1px dashed var(--violet-line);
+  border-radius: var(--r-sm);
+  background: var(--violet-50);
   overflow: hidden;
 }
 .reasoning-head {
@@ -2224,12 +2279,12 @@ onBeforeUnmount(() => {
 .reasoning-title {
   font-size: 12px;
   font-weight: 600;
-  color: #7b6cf0;
+  color: var(--violet);
 }
 .reasoning-toggle {
   margin-left: auto;
   font-size: 11px;
-  color: #a59bf0;
+  color: var(--violet-700);
 }
 .reasoning-body {
   margin: 0;
@@ -2238,7 +2293,7 @@ onBeforeUnmount(() => {
   overflow-y: auto;
   font-size: 12px;
   line-height: 1.6;
-  color: #8478b8;
+  color: var(--violet-700);
   white-space: pre-wrap;
   word-break: break-word;
   font-family: inherit;
@@ -2254,7 +2309,7 @@ onBeforeUnmount(() => {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #7b6cf0; /* violet-600：AI 在场 */
+  background: var(--violet); /* AI 在场 */
   animation: dot-pulse 1.2s infinite ease-in-out;
 }
 .dot-pulse:nth-child(2) {
@@ -2277,14 +2332,14 @@ onBeforeUnmount(() => {
 }
 .thinking-text {
   font-size: 12px;
-  color: #86909c;
+  color: var(--faint);
   margin-left: 4px;
 }
 
 .chat-input {
   flex-shrink: 0;
   padding: 12px 14px;
-  border-top: 1px solid #e3e9e9;
+  border-top: 1px solid var(--line-soft);
   display: flex;
   gap: 10px;
   align-items: flex-end;
@@ -2304,7 +2359,7 @@ onBeforeUnmount(() => {
 }
 .session-empty {
   font-size: 12px;
-  color: #a0a8b3;
+  color: var(--faint);
   text-align: center;
   padding: 12px 0;
   margin: 0;
@@ -2318,47 +2373,32 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 .session-item:hover {
-  background: #f5f8f8;
+  background: var(--bg-soft);
 }
 .session-item.is-active {
-  background: #f1eeff; /* violet 浅底：当前会话 */
+  background: var(--violet-50); /* 当前会话 */
   cursor: default;
-}
-.session-thumb {
-  width: 28px;
-  height: 28px;
-  flex-shrink: 0;
-  border-radius: 6px;
-  object-fit: cover;
-  border: 1px solid #e5e6eb;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 14px;
-}
-.session-thumb-empty {
-  background: #f2f3f5;
 }
 .session-title {
   flex: 1;
   min-width: 0;
   font-size: 13px;
-  color: #1d2a2e;
+  color: var(--ink);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .session-time {
   font-size: 11px;
-  color: #a0a8b3;
+  color: var(--faint);
   flex-shrink: 0;
 }
 .session-del {
   padding: 2px 4px;
-  color: #c0c6cf;
+  color: var(--faint);
 }
 .session-del:hover {
-  color: #cf1322;
+  color: var(--red);
 }
 
 /* P10：大图预览遮罩 */
