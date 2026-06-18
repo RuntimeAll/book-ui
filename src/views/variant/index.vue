@@ -22,7 +22,7 @@ import {
   undoRegenVariant,
   uploadMotherImage,
 } from '@/api/variant'
-import type { DnaEditValue, DnaField } from '@/api/variant'
+import type { DnaEditValue, DnaField, MotherFigureItem } from '@/api/variant'
 import type {
   ToolkitChatMessage,
   VariantArtifact,
@@ -167,7 +167,12 @@ const motherQuestionId = ref('') // 入库后的母题题 id（雪花 string）
 //   变式造图（compose_variant）：每道变式按需造图 + 「图歪了？重新生成」（带 correctionPrompt）。
 // ---------------------------------------------------------------------------
 // 母题切图态
-const motherFigurePng = ref<string | null>(null)
+// 🔴 PRD-C-100 bug-002 单元3：母题多图。motherFigures = 全部成功切图（按检出顺序，v-for 渲染）。
+//   motherFigurePng（首图 computed）保留供老路径/兜底引用，不再是真相源。
+const motherFigures = ref<MotherFigureItem[]>([])
+const motherFigurePng = computed<string | null>(() =>
+  motherFigures.value.length ? motherFigures.value[0].pngBase64 : null
+)
 const motherFigureLoading = ref(false)
 const motherFigureNeeds = ref(false)
 const motherFigureReason = ref<string | null>(null)
@@ -342,19 +347,35 @@ async function onCropMotherFigure() {
   if (motherFigureLoading.value || !motherImg.value) return
   motherFigureLoading.value = true
   motherFigureReason.value = null
+  // 单元1：本地点亮「画图配图」灯（母题切图）
+  upsertFigureStage(FIGURE_STAGE_MOTHER, 'running', '母题切图')
   try {
     const res = await cropMotherFigure(threadId.value, userStore.accessToken, motherImg.value)
-    // 🔴 PRD-C-100 P7：重切成功（有 png）才覆盖；失败（needs_figure/无 png）保留上一版好图，只更原因，
-    //   不让一次失败的重切把已切好的母题图清成 ⚠待补图（UX 退步）。
-    if (res.pngBase64) {
-      motherFigurePng.value = res.pngBase64
+    // 🔴 PRD-C-100 P7 + 单元3：重切成功（切出 ≥1 张）才覆盖；失败（needs_figure/无图）保留上一版好图，
+    //   只更原因，不让一次失败的重切把已切好的母题图清成 ⚠待补图（UX 退步）。
+    if (res.figures.length) {
+      motherFigures.value = res.figures // 多图整组替换（v-for 渲染全部）
       motherFigureNeeds.value = false
+      // 单元3：成功数 < 检出数（部分降级）→ 灯标 done 但 detail 外显「成功 N/M 张」（reason 已含文案）
+      const partial = res.nFigures > res.figures.length
+      upsertFigureStage(
+        FIGURE_STAGE_MOTHER,
+        partial ? 'warn' : 'done',
+        partial ? `母题切图 ${res.figures.length}/${res.nFigures} 张` : `母题切图 ${res.figures.length} 张`
+      )
     } else {
-      motherFigureNeeds.value = res.needsFigure && !motherFigurePng.value
+      motherFigureNeeds.value = res.needsFigure && !motherFigures.value.length
+      // 无图：本来就有旧图则 done（保留旧图）；否则 warn（待补图）
+      upsertFigureStage(
+        FIGURE_STAGE_MOTHER,
+        motherFigures.value.length ? 'done' : 'warn',
+        res.reason || (motherFigures.value.length ? '沿用上一版图' : '未切出图形')
+      )
     }
     motherFigureReason.value = res.reason
   } catch (e) {
     motherFigureReason.value = `切图失败：${e instanceof Error ? e.message : String(e)}`
+    upsertFigureStage(FIGURE_STAGE_MOTHER, 'warn', '切图失败')
   } finally {
     motherFigureLoading.value = false
   }
@@ -1470,8 +1491,8 @@ function clearCanvas() {
   motherPersisting.value = false
   motherPersisted.value = false
   motherQuestionId.value = ''
-  // PRD-C-100 B6：带图态随会话重置
-  motherFigurePng.value = null
+  // PRD-C-100 B6：带图态随会话重置（单元3：清母题多图数组，motherFigurePng 为派生 computed 随之归零）
+  motherFigures.value = []
   motherFigureLoading.value = false
   motherFigureNeeds.value = false
   motherFigureReason.value = null
@@ -1857,6 +1878,7 @@ onBeforeUnmount(() => {
           :regenerating="regeneratingIndexes.length > 0"
           :sending="sending"
           :figure-png="motherFigurePng"
+          :figures="motherFigures"
           :figure-loading="motherFigureLoading"
           :figure-needs-figure="motherFigureNeeds"
           :figure-reason="motherFigureReason"

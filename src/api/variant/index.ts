@@ -1365,16 +1365,34 @@ export function reviseVariantItem(
 // PNG 无损（铁则：禁压缩），直接 data:image/png;base64,<png_base64> 渲染。
 // ---------------------------------------------------------------------------
 
+/**
+ * 🔴 PRD-C-100 bug-002 单元3：母题切图单张图（toolkit commit b66ec75 升方案 a 返回多图）。
+ * crop_mother 返回 figures[]（按检出顺序的全部成功切图），FE v-for 渲染全部。
+ */
+export interface MotherFigureItem {
+  /** 本张图 PNG base64（无损） */
+  pngBase64: string
+  /** 本张图在母题原图里的 bbox（[x,y,w,h] 或后端约定形态，FE 透传不解释） */
+  bbox?: unknown
+  /** 切图置信度（调试/透明展示用） */
+  conf?: number | null
+}
+
 /** crop_mother 返回 */
 export interface ComposeFigureMotherResult {
   ok: boolean
-  /** 切出的母题图 PNG base64（无损；needs_figure=false 或无图时可空） */
+  /**
+   * 🔴 PRD-C-100 bug-002 单元3：全部成功切图（按检出顺序）。FE 用 v-for 渲染全部。
+   * 向后兼容：toolkit 万一只返回老结构（无 figures 字段）→ 这里据 pngBase64 兜底成单元素数组（或空）。
+   */
+  figures: MotherFigureItem[]
+  /** 切出的母题图 PNG base64（=figures[0]，老路径兼容；needs_figure=false 或无图时可空） */
   pngBase64: string | null
-  /** 母题原图里识别到的图数 */
+  /** 母题原图里识别到的真实图数（可能 > figures.length，部分降级时外显「成功数<检出数」） */
   nFigures: number
   /** 本题是否需要配图（true 但无 png → ⚠待补图） */
   needsFigure: boolean
-  /** 文案（如「未识别到图形」/「切图失败」），外显给老师 */
+  /** 文案（如「未识别到图形」/「切图失败」/「成功 N/M 张」），外显给老师 */
   reason: string | null
 }
 
@@ -1434,13 +1452,40 @@ export async function cropMotherFigure(
   }
   const d = (await res.json()) as Record<string, unknown>
   const n = typeof d.n_figures === 'number' ? d.n_figures : Number(d.n_figures)
+  const png0 = str0(d.png_base64) ?? str0((d as Record<string, unknown>).pngBase64)
+  // 🔴 单元3：解析 figures[]（新契约）；缺位（老结构）→ 据 png0 兜底成单元素数组（向后兼容，绝不崩）。
+  const figures = parseMotherFigures(d.figures, png0)
   return {
     ok: d.ok === true,
-    pngBase64: str0(d.png_base64) ?? str0((d as Record<string, unknown>).pngBase64),
-    nFigures: Number.isFinite(n) ? n : 0,
+    figures,
+    // pngBase64 仍返首图：优先后端给的 png_base64，缺则 figures[0]（双向兜底）。
+    pngBase64: png0 ?? (figures.length ? figures[0].pngBase64 : null),
+    nFigures: Number.isFinite(n) ? n : figures.length,
     needsFigure: d.needs_figure === true || d.needsFigure === true,
     reason: str0(d.reason),
   }
+}
+
+/**
+ * 🔴 PRD-C-100 bug-002 单元3：把后端 figures（unknown）规整成 MotherFigureItem[]。
+ *   - 是数组：逐项取 png_base64（兼容 pngBase64）非空者，透传 bbox/conf。
+ *   - 非数组/空（老结构）：若有 png0 兜底成单元素数组；否则空数组（向后兼容，不崩）。
+ */
+function parseMotherFigures(raw: unknown, png0: string | null): MotherFigureItem[] {
+  if (Array.isArray(raw)) {
+    const out: MotherFigureItem[] = []
+    for (const f of raw) {
+      if (!f || typeof f !== 'object') continue
+      const o = f as Record<string, unknown>
+      const png = str0(o.png_base64) ?? str0(o.pngBase64)
+      if (!png) continue
+      const conf = typeof o.conf === 'number' ? o.conf : null
+      out.push({ pngBase64: png, bbox: o.bbox, conf })
+    }
+    if (out.length) return out
+  }
+  // 老结构兜底：只有 png_base64 单图
+  return png0 ? [{ pngBase64: png0, bbox: undefined, conf: null }] : []
 }
 
 /**
