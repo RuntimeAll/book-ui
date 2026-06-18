@@ -18,7 +18,7 @@ import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 
 // 🔴 端口归属（跨分支合并时以目标分支线为准）：master = A 线 → BE :8080 / dev :5173；
 //    master-ai = C 线 → BE :8090 / dev :8091。目录+端口双隔离。
-const BOOK_SERVER_TARGET = 'http://localhost:8090'
+const BOOK_SERVER_TARGET = 'http://localhost:8080'
 
 // 🔴 PRD-C-004：AI 编排服务 ai-orchestrator（Python/FastAPI, :8092）。
 //    前端调 /ai/chat → vite proxy rewrite 掉 /ai → 转 http://localhost:8092/chat。
@@ -32,7 +32,7 @@ const AI_ORCHESTRATOR_TARGET = 'http://localhost:8092'
 //    data:{type:token|message|...} + data:[DONE]）。同源绕 CORS；toolkit 未设 AUTH_SECRET 故免鉴权。
 //    与 /ai(:8092)、/api 三条调用链互不复用拦截器（src/api/variant 独立封装）。
 //    🔴 端口归属：A 线副本(codeplace-A/agent-service-toolkit)=:8095 / C 线=:8093，跨分支合并以目标分支线为准。
-const AI_TOOLKIT_TARGET = 'http://localhost:8093'
+const AI_TOOLKIT_TARGET = 'http://localhost:8095'
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -52,7 +52,7 @@ export default defineConfig({
     },
   },
   server: {
-    port: 8091,
+    port: 5173,
     proxy: {
       '/api': {
         target: BOOK_SERVER_TARGET,
