@@ -82,6 +82,12 @@ const props = defineProps<{
   figureNeedsFigure?: boolean
   /** 切图相关文案（如「未识别到图形」），外显 */
   figureReason?: string | null
+  /**
+   * 🔴 PRD-A-017 批2b 合并头：折叠态由父级（ArtifactPanel 合并头 caret）控制。
+   *   合并头持有 caret + 年级章 chip（避免两份），MotherCard 自身不再画折叠 toggle / chip。
+   *   缺省 false（展开）；父不传则始终展开（向后兼容）。
+   */
+  collapsed?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -107,8 +113,8 @@ const emit = defineEmits<{
   (e: 'manual-layout-mother'): void
 }>()
 
-// 折叠态（默认展开让老师过目母题基准；过目后可收起腾地方·AC7）
-const collapsed = ref(false)
+// 折叠态：🔴 PRD-A-017 批2b 起改由父级合并头 caret 控（props.collapsed）。缺省展开。
+const collapsed = computed(() => props.collapsed ?? false)
 
 // 🔴 布局收窄（治「解析/答案超长把下方变式区+操作按钮挤没」）：
 //   解法骨架 / 答案 / 解析三块文本默认「限高折叠」（detailExpanded=false → 各块 max-height +
@@ -134,15 +140,9 @@ const anchorChapterText = computed(() => {
 // 难点（M8）：hard_points 空 → 显式「此题无显著难点」
 const hardPoints = computed(() => dna.value?.hardPoints ?? [])
 
-// 🔴 PRD-C-017 B5 chip 刷新：主考点 / 年级显示真值（消除「未锚定 / 未定」陈旧态）。
-//   主考点 = dna.main_kp（锚定后真考点）→ anchorKp 镜像兜底。
-//   年级   = 老师确认面亲选的年级册名优先 → toolkit 回灌 anchorGrade 兜底。
-const chipKp = computed(
-  () => dna.value?.mainKp || props.motherCard?.anchorKp || '主考点确认中'
-)
-const chipGrade = computed(
-  () => props.confirmedGradeBookName?.trim() || props.motherCard?.anchorGrade || '年级确认中'
-)
+// 🔴 PRD-A-017 批2b：原 chipKp/chipGrade（卡头锚定 chip）已上移到 ArtifactPanel 合并头
+//   （由宿主 index.vue anchorChip 算同一真值），此处删去避免两份。confirmedGradeBookName prop
+//   仍由父透传备用，不再在本卡 chip 中消费。
 
 // 🔴 PRD-C-017 B5 难度：1-4 星级（与变式卡同风格）+ 档位文案
 const DIFFICULTY_LABEL = ['', '送分', '常规', '多步综合', '压轴']
@@ -239,15 +239,11 @@ const figureList = computed<string[]>(() => {
 
 <template>
   <section v-if="hasCard" class="mother-card" data-testid="variant-mother-card">
-    <!-- 卡头：折叠开关 + 标题 + 锚定 chip + 待人审标 + 重生 + 入库按钮 -->
+    <!-- 卡头：🔴 PRD-A-017 批2b 合并头化——折叠 caret + 标题 + 年级章 chip 已上移到 ArtifactPanel
+         合并头（避免两份），此处只保留母题级状态标 + 功能按钮（待审 / 待重生 / 开始举一反三 /
+         重生 / 入库 / 手动排版）。折叠态由 props.collapsed 控（合并头 caret 驱动）。 -->
     <header class="mc-head">
-      <button type="button" class="mc-toggle" @click="collapsed = !collapsed">
-        {{ collapsed ? '▶' : '▼' }} 母题卡
-      </button>
-      <!-- 🔴 PRD-C-017 B5 chip 刷新：显示真主考点 + 老师确认年级（不再「未锚定 / 未定」陈旧态） -->
-      <span class="mc-anchor-chip" :title="'锚定主考点 · 年级'">
-        {{ chipKp }}<span class="mc-dot">·</span>{{ chipGrade }}
-      </span>
+      <span class="mc-head-label">母题卡</span>
       <!-- ④ need_anchor_review 显式标（闸B 留空的诚实提示） -->
       <span v-if="motherCard?.needAnchorReview" class="mc-review-flag" title="主考点未锚到章内叶子，留待人工核对">
         锚定待人审
@@ -517,12 +513,13 @@ const figureList = computed<string[]>(() => {
 </template>
 
 <style scoped>
-/* v3 设计语言：深青 #0F6E6E + 暖纸白 #FBFAF6 + 暖琥珀 #B8741A。
-   AC7 收窄：相比 MotherBar 全宽横条，本卡紧凑（无大缩略图、网格紧排），嵌变式题组标题区下。 */
+/* 🔴 PRD-A-017 换皮（青紫数学理性）：颜色一律取 .variant-page token（variant-theme.css）。
+   青 var(--teal)=老师/主操作；紫 var(--violet)=AI；琥珀 var(--amber)=待审/重生；红 var(--red)=脏拦。
+   合并头化：折叠 caret + 年级章 chip 已移到 ArtifactPanel 合并头，本卡头只剩状态标 + 功能按钮。 */
 .mother-card {
-  background: #f7faf9;
-  border: 1px solid #cfe6e3;
-  border-radius: 12px;
+  background: var(--paper);
+  border: 1px solid var(--teal-line);
+  border-radius: var(--r-sm);
   margin: 0 16px 12px;
   overflow: hidden;
 }
@@ -530,51 +527,30 @@ const figureList = computed<string[]>(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 7px 12px;
-  background: #eef6f5;
-  border-bottom: 1px solid #dcece9;
+  padding: 8px 14px;
+  background: linear-gradient(180deg, var(--teal-50), var(--teal-100));
+  border-bottom: 1px solid var(--teal-line);
 }
-.mc-toggle {
+.mc-head-label {
   font-size: 12.5px;
   font-weight: 700;
-  color: #0f6e6e;
-  background: #e0f0ee;
-  border: 1px solid #c2e0db;
-  border-radius: 7px;
-  padding: 2px 10px;
-  cursor: pointer;
-}
-.mc-toggle:hover {
-  background: #d3eae6;
-}
-.mc-anchor-chip {
-  font-size: 12px;
-  color: #0f6e6e;
-  background: #fff;
-  border: 1px solid #b9d8d8;
-  border-radius: 999px;
-  padding: 1px 10px;
-  font-weight: 600;
-}
-.mc-dot {
-  margin: 0 4px;
-  color: #9fb0ad;
+  color: var(--teal-700);
 }
 .mc-review-flag {
   font-size: 11px;
-  color: #b8741a;
-  background: #fbeed6;
-  border: 1px solid #ecc98f;
-  border-radius: 6px;
+  color: var(--amber);
+  background: var(--amber-50);
+  border: 1px solid var(--amber-line);
+  border-radius: var(--r-xs);
   padding: 1px 8px;
   font-weight: 700;
 }
 .mc-dirty-flag {
   font-size: 11px;
-  color: #c0392b;
-  background: #fdecea;
-  border: 1px solid #f0b8b1;
-  border-radius: 6px;
+  color: var(--red);
+  background: var(--red-50);
+  border: 1px solid var(--red-line);
+  border-radius: var(--r-xs);
   padding: 1px 8px;
   font-weight: 700;
 }
@@ -590,8 +566,8 @@ const figureList = computed<string[]>(() => {
 /* 🔴 PRD-C-100 BC3 母题手动排版按钮（violet 系） */
 .mc-layout {
   font-size: 12px;
-  color: #5b4fd6;
-  border-color: #cfc7f3;
+  color: var(--violet-700);
+  border-color: var(--violet-line);
 }
 /* 🔴 PRD-C-017 B5「开始举一反三」主按钮 */
 .mc-start {
@@ -606,14 +582,14 @@ const figureList = computed<string[]>(() => {
   font-size: 13px;
 }
 .mc-star.is-full {
-  color: #b8741a;
+  color: var(--amber);
 }
 .mc-star.is-empty {
-  color: #d9d3c6;
+  color: var(--faint);
 }
 .mc-diff-label {
   font-size: 11.5px;
-  color: #6b817e;
+  color: var(--muted);
 }
 
 .mc-body {
@@ -631,11 +607,11 @@ const figureList = computed<string[]>(() => {
 .mc-thumb {
   width: 96px;
   height: 72px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   overflow: hidden;
-  border: 1px solid #7fc0bd;
+  border: 1px solid var(--teal-line);
   cursor: zoom-in;
-  background: #f5f8f8;
+  background: var(--bg-soft);
 }
 .mc-thumb img {
   width: 100%;
@@ -649,11 +625,11 @@ const figureList = computed<string[]>(() => {
   position: relative;
   width: 96px;
   min-height: 50px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   overflow: hidden;
-  border: 1px dashed #7b6cf0;
+  border: 1px dashed var(--violet);
   cursor: zoom-in;
-  background: #faf9ff;
+  background: var(--violet-50);
 }
 .mc-figure img {
   width: 100%;
@@ -673,10 +649,10 @@ const figureList = computed<string[]>(() => {
 .mc-figure-warn {
   width: 96px;
   font-size: 11px;
-  color: #b8741a;
-  background: #fdf6ec;
-  border: 1px dashed #f0c78a;
-  border-radius: 8px;
+  color: var(--amber);
+  background: var(--amber-50);
+  border: 1px dashed var(--amber-line);
+  border-radius: var(--r-sm);
   text-align: center;
   padding: 4px 0;
 }
@@ -686,7 +662,7 @@ const figureList = computed<string[]>(() => {
 }
 .mc-figure-reason {
   font-size: 10px;
-  color: #a0a8b3;
+  color: var(--faint);
   line-height: 1.4;
   margin: 0;
 }
@@ -704,17 +680,17 @@ const figureList = computed<string[]>(() => {
   gap: 6px;
   font-size: 11.5px;
   font-weight: 700;
-  color: #6b817e;
+  color: var(--muted);
   margin-bottom: 2px;
 }
 .mc-hardest-hint {
-  color: #b8741a;
+  color: var(--amber);
   font-weight: 600;
 }
 .mc-skeleton,
 .mc-answer {
   font-size: 13px;
-  color: #16302f;
+  color: var(--ink);
   line-height: 1.6;
 }
 .mc-skeleton :deep(p),
@@ -723,9 +699,9 @@ const figureList = computed<string[]>(() => {
 }
 /* 最难步【】高亮：骨架里若有【】标记，整块加暖底提示「含最难步基因」 */
 .mc-skeleton.has-mark {
-  background: #fdf6ea;
-  border-left: 3px solid #e0a44a;
-  border-radius: 0 6px 6px 0;
+  background: var(--amber-50);
+  border-left: 3px solid var(--amber);
+  border-radius: 0 var(--r-xs) var(--r-xs) 0;
   padding: 6px 10px;
 }
 
@@ -743,7 +719,7 @@ const figureList = computed<string[]>(() => {
   right: 0;
   bottom: 0;
   height: 36px;
-  background: linear-gradient(to bottom, rgba(247, 250, 249, 0), #f7faf9 92%);
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0), var(--paper) 92%);
   pointer-events: none;
 }
 /* 展开态：去限高、改内部滚动 —— 超长仍在本区内滚（不撑爆卡片），遮罩撤掉 */
@@ -760,15 +736,15 @@ const figureList = computed<string[]>(() => {
   margin: 4px auto 2px;
   font-size: 11.5px;
   font-weight: 600;
-  color: #0f6e6e;
-  background: #e7f3f1;
-  border: 1px solid #cfe6e3;
-  border-radius: 8px;
+  color: var(--teal-700);
+  background: var(--teal-50);
+  border: 1px solid var(--teal-line);
+  border-radius: var(--r-sm);
   padding: 2px 14px;
   cursor: pointer;
 }
 .mc-detail-toggle:hover {
-  background: #d8ece8;
+  background: var(--teal-100);
 }
 
 .mc-dna-grid {
@@ -779,23 +755,23 @@ const figureList = computed<string[]>(() => {
   align-items: baseline;
   margin-top: 6px;
   padding-top: 8px;
-  border-top: 1px dashed #dcece9;
+  border-top: 1px dashed var(--line);
 }
 .mc-k {
-  color: #6b817e;
+  color: var(--muted);
   white-space: nowrap;
 }
 .mc-edit-tag {
   font-size: 9.5px;
-  color: #0f6e6e;
-  background: #e7f3f1;
-  border: 1px solid #cfe6e3;
-  border-radius: 4px;
+  color: var(--teal-700);
+  background: var(--teal-50);
+  border: 1px solid var(--teal-line);
+  border-radius: var(--r-xs);
   padding: 0 4px;
   font-weight: 600;
 }
 .mc-v {
-  color: #16302f;
+  color: var(--ink);
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -805,60 +781,60 @@ const figureList = computed<string[]>(() => {
   align-items: flex-start;
 }
 .mc-muted {
-  color: #9fb0ad;
+  color: var(--faint);
 }
 .mc-pill {
   font-size: 11.5px;
   border-radius: 999px;
   padding: 1px 9px;
-  background: #fff;
-  color: #0f6e6e;
-  border: 1px solid #b9d8d8;
+  background: var(--paper);
+  color: var(--teal-700);
+  border: 1px solid var(--teal-line);
 }
 .mc-pill.sec {
-  border-color: #7fc0bd;
+  border-color: var(--teal-line);
 }
 .mc-hard {
   font-size: 11.5px;
-  background: #fbeed6;
-  color: #b8741a;
-  border-radius: 5px;
+  background: var(--amber-50);
+  color: var(--amber);
+  border-radius: var(--r-xs);
   padding: 1px 8px;
   font-weight: 600;
 }
 .mc-model {
   font-size: 11.5px;
-  background: #f2f0fe;
-  color: #5b4fd6;
-  border: 1px solid #cfc7f3;
+  background: var(--violet-50);
+  color: var(--violet-700);
+  border: 1px solid var(--violet-line);
   border-radius: 999px;
   padding: 1px 9px;
 }
 .mc-tag {
   font-size: 11.5px;
-  background: #eef6f5;
-  color: #176e6e;
-  border-radius: 5px;
+  background: var(--teal-50);
+  color: var(--teal-700);
+  border-radius: var(--r-xs);
   padding: 1px 8px;
 }
 .mc-anchor-id {
   font-size: 11px;
-  color: #9fb0ad;
-  font-family: ui-monospace, monospace;
+  color: var(--faint);
+  font-family: var(--mono);
 }
 
 /* 🔴 B3.6 内联编辑控件（复用 MotherBar 守恒维编辑视觉） */
 .mc-min-btn {
   font-size: 11px;
-  color: #0f6e6e;
-  background: #fff;
-  border: 1px solid #7fc0bd;
-  border-radius: 7px;
+  color: var(--teal-700);
+  background: var(--paper);
+  border: 1px solid var(--teal-line);
+  border-radius: var(--r-xs);
   padding: 1px 9px;
   cursor: pointer;
 }
 .mc-min-btn:hover:not(:disabled) {
-  background: #e7f3f1;
+  background: var(--teal-50);
 }
 .mc-min-btn:disabled {
   opacity: 0.5;
@@ -870,9 +846,9 @@ const figureList = computed<string[]>(() => {
 .mc-edit-box {
   flex-basis: 100%;
   width: 100%;
-  background: #fff;
-  border: 1px solid #e7e3da;
-  border-radius: 8px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
   padding: 8px;
 }
 .mc-edit-actions {
@@ -884,30 +860,30 @@ const figureList = computed<string[]>(() => {
 .mc-cancel,
 .mc-save {
   font-size: 12px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   padding: 3px 14px;
   cursor: pointer;
 }
 .mc-cancel {
-  color: #5b6770;
-  background: #fff;
-  border: 1px solid #e7e3da;
+  color: var(--muted);
+  background: var(--paper);
+  border: 1px solid var(--line);
 }
 .mc-save {
   color: #fff;
-  background: #1e8a8a;
-  border: 1px solid #1e8a8a;
+  background: var(--teal);
+  border: 1px solid var(--teal);
 }
 .mc-save:hover {
-  background: #176e6e;
+  background: var(--teal-700);
 }
 .mc-dirty-hint {
   margin: 10px 0 0;
   font-size: 11.5px;
-  color: #b8741a;
-  background: #fdf6ea;
-  border: 1px solid #ecc98f;
-  border-radius: 8px;
+  color: var(--amber);
+  background: var(--amber-50);
+  border: 1px solid var(--amber-line);
+  border-radius: var(--r-sm);
   padding: 6px 10px;
   line-height: 1.5;
 }

@@ -44,6 +44,12 @@ const props = defineProps<{
   regeneratingIndexes?: number[] | null
   /** 🔴 PRD-C-100 B6：单卡配图态（按题 index 1-based）；宿主透传，缺省 = 未配图 */
   variantFigures?: Record<number, VariantFigureState>
+  /**
+   * 🔴 PRD-A-017 批2b 合并头：年级·章 chip 文案（如「七年级上册 · 第 6 章 图形的初步知识」）。
+   *   章名只有母题卡侧（confirmedChapterName）知道，故由宿主 index.vue 算好传入——合并头与
+   *   母题卡共用同一真值，避免两份。为空则 chip 不渲染（母题未就绪时）。
+   */
+  anchorChip?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -112,6 +118,14 @@ const emit = defineEmits<{
 //   ④ 渲染顺序：按 seq 升序（BE 题序），merge upsert 不打乱既有卡位置。
 // 守恒：mergedItems 是渲染唯一来源；header/partial/expectedTotal 仍直接读 props.artifact。
 // ---------------------------------------------------------------------------
+// 🔴 PRD-A-017 批2b 合并头：母题卡折叠态由本组件持有，caret 点击 toggle，经作用域插槽
+//   暴露给 #mother-card（宿主 MotherCard :collapsed）。母题就绪（有 anchorChip）才显 caret + chip。
+const motherCollapsed = ref(false)
+const hasMother = computed(() => !!props.anchorChip)
+function toggleMother() {
+  motherCollapsed.value = !motherCollapsed.value
+}
+
 const mergedItems = ref<VariantArtifactItem[]>([])
 const dropping = ref<Set<number>>(new Set())
 
@@ -320,10 +334,27 @@ function regenAll() {
 
 <template>
   <section class="artifact-panel" data-testid="variant-artifact-panel">
-    <!-- 画布头：标题 + 守恒/配方徽章 + 画布级动作（右上） -->
-    <header class="canvas-head">
+    <!-- 🔴 PRD-A-017 批2b 合并头：一条协调头 = [caret 母题卡] [年级·章 chip] [⟶] [举一反三 N 道变式]
+         [换一批] [全部入库]。caret 折叠下方母题卡（作用域插槽透传 collapsed）；换一批/全部入库 = 变式组
+         动作，留本组件（事件归属不变）。母题未就绪（无 anchorChip）→ 不显 caret/chip/flow，退回原标题。 -->
+    <header class="canvas-head" :class="{ 'is-vhead': hasMother }">
       <div class="head-line">
-        <h2 class="canvas-title">变式题组<template v-if="items.length"> · {{ items.length }} 道</template></h2>
+        <!-- 合并头模式：母题就绪 -->
+        <template v-if="hasMother">
+          <button
+            type="button"
+            class="mc-caret"
+            :title="motherCollapsed ? '展开母题卡' : '收起母题卡'"
+            @click="toggleMother"
+          >
+            <span class="mc-caret-ic">{{ motherCollapsed ? '▸' : '▾' }}</span> 母题卡
+          </button>
+          <span class="mc-titlechip" :title="anchorChip || ''">{{ anchorChip }}</span>
+          <span class="vh-arrow">⟶</span>
+          <span class="vh-flow">举一反三 <b>{{ items.length }}</b> 道变式</span>
+        </template>
+        <!-- 兜底：母题未就绪 → 原「变式题组 · N 道」标题 -->
+        <h2 v-else class="canvas-title">变式题组<template v-if="items.length"> · {{ items.length }} 道</template></h2>
         <span class="head-spacer" />
         <!-- PRD-C-015 批5：待重生集合非空 → 「重生 N 题」按钮（D-merge8 一键重出全集合） -->
         <el-button
@@ -375,8 +406,10 @@ function regenAll() {
             给母题卡区域设上限高（视口比例）+ overflow:auto —— 母题卡再长也只在本区内滚，
             绝不撑爆把下方 .canvas-body（变式题组）顶出视口。操作按钮在 .canvas-head
             （flex-shrink:0，在本插槽之上）天然常驻可见，不受影响。 -->
-    <div class="mother-slot">
-      <slot name="mother-card" />
+    <!-- 🔴 PRD-A-017 批2b：母题卡折叠态由合并头 caret 控（作用域插槽暴露 collapsed → 宿主 MotherCard）。
+         折叠时整槽隐藏（只剩合并头），展开时显示完整母题卡。sticky 由合并头 .canvas-head 承载（常驻顶）。 -->
+    <div v-show="!motherCollapsed" class="mother-slot">
+      <slot name="mother-card" :collapsed="motherCollapsed" />
     </div>
 
     <!-- 卡片列 -->
@@ -481,23 +514,80 @@ function regenAll() {
 
 .canvas-head {
   flex-shrink: 0;
+  /* 🔴 PRD-A-017 批2b sticky：合并头在右栏滚动语境内常驻顶。.artifact-panel 是 flex column +
+     overflow:hidden，本头 flex-shrink:0 已天然钉顶（mother-slot/canvas-body 各自内滚）；
+     再加 position:sticky 兜底（防未来父容器结构变动把头滚走）。 */
+  position: sticky;
+  top: 0;
+  z-index: 5;
   padding: 14px 20px 10px;
   display: flex;
   flex-direction: column;
   gap: 8px;
   border-bottom: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.5);
+  backdrop-filter: blur(6px);
 }
 .head-line {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
 }
 .canvas-title {
   margin: 0;
   font-size: 20px;
   font-weight: 700;
   color: var(--ink);
+}
+
+/* 🔴 PRD-A-017 批2b 合并头元素（restyle.html .vhead / .mc-caret / .mc-titlechip / .vh-arrow / .vh-flow） */
+.mc-caret {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--teal-700);
+  background: var(--paper);
+  border: 1px solid var(--teal-line);
+  border-radius: var(--r-sm);
+  padding: 3px 11px;
+  cursor: pointer;
+}
+.mc-caret:hover {
+  background: var(--teal-50);
+}
+.mc-caret-ic {
+  font-size: 11px;
+}
+.mc-titlechip {
+  flex: none;
+  max-width: 280px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--teal-700);
+}
+.vh-arrow {
+  flex: none;
+  color: var(--teal-line);
+  font-size: 15px;
+}
+.vh-flow {
+  flex: none;
+  white-space: nowrap;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.vh-flow b {
+  color: var(--teal-700);
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 13.5px;
 }
 .head-spacer {
   flex: 1;

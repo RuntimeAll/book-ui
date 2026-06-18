@@ -156,6 +156,17 @@ const confirmedChapterName = ref('')
 // 🔴 PRD-C-017 B5：老师确认面亲选的年级册人话名（如「七年级上」）——chip 年级显示 + 续聊回合
 //   回传 toolkit（grade_book_name）同步年级，不依赖 toolkit 回灌 header.grade。
 const confirmedGradeBookName = ref('')
+// 🔴 PRD-A-017 批2b 合并头 chip：年级·章文案（传 ArtifactPanel 合并头）。
+//   与母题卡共用同一真值——年级 = 老师确认册名优先 → 母题卡 anchorGrade 兜底；
+//   章 = 老师确认章名优先 → 母题卡 anchorChapterId 兜底。母题未就绪（无 motherCard）→ null（不显 chip/caret）。
+const anchorChip = computed<string | null>(() => {
+  if (!motherCard.value) return null
+  const grade = confirmedGradeBookName.value.trim() || motherCard.value.anchorGrade?.trim() || ''
+  const chapter =
+    confirmedChapterName.value.trim() || motherCard.value.anchorChapterId?.trim() || ''
+  if (grade && chapter) return `${grade} · ${chapter}`
+  return grade || chapter || null
+})
 // 母题入库态（G12）
 const motherPersisting = ref(false)
 const motherPersisted = ref(false)
@@ -1896,6 +1907,7 @@ onBeforeUnmount(() => {
       :basketing-index="basketingIndex"
       :regenerating-indexes="regeneratingIndexes"
       :variant-figures="variantFigures"
+      :anchor-chip="anchorChip"
       @utterance="sendUtterance"
       @regenerate="regenerate"
       @persist="persistAll"
@@ -1915,9 +1927,11 @@ onBeforeUnmount(() => {
       @preview="(u: string) => (previewUrl = u)"
       @manual-layout="onManualLayout"
     >
-      <!-- AC7 收窄移位 + AC4 母题卡先出（全 10 维）+ M8 难点空文案 + G12 母题入库 -->
-      <template #mother-card>
+      <!-- AC7 收窄移位 + AC4 母题卡先出（全 10 维）+ M8 难点空文案 + G12 母题入库
+           🔴 PRD-A-017 批2b：折叠态由 ArtifactPanel 合并头 caret 控（作用域插槽 collapsed → MotherCard） -->
+      <template #mother-card="{ collapsed }">
         <MotherCard
+          :collapsed="collapsed"
           :mother-card="motherCard"
           :confirmed-chapter-name="confirmedChapterName"
           :confirmed-grade-book-name="confirmedGradeBookName"
