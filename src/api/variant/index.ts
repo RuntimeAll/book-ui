@@ -1470,7 +1470,8 @@ export async function composeVariantFigure(
       ruoyi_token: ruoyiToken,
       stem: params.stem,
       answer: params.answer,
-      item_id: params.itemId,
+      // 🔴 PRD-C-100 B3-配图：item_id 必传字符串（toolkit pydantic 入参曾死锁 str → 传 number 直接 422）。
+      item_id: params.itemId == null ? undefined : String(params.itemId),
       correction_prompt: params.correctionPrompt,
       // 🔴 PRD-C-100 C：图片重生带上一版命令 → BE 增量改图。无（首次造图/未存）则不传，BE 退原行为。
       prev_commands:
@@ -1478,10 +1479,10 @@ export async function composeVariantFigure(
     }),
   })
   if (!res.ok) {
-    const detail = await res
-      .json()
-      .then((d: { detail?: string; error?: string }) => d.detail || d.error)
-      .catch(() => '')
+    // 🔴 PRD-C-100 B3-配图：可读化错误。FastAPI 422 的 detail 是数组（[{loc,msg,...}]），
+    //   旧 `d.detail || d.error` 直接拿数组拼进 Error → message 变 [object Object]。
+    //   这里把数组 detail 摊成可读 msg 串，对象 detail 取 .msg，字符串原样。
+    const detail = await res.json().then(readableDetail).catch(() => '')
     throw new Error(detail || `/variant/compose-figure(compose_variant) ${res.status}`)
   }
   const d = (await res.json()) as Record<string, unknown>
@@ -1495,6 +1496,28 @@ export async function composeVariantFigure(
     needUserDesc: d.need_user_desc === true || d.needUserDesc === true,
     directionReview: d.direction_review === true || d.directionReview === true,
   }
+}
+
+/**
+ * PRD-C-100 B3-配图：把后端错误体（FastAPI {detail} / 自定义 {error}）摊成可读字符串，
+ * 避免数组/对象 detail 被直接拼进 Error 变成 `[object Object]`。
+ */
+function readableDetail(d: unknown): string {
+  if (!d || typeof d !== 'object') return typeof d === 'string' ? d : ''
+  const obj = d as { detail?: unknown; error?: unknown }
+  const det = obj.detail
+  if (typeof det === 'string') return det
+  if (Array.isArray(det)) {
+    return det
+      .map((e) =>
+        e && typeof e === 'object' && 'msg' in e ? String((e as { msg: unknown }).msg) : String(e)
+      )
+      .filter(Boolean)
+      .join('；')
+  }
+  if (det && typeof det === 'object' && 'msg' in det) return String((det as { msg: unknown }).msg)
+  if (typeof obj.error === 'string') return obj.error
+  return ''
 }
 
 /**
