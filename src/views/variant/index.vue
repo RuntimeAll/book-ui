@@ -177,11 +177,86 @@ interface VariantFigureState {
 }
 const variantFigures = reactive<Record<number, VariantFigureState>>({})
 
+// 🔴 修1（图串台 root cause）：variantFigures 按「裸 1-based index」缓存，而 index 在「换一批」/
+//   改主考点·年级重出 / onArtifact 整量替换后会被新一组题复用 —— 旧 index 的图直接套到新题上。
+//   这里记下「该 index 当前缓存的图是为哪条题面（stem）生成的」，onArtifact 收到新快照时逐 index 比对，
+//   凡题面变了的 index 一律作废它的旧图（删 variantFigures[index]），让新题用自己的题面重画，不复用旧图。
+//   选 (a)「按 stem 比对作废」而非 (b)「换 key」：因为「换一批」是新的一组题、seq 仍从 1 重排，
+//   seq/index 都不足以区分新旧题，唯有题面 stem 是真正的内容信号；且所有变更路径都汇流到 onArtifact，
+//   在此一处兜底最稳、partial 增量帧也天然覆盖（某题 stem 跨帧变化只作废它自己）。
+const figureStemAtIndex = reactive<Record<number, string>>({})
+
+// 🔴 修2（第一张图直出）：每「一组」变式只自动触发一次首图（母题切图 + 第一道变式造图），
+//   用一次性 guard 防 reactivity tick 重复打。换一批 / 改范围 = 新的一组 → guard 重置后重新自动出第一张。
+//   这两个 guard 在 onArtifact 检测到「新的一组题」（首题题面变了）时复位，clearCanvas 也复位。
+let autoCropMotherDone = false
+let autoComposeFirstDone = false
+
+/**
+ * 修1 核心：onArtifact 整量替换前，按 stem 作废受影响 index 的旧配图。
+ *   - 新快照里某 index 的 stem ≠ 该 index 已缓存图对应的 stem → 删 variantFigures[index]（旧图作废）。
+ *   - 当前快照里不存在的 index（题被删 / 组变小）→ 连带清掉残留图，免下一组复用。
+ *   - 首题（index 最小，通常 1）题面变了 = 这是「新的一组」→ 复位 autoComposeFirstDone，让首图重新自动出。
+ *   纯 partial 增量帧（同组逐题上屏）里 stem 不变 → 不误删已生成的图（只新增 index 登记）。
+ */
+function invalidateStaleFigures(next: VariantArtifact | null) {
+  const items = next?.items ?? []
+  const nextStems = new Map<number, string>()
+  for (const it of items) nextStems.set(it.index, it.stem || '')
+
+  // 1) 当前快照已不含的 index：清残留图 + 登记
+  for (const k of Object.keys(variantFigures)) {
+    const idx = Number(k)
+    if (!nextStems.has(idx)) {
+      delete variantFigures[idx]
+      delete figureStemAtIndex[idx]
+    }
+  }
+  // 2) 题面变了的 index：作废旧图（让新题用自己的题面重画）
+  let firstItemChanged = false
+  const minIndex = items.length ? Math.min(...items.map((it) => it.index)) : 0
+  for (const [idx, stem] of nextStems) {
+    const prev = figureStemAtIndex[idx]
+    if (prev !== undefined && prev !== stem) {
+      delete variantFigures[idx] // 旧图作废，绝不串到新题
+      if (idx === minIndex) firstItemChanged = true
+    }
+    figureStemAtIndex[idx] = stem
+  }
+  // 3) 首题题面变了 = 新的一组 → 复位首图自动 guard（换一批 / 改范围重出后重新直出第一张）
+  if (firstItemChanged) autoComposeFirstDone = false
+}
+
 function ensureVariantFigure(index: number): VariantFigureState {
   if (!variantFigures[index]) {
     variantFigures[index] = { png: null, loading: false, needs: false, reason: null, ossUrl: null }
   }
   return variantFigures[index]
+}
+
+/**
+ * 修2：拿到一组题后，自动出「第一张图」（低频=至少一张，不全手动）。
+ *   - 母题「切图形」：母题确有原图（motherImg 非空）且本组未自动切过 → 触发一次 cropMotherFigure。
+ *   - 变式第一道造图：当前快照已有变式题、第一道尚无图、本组未自动造过 → 触发一次 composeVariantFigure。
+ *   每组只触发一次（autoCropMotherDone / autoComposeFirstDone 一次性 guard），且只对还没图的题触发；
+ *   定稿帧才自动造变式图（partial 增量帧首题题面可能还在变，等定稿再造避免造废）。母题切图便宜，不 gate partial。
+ */
+function maybeAutoFirstFigures(a: VariantArtifact | null) {
+  // 母题切图（裁图便宜，没理由 gate；母题原图在即可，partial/定稿都可）
+  if (!autoCropMotherDone && motherImg.value && !motherFigurePng.value && !motherFigureLoading.value) {
+    autoCropMotherDone = true
+    void onCropMotherFigure()
+  }
+  // 变式第一道造图：仅定稿帧（无 partial）才自动造，避免对还在变的增量首题造废图
+  if (a && !a.partial && !autoComposeFirstDone && a.items.length) {
+    const first = a.items.reduce((m, it) => (it.index < m.index ? it : m), a.items[0])
+    const st = variantFigures[first.index]
+    const hasFig = !!(st && st.png)
+    if (!hasFig && !(st && st.loading)) {
+      autoComposeFirstDone = true
+      void onComposeVariantFigure({ index: first.index })
+    }
+  }
 }
 
 /**
@@ -244,6 +319,9 @@ async function onComposeVariantFigure(payload: { index: number; correctionPrompt
     st.needs = res.needsFigure && !res.pngBase64
     st.reason = res.reason
   } catch (e) {
+    // 🔴 PRD-C-100 B3-配图：失败也落「⚠待补图」徽章（对齐 D9 降级 UI，不静默无图），
+    //   错误可读（API 已把 422 结构化 detail 摊成 message，不再 [object Object]）。
+    st.needs = true
     st.reason = `配图失败：${e instanceof Error ? e.message : String(e)}`
   } finally {
     st.loading = false
@@ -556,11 +634,15 @@ function dispatch(
         scrollToBottom()
       },
       onArtifact: (a: VariantArtifact) => {
+        // 🔴 修1：整帧替换【前】先按 stem 作废受影响 index 的旧配图（防旧图串到新题）。
+        invalidateStaleFigures(a)
         // 快照全量语义：整帧替换（assemble 每轮收尾 + persist 成功后各发一帧）。
         // PRD-C-012 P2：增量帧（partial=true，items=已完成题全量快照）同样整量替换 ——
         // partial / expectedTotal 随帧存进同一响应式 artifact，ArtifactPanel 据此渲染
         // 「生成中」占位骨架卡；定稿帧无 partial 键 → 占位卡自然消失。
         artifact.value = a
+        // 🔴 修2：拿到一组题后自动出第一张图（母题切图 + 第一道变式造图，每组各一次）。
+        maybeAutoFirstFigures(a)
       },
       // 🔴 PRD-C-017 B3·① 母题年级章确认面（AC1/G1）：母题每次必停 → 弹确认面。
       //   toolkit 停在 awaiting_mother_confirm（clarify→END resume），老师确认后宿主
@@ -1197,11 +1279,27 @@ async function onAddToBasket(index: number) {
  */
 function onEditHeaderKp(kp: { id: string; name: string }) {
   if (sending.value) return
+  // 🔴 修1/修2：改主考点 = 整组按新考点重出 → 是「新的一组」。先清旧配图缓存 + 复位首图 guard，
+  //   新题来时按自己题面重画、第一张重新自动出（onArtifact 会再兜底，这里提前清免重出期残留旧图）。
+  resetFigureCachesForNewGroup()
   dispatch(`把整组主考点改成「${kp.name}」，按新主考点重新出这组变式`, `主考点 → ${kp.name}`)
 }
 function onEditHeaderGrade(grade: string) {
   if (sending.value || !grade) return
+  // 🔴 修1/修2：改年级 = 整组重出，同上复位配图缓存 + 首图 guard。
+  resetFigureCachesForNewGroup()
   dispatch(`把整组年级改成「${grade}」，按新年级重新出这组变式`, `年级 → ${grade}`)
+}
+
+/**
+ * 复位「变式」配图缓存 + 首张变式图 guard（用于「换一批」/改主考点·年级重出 = 新的一组）。
+ * 母题切图（autoCropMotherDone / motherFigurePng）不在此复位 —— 换一批/改范围母题原图不变，
+ * 母题图形也不变，无需重切（避免无谓花费/闪烁）；母题图仅随会话或换母题图重置（clearCanvas）。
+ */
+function resetFigureCachesForNewGroup() {
+  for (const k of Object.keys(variantFigures)) delete variantFigures[Number(k)]
+  for (const k of Object.keys(figureStemAtIndex)) delete figureStemAtIndex[Number(k)]
+  autoComposeFirstDone = false
 }
 
 /** 换一批：重发初始出题 utterance（整组重新出，agent 重新分析母题） */
@@ -1210,6 +1308,8 @@ function regenerate() {
   // PRD-C-011 line 102 方案 b =「清空当前卡 + 重发初始出题 utterance」：先清画布，
   // 骨架卡接管重出期（约数十秒），避免老师把滞留的旧卡当成结果抄题
   artifact.value = null
+  // 🔴 修1/修2：换一批 = 新的一组 → 清旧配图缓存 + 复位首图 guard（防旧图串到新题、首张图重新直出）。
+  resetFigureCachesForNewGroup()
   dispatch(firstComposeMessage, '🔁 换一批（按原母题重新出一组）')
 }
 
@@ -1244,6 +1344,10 @@ function clearCanvas() {
   motherFigureNeeds.value = false
   motherFigureReason.value = null
   for (const k of Object.keys(variantFigures)) delete variantFigures[Number(k)]
+  // 🔴 修1/修2：stem 作废表 + 首图自动 guard 随会话重置（新会话/切会话从零开始自动出第一张）
+  for (const k of Object.keys(figureStemAtIndex)) delete figureStemAtIndex[Number(k)]
+  autoCropMotherDone = false
+  autoComposeFirstDone = false
 }
 
 /** 新会话（原「新母题」）：换新 thread；首条消息发出时才登记进会话列表 */
