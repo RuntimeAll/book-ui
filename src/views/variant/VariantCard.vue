@@ -62,6 +62,13 @@ const props = defineProps<{
   figureNeedsFigure?: boolean
   /** 配图相关文案，外显 */
   figureReason?: string | null
+  /**
+   * 🔴 配图主动引导：BE 标 needUserDesc（画不准/画不出且本应有图）→ ⚠待补图区显眼提示
+   * 「补一句图形描述」，并把老师引到修正框 figCorrection（补完发 → 走既有 compose-figure 重画）。
+   */
+  figureNeedUserDesc?: boolean
+  /** 🔴 方向待确认：含方向元素（旋转/箭头/镜像/平移）→ 配图下方「⚠ 方向待确认」徽章 + 引导补说明 */
+  figureDirectionReview?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -122,7 +129,7 @@ const showSolution = ref(false)
 const figFixOpen = ref(false)
 const figCorrection = ref('')
 
-/** 按修正提示词重新生成配图（图歪了→重生） */
+/** 按修正提示词重新生成配图（图歪了→重生 / 补描述→重画） */
 function onRegenFigure() {
   const prompt = figCorrection.value.trim()
   if (!prompt) return
@@ -130,6 +137,16 @@ function onRegenFigure() {
   figFixOpen.value = false
   figCorrection.value = ''
 }
+
+// 🔴 配图主动引导：BE 标 needUserDesc（画不准/画不出且本应有图）→ 自动展开修正框 figCorrection，
+//   把老师的注意力引到「补一句图形描述」入口（补完发即走既有 compose-figure 带 correctionPrompt 重画）。
+watch(
+  () => props.figureNeedUserDesc,
+  (need) => {
+    if (need) figFixOpen.value = true
+  },
+  { immediate: true }
+)
 
 // ---------------------------------------------------------------------------
 // 内容编辑（傻瓜式）：编辑态把 stem/answer/solution 各显示为 textarea + 实时 MarkdownMath
@@ -835,8 +852,20 @@ function saveFieldEdit() {
         >
           <img :src="`data:image/png;base64,${figurePng}`" alt="配图" />
         </div>
-        <!-- G4：需配图但没造出来 → ⚠待补图（不静默无图） -->
-        <div v-else-if="figureNeedsFigure" class="vc-figure-warn">⚠ 待补图（本题需配图，暂未生成成功）</div>
+        <!-- G4：需配图但没造出来 → ⚠待补图（不静默无图）；needUserDesc 时显眼引导补描述 -->
+        <div v-else-if="figureNeedsFigure" class="vc-figure-warn">
+          <span>⚠ 待补图（本题需配图，暂未生成成功）</span>
+          <div v-if="figureNeedUserDesc" class="vc-figure-desc-hint">
+            💡 请补一句图形描述（说清要画哪些点 / 角 / 线 / 标注），我再据此重画 →
+            <button type="button" class="vc-fig-desc-cta" @click="figFixOpen = true">去补描述</button>
+          </div>
+        </div>
+
+        <!-- 🔴 方向待确认：造图成功但含方向元素（旋转/箭头/镜像/平移）→ 徽章 + 引导补说明 -->
+        <div v-if="figurePng && figureDirectionReview" class="vc-figure-direction">
+          ⚠ 方向待确认（含旋转 / 箭头 / 镜像 / 平移）：请确认方向是否正确，如不对
+          <button type="button" class="vc-fig-desc-cta" @click="figFixOpen = true">补一句说明</button>
+        </div>
 
         <div class="vc-figure-actions">
           <el-button
@@ -866,7 +895,11 @@ function saveFieldEdit() {
             type="textarea"
             :autosize="{ minRows: 1, maxRows: 3 }"
             resize="none"
-            placeholder="说说哪里不对、想怎么改（如：三角形画成等腰、坐标轴标上刻度、圆再大一点）"
+            :placeholder="
+              figureNeedUserDesc && !figurePng
+                ? '补一句图形描述：要画哪些点 / 角 / 线 / 标注（如：直角三角形 ABC，∠C=90°，D 是 AB 中点，标出 CD）'
+                : '说说哪里不对、想怎么改（如：三角形画成等腰、坐标轴标上刻度、圆再大一点、旋转方向反了）'
+            "
           />
           <div class="vc-fig-fix-actions">
             <button type="button" class="vc-fig-cancel" @click="figFixOpen = false">取消</button>
@@ -1525,6 +1558,35 @@ function saveFieldEdit() {
   border: 1px dashed #f0c78a;
   border-radius: 8px;
   padding: 6px 10px;
+}
+/* 🔴 配图主动引导：⚠待补图区里的「补一句图形描述」提示 */
+.vc-figure-desc-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #b8741a;
+  line-height: 1.5;
+}
+/* 🔴 方向待确认徽章（造图成功但含方向元素 → 引导确认方向） */
+.vc-figure-direction {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #c0392b;
+  background: #fdeceb;
+  border: 1px dashed #f0a8a0;
+  border-radius: 8px;
+  padding: 6px 10px;
+  line-height: 1.5;
+}
+/* 引导补描述/补说明的内联 CTA 按钮 */
+.vc-fig-desc-cta {
+  border: none;
+  background: transparent;
+  color: #7b6cf0;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0 2px;
+  text-decoration: underline;
 }
 .vc-figure-actions {
   display: flex;

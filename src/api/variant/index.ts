@@ -1378,6 +1378,17 @@ export interface ComposeFigureVariantResult {
   commands: unknown
   /** 文案，外显给老师 */
   reason: string | null
+  /**
+   * 🔴 配图主动引导（BE 可选附加字段，缺省即 false，老返回也不崩）：画不准/画不出时 BE 主动
+   *   标这个，FE 在⚠待补图区显眼提示「补一句图形描述」，并把老师引到既有修正框 figCorrection
+   *   （补完发 → 走既有 composeVariantFigure 带 correctionPrompt + prevCommands 重画）。
+   */
+  needUserDesc: boolean
+  /**
+   * 🔴 方向待确认（BE 可选附加字段，缺省即 false）：造图成功但含方向元素（旋转/箭头/镜像/平移）→
+   *   FE 在配图下方加「⚠ 方向待确认」徽章，引导老师确认方向是否正确、不对就补一句说明重画。
+   */
+  directionReview: boolean
 }
 
 function str0(v: unknown): string | null {
@@ -1469,6 +1480,9 @@ export async function composeVariantFigure(
     needsFigure: d.needs_figure === true || d.needsFigure === true,
     commands: d.commands ?? null,
     reason: str0(d.reason),
+    // 🔴 配图主动引导信号（可选附加，缺省 false）：兼容 snake_case（BE）/ camelCase。
+    needUserDesc: d.need_user_desc === true || d.needUserDesc === true,
+    directionReview: d.direction_review === true || d.directionReview === true,
   }
 }
 

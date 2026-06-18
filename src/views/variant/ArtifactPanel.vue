@@ -22,6 +22,10 @@ interface VariantFigureState {
   loading: boolean
   needs: boolean
   reason: string | null
+  /** 🔴 配图主动引导：BE 标 needUserDesc → ⚠待补图区提示「补一句图形描述」并引到修正框 */
+  needUserDesc?: boolean
+  /** 🔴 方向待确认：含方向元素（旋转/箭头/镜像/平移）→ 配图下方「⚠ 方向待确认」徽章 */
+  directionReview?: boolean
 }
 import KpTreeDialog from './KpTreeDialog.vue'
 import FontSizeSwitch from '@/components/business/FontSizeSwitch/index.vue'
@@ -446,6 +450,8 @@ function regenAll() {
             :figure-loading="!!variantFigures?.[it.index]?.loading"
             :figure-needs-figure="!!variantFigures?.[it.index]?.needs"
             :figure-reason="variantFigures?.[it.index]?.reason ?? null"
+            :figure-need-user-desc="!!variantFigures?.[it.index]?.needUserDesc"
+            :figure-direction-review="!!variantFigures?.[it.index]?.directionReview"
             @utterance="(t: string) => emit('utterance', t)"
             @edit="(p) => emit('edit', p)"
             @reverify="(i: number) => emit('reverify', i)"

@@ -179,6 +179,13 @@ interface VariantFigureState {
    * 时透传给后端 → BE 在上一版命令基础上增量改图，而非从零重画（继承上一版骨架）。
    */
   commands?: string[]
+  /**
+   * 🔴 配图主动引导（BE 信号回填）：画不准/画不出时 BE 标 needUserDesc → FE 在⚠待补图区显眼提示
+   * 「补一句图形描述」并把老师引到 figCorrection 修正框（补完发 → 走既有 composeVariantFigure 重画）。
+   */
+  needUserDesc?: boolean
+  /** 🔴 方向待确认（BE 信号回填）：含方向元素（旋转/箭头/镜像/平移）→ FE 加「⚠ 方向待确认」徽章。 */
+  directionReview?: boolean
 }
 
 // 🔴 PRD-C-100 C：把 compose 返回的 commands（unknown）规整成 string[]（每条命令字符串）；非数组/空 → []。
@@ -372,12 +379,18 @@ async function onComposeVariantFigure(payload: { index: number; correctionPrompt
     if (res.pngBase64) {
       st.png = res.pngBase64
       st.needs = false
+      st.needUserDesc = false // 成功出图 → 不再催补描述
+      // 🔴 方向待确认：成功出图但含方向元素 → 标徽章（图照常展示，引导确认方向）。
+      st.directionReview = res.directionReview
       // 成功时存住本版命令（供下次图片重生作增量基准）；BE 没回命令则保留上一版 commands。
       const cmds = normalizeCommands(res.commands)
       if (cmds.length) st.commands = cmds
     } else {
       // 失败/降级：旧图（若有）保留，仅当本来就没图时才标 ⚠待补图。
       st.needs = res.needsFigure && !st.png
+      // 🔴 主动引导：BE 标 needUserDesc（画不准/画不出且本应有图）→ FE 提示补描述（无旧图时才催，避免对已有好图误催）。
+      st.needUserDesc = res.needUserDesc && !st.png
+      st.directionReview = false
     }
     st.reason = res.reason
   } catch (e) {
