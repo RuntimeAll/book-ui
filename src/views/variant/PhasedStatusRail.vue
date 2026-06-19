@@ -7,10 +7,10 @@
 // 把后端旧 8 段 key（classify/knobs/figure/generate/gene_gate/verify/solution/persist）
 // re-map 成「2 阶段 × 5 节点」展示，颜色一律 var(--xxx)（token 在 variant-theme.css）。
 //
-// 8key → 2阶段×5节点 映射：
-//   定题中(ding)：读图锚定(classify) / 范围确认·需人工(classify await/warn) /
-//                母题切图(figure[定题相]) / 确认母题·需人工(knobs|needConfirm)
-//   出题中(chu) ：生成变式(generate) / 平行度比对(gene_gate) / 程序验算(verify) /
+// 8key → 2阶段×节点 映射：
+//   定题中(ding) 3节点（🔴 2026-06-19 新 stage 帧契约，三节点各读独立 key，不再 classify+knobs 硬凑）：
+//                读图锚定(classify) / 母题切图(figure[定题相]) / 确认母题(review)
+//   出题中(chu) 5节点：生成变式(generate) / 平行度比对(gene_gate) / 程序验算(verify) /
 //                配图(figure[出题相]|solution) / 题组就绪(persist|assemble)
 //
 // 5 态：todo 待完成灰 / run 进行中紫呼吸 / done 已完成青 / err 异常红 / human 需人工橙。
@@ -70,16 +70,21 @@ const isChu = computed(() => CHU_KEYS.some((k) => has(k)))
 const figureInChu = computed(() => isChu.value)
 
 // ── 定题中 节点 ──
-// 🔴 PRD-A-017 polish Fix-D：对齐设计稿 design-ref-02 的 3 节点 ding 布局
-//   （读图锚定 / 母题切图 / 确认母题）。原「范围确认」拆成独立节点 → 设计稿无此节点，
-//   将 classify 的 await/warn（考点范围待确认 / 候选）折进「读图锚定」自身的 human/err 态，
-//   候选名走 detail 文案外显（如「考点范围还有 2 个候选，请确认: 对顶角相等 / 邻补角」）。
+// 🔴 PRD-A-017（新 stage 帧契约，2026-06-19）：定题阶段三节点各读独立 stage key，
+//   不再用 classify+knobs 两 key 硬凑（旧映射致三态自相矛盾，根因见组件顶注释更新）。
+//   n1 读图锚定 ← classify、n2 母题切图 ← figure、n3 确认母题 ← review。
+//   后端发帧契约：
+//     ① classify：running（读图中）→ done（母题就绪，🔴 不再倒退成 await）/ await（仅低置信待确认年级章）。
+//     ② figure：纯文本 → done（detail「无需切图·纯文本」）；带图 → running → done。
+//        🔴 某轮确实没收到 figure 帧（旧数据/异常）→ 按「不适用·done」兜底，不恒挂待完成。
+//     ③ review：进入待确认 → await（detail「待老师确认母题，点开始举一反三」）→ 此节点显需人工；
+//        老师点「开始举一反三」→ review=done → 转 done。（knobs 仍存在但只代表「解析配方」，不驱动本节点）
 const dingNodes = computed<PsNode[]>(() => {
   const cls = st('classify')
-  const knobs = st('knobs')
   const fig = !figureInChu.value ? st('figure') : undefined
+  const review = st('review')
 
-  // ① 读图锚定（classify）：await→需人工（番人工，候选待确认）/ warn→异常 / done→已完成 / running→进行中
+  // ① 读图锚定（classify）：await→需人工（仅低置信待确认年级章）/ warn→异常 / done→已完成 / running→进行中
   const n1: PsNode = {
     label: '读图锚定',
     state:
@@ -90,24 +95,25 @@ const dingNodes = computed<PsNode[]>(() => {
           : nodeStateFromStatus(cls?.status, 'todo'),
     desc:
       cls?.status === 'await' || cls?.status === 'warn'
-        ? (cls?.detail ?? '考点范围拿捏不准，请确认')
+        ? (cls?.detail ?? '年级·章拿捏不准，请确认')
         : (cls?.detail ?? '识别题面、判年级·章、锚定考点'),
   }
-  // ② 母题切图（figure[定题相]）
+  // ② 母题切图（figure）：后端按帧渲染——running→done（带图）/ done（纯文本「无需切图」）。
+  //   🔴 无 figure 帧（旧数据/异常）→ 按「不适用·done」兜底，不恒挂「待完成」卡住整条。
   const n2: PsNode = {
     label: '母题切图',
-    state: nodeStateFromStatus(fig?.status, 'todo'),
-    desc: fig?.detail ?? '从原图切出母题图形',
+    state: fig ? nodeStateFromStatus(fig.status, 'done') : 'done',
+    desc: fig?.detail ?? '无需切图 · 纯文本',
   }
-  // ③ 确认母题·需人工（knobs await，或母题切图完成后浮现为待人工确认）
+  // ③ 确认母题（review）：await→需人工（真正等老师操作的 gate）/ done→已完成（点了「开始举一反三」）。
+  //   🔴 数据源从 knobs 改成 review；无 review 帧时按 todo（母题就绪前还没到确认 gate）。
   const n3: PsNode = {
     label: '确认母题',
-    state: knobs
-      ? nodeStateFromStatus(knobs.status, 'todo')
-      : fig?.status === 'done'
+    state:
+      review?.status === 'await'
         ? 'human'
-        : 'todo',
-    desc: knobs?.detail ?? '母题已确认无误？点「开始举一反三」开始生成变式',
+        : nodeStateFromStatus(review?.status, 'todo'),
+    desc: review?.detail ?? '母题已确认无误？点「开始举一反三」开始生成变式',
   }
   return [n1, n2, n3]
 })
