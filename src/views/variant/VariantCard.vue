@@ -1504,7 +1504,7 @@ function saveFieldEdit() {
       :mode="kpDialogMode"
       :title="kpDialog === 'secondary' ? '选择副考点（≤3）' : '选择主考点'"
       :max="3"
-      :preselected="[]"
+      :preselected="kpDialog === 'secondary' ? (dna.secondaryKpIds ?? []) : []"
       @update:model-value="(v: boolean) => { if (!v) kpDialog = false }"
       @pick="onPickMainKp"
       @pick-multi="onPickSecondaryKps"

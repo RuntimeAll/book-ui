@@ -35,6 +35,12 @@ const emit = defineEmits<{
     e: 'confirm',
     value: { chapterId: string; gradeBookId: string; chapterName: string; gradeBookName: string }
   ): void
+  /**
+   * 🔴 PRD-A-018 A-4：取消/关闭确认面 → 宿主收口待确认态并给回路（重新贴图或回复年级章可继续）。
+   *   原先只 emit update:modelValue=false，宿主无 @cancel → 取消即死路（BE 停 awaiting_mother_confirm、
+   *   无母题卡/无重试入口）。本事件让宿主补回路。
+   */
+  (e: 'cancel'): void
 }>()
 
 const tree = ref<SubjectNode[]>([])
@@ -122,6 +128,17 @@ watch(
 
 function close() {
   emit('update:modelValue', false)
+  // 🔴 PRD-A-018 A-4：通知宿主收口待确认态 + 给回路（取消≠死路）。
+  emit('cancel')
+}
+
+/** el-dialog 自身关闭（X / ESC / 点遮罩）→ 同样视为取消，走 close 给回路（A-4）。 */
+function onDialogUpdate(v: boolean) {
+  if (!v) {
+    close()
+  } else {
+    emit('update:modelValue', v)
+  }
 }
 
 function onConfirm() {
@@ -146,7 +163,7 @@ function onConfirm() {
     append-to-body
     :close-on-click-modal="false"
     data-testid="variant-grade-chapter-confirm"
-    @update:model-value="emit('update:modelValue', $event)"
+    @update:model-value="onDialogUpdate"
   >
     <p class="gc-intro">
       举一反三前请先确认母题所属的<b>年级册</b>与<b>章</b>——这是后续 AI 解题打标的锚定范围，

@@ -994,6 +994,12 @@ function dispatch(
 
 /** 输入框发送（首轮把 OSS URL 拼进文本，agent 端从 human 文本抠 URL） */
 function send() {
+  // 🔴 PRD-A-018 A-6：上传未完成即拦发送——否则在途图未并入 pendingImages，message 不带图，
+  //   首轮无图触发 ask→END 静默丢图（老师以为带图了）。📎/🔗 已带闸，唯主发送/回车漏。
+  if (uploading.value) {
+    ElMessage.warning('图片上传中，请稍候')
+    return
+  }
   commitUrlInput() // 先把 URL 输入框里没回车的地址并入待发附件
   const text = input.value.trim()
   const imgs = [...pendingImages.value]
@@ -1092,6 +1098,30 @@ function onConfirmGradeChapter(value: {
     confirmedGradeBookId: value.gradeBookId,
     gradeBookName: value.gradeBookName,
   })
+}
+
+/**
+ * 🔴 PRD-A-018 A-4：老师取消年级章确认面（点取消 / X / ESC / 遮罩）→ 收口待确认态 + 给回路，
+ *   绝不能取消=死路。原先弹窗只 emit false、宿主无 @cancel → BE 停 awaiting_mother_confirm、
+ *   FE 无母题卡/无重试、状态条永久「需人工」。
+ *   回路：① 清待确认载荷（confirmDialogVisible 已由 v-model 收掉）；② push 一条 AI 提示，告诉
+ *   老师可「重新贴图」或「直接回复年级章」继续——needConfirmPayload 留存的话保留以便重开，但本轮
+ *   BE 已 END（needConfirm = clarify→END 后停等），故清掉旧载荷避免下次误用陈旧候选。
+ */
+function onCancelGradeChapter() {
+  // 已确认/已在发送中 → 不当作取消（避免确认成功后 v-model 关窗误触）
+  if (confirmSubmitting.value || sending.value) return
+  // 没有待确认载荷（非真处于确认态）→ 不打扰
+  if (!needConfirmPayload.value) return
+  needConfirmPayload.value = null
+  confirmDialogVisible.value = false
+  stream.value.push({
+    type: 'bubble',
+    role: 'ai',
+    kind: 'normal',
+    text: '母题确认已暂停。你可以重新贴一张题目图，或直接在下方输入框回复母题所属的「年级册 + 章」（如「七年级上 第二章」），我会据此继续举一反三。',
+  })
+  scrollToBottom()
 }
 
 /**
@@ -1787,7 +1817,26 @@ async function restoreSession(id: string) {
       }
       // tool/custom 帧不回放（stage 思路条是过程态，历史会话无需重演）
     }
-    if (art) artifact.value = art
+    if (art) {
+      artifact.value = art
+      // 🔴 PRD-A-018 A-22：恢复历史会话后重建母题 FE 态——否则已入库母题显「未入库」（可重复入库）、
+      //   锚定章退化成 id/代码、「手动排版」入口失效。从 artifact 母题卡回填：
+      //   ① 年级册/章人话名（chip 显「七年级上 / 第二章」而非代码 / 未定）；
+      //   ② 母题入库态（motherPersisted/motherQuestionId，BE 透传 mother_question_id 时生效）。
+      const restoredMc = pickMotherCard(art)
+      if (restoredMc) {
+        if (!confirmedGradeBookName.value && restoredMc.anchorGrade) {
+          confirmedGradeBookName.value = restoredMc.anchorGrade
+        }
+        if (!confirmedChapterName.value && restoredMc.anchorChapterName) {
+          confirmedChapterName.value = restoredMc.anchorChapterName
+        }
+        if (restoredMc.persisted && restoredMc.motherQuestionId) {
+          motherPersisted.value = true
+          motherQuestionId.value = restoredMc.motherQuestionId
+        }
+      }
+    }
     const meta = sessions.value.find((s) => s.id === id)
     if (meta?.img && !motherImg.value) motherImg.value = meta.img
   } catch (e) {
@@ -1891,6 +1940,7 @@ onBeforeUnmount(() => {
       :payload="needConfirmPayload"
       :submitting="confirmSubmitting"
       @confirm="onConfirmGradeChapter"
+      @cancel="onCancelGradeChapter"
     />
 
     <!-- 🔴 PRD-C-100 B6·成本相关 UI：今日 AI 额度用尽横幅（文案用后端原文，含已用/上限 ¥） -->
@@ -2162,7 +2212,9 @@ onBeforeUnmount(() => {
               type="primary"
               class="send-btn"
               :loading="sending"
-              :disabled="!input.trim() && !imageUrl.trim() && pendingImages.length === 0"
+              :disabled="
+                uploading || (!input.trim() && !imageUrl.trim() && pendingImages.length === 0)
+              "
               @click="send"
             >
               发送 ➤

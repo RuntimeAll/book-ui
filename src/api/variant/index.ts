@@ -177,6 +177,12 @@ export interface VariantDna {
   mainKpId: string | null
   /** 副考点 ×0~3（知识点名数组，field=secondary_kps） */
   secondaryKps: string[]
+  /**
+   * 🔴 PRD-A-018 A-13：副考点 id 列表（雪花 string；secondary_kps 为 [{id,name}] 形态时抠出）。
+   *   「改副考点」弹层 preselected 回显现有副考点用——不回显则老师改一个会全量覆盖丢其余。
+   *   secondary_kps 仅名数组（无 id）时为 []（弹层无法精确回显，但至少不丢数据靠老师手补）。
+   */
+  secondaryKpIds: string[]
   /** 考察类型（闭集 10，见 EXAM_TYPES；field=exam_type） */
   examType: string | null
   /** 解法骨架（结构步骤，【】包最难步；点击-说话改 → revise target=skeleton） */
@@ -456,6 +462,18 @@ function strArr(v: unknown): string[] {
   }
   return out
 }
+// 🔴 PRD-A-018 A-13：从 [{id,name}] 形态抠出 id 列表（纯名数组 / 非数组 → []）。
+function idArr(v: unknown): string[] {
+  if (!Array.isArray(v)) return []
+  const out: string[] = []
+  for (const x of v) {
+    if (x && typeof x === 'object') {
+      const id = (x as Record<string, unknown>).id ?? (x as Record<string, unknown>).code
+      if (id != null && String(id).trim()) out.push(String(id).trim())
+    }
+  }
+  return out
+}
 
 /**
  * PRD-C-014 T2 — 从 item 解出 DNA 维度。兼容两种 BE 形态：
@@ -470,6 +488,9 @@ function pickDna(o: Record<string, unknown>): VariantDna {
     mainKpId: str(d.main_kp_id) ?? str(d.mainKpId) ?? str(d.kp_id) ?? str(d.dim1_kp_id),
     secondaryKps:
       strArr(d.secondary_kps).length ? strArr(d.secondary_kps) : strArr(d.secondaryKps),
+    // 🔴 PRD-A-018 A-13：副考点 id（[{id,name}] 形态抠出，供「改」弹层 preselected 回显）。
+    secondaryKpIds:
+      idArr(d.secondary_kps).length ? idArr(d.secondary_kps) : idArr(d.secondaryKps),
     examType: str(d.exam_type) ?? str(d.examType),
     skeleton: str(d.skeleton) ?? str(d.solution_skeleton),
     hardPoints:
@@ -695,6 +716,14 @@ export interface VariantMotherCard {
   anchorChapterName: string | null
   /** 锚定待人审（闸B 留空的诚实提示）→ true 时母题卡标「锚定待人审」 */
   needAnchorReview: boolean
+  /**
+   * 🔴 PRD-A-018 A-22：母题已入库的库 id（雪花 string）。BE 母题专帧透传
+   *   mother_question_id 时回填（恢复历史会话据此重建入库态，免显「未入库」/可重复入库）。
+   *   BE 未透传（旧后端 / 未入库）→ null。
+   */
+  motherQuestionId: string | null
+  /** 🔴 PRD-A-018 A-22：母题已入库标记（有 motherQuestionId 或 BE 显式 persisted=true）。 */
+  persisted: boolean
 }
 
 /** 从 artifact 解出母题卡（① header.mother_card 专帧优先；② items[0].dna 兜底拼） */
@@ -746,6 +775,14 @@ export function pickMotherCard(a: VariantArtifact | null): VariantMotherCard | n
       anchorChapterName:
         str(anchor.chapter_name) ?? str(anchor.chapterName) ?? str(o.chapter_name),
       needAnchorReview: o.need_anchor_review === true || o.needAnchorReview === true,
+      // 🔴 PRD-A-018 A-22：母题入库态（BE 透传 mother_question_id / persisted 时回填，恢复会话据此重建）
+      motherQuestionId:
+        str(o.mother_question_id) ?? str(o.motherQuestionId) ?? str(o.question_id),
+      persisted:
+        o.persisted === true ||
+        o.mother_persisted === true ||
+        str(o.mother_question_id) != null ||
+        str(o.motherQuestionId) != null,
     }
   }
   // 路②：从首个变式 item.dna 兜底拼（变式继承母题，组级共享维）
@@ -767,6 +804,8 @@ export function pickMotherCard(a: VariantArtifact | null): VariantMotherCard | n
     anchorChapterId: null,
     anchorChapterName: null, // 兜底路径无章名
     needAnchorReview: false, // 兜底路径无此信号，保守不标
+    motherQuestionId: null, // 兜底路径（items[0] 拼）无母题入库态信号
+    persisted: false,
   }
 }
 

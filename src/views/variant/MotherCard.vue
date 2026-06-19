@@ -597,7 +597,7 @@ const hasFigureCol = computed(
       mode="multi"
       title="改母题副考点（≤3）"
       :max="3"
-      :preselected="[]"
+      :preselected="motherCard?.secondaryKpIds ?? []"
       @pick-multi="onPickSecondaryKps"
     />
 
