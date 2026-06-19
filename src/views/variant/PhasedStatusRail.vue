@@ -124,17 +124,17 @@ const chuNodes = computed<PsNode[]>(() => {
   const n1: PsNode = {
     label: '生成变式',
     state: nodeStateFromStatus(gen?.status, 'todo'),
-    desc: gen?.detail ?? '按配方生成变式',
+    desc: gen?.detail ?? '按出题设置生成变式',
   }
   const n2: PsNode = {
-    label: '平行度比对',
+    label: '考点一致比对',
     state: nodeStateFromStatus(gate?.status, 'todo'),
-    desc: gate?.detail ?? '闸A 逐道与母题考法基因对照',
+    desc: gate?.detail ?? '逐道与母题对照考点',
   }
   const n3: PsNode = {
     label: '程序验算',
     state: nodeStateFromStatus(ver?.status, 'todo'),
-    desc: ver?.detail ?? '闸B 代入数值核对答案闭合',
+    desc: ver?.detail ?? '代入数值核对答案闭合',
   }
   // 配图：figure 或 solution 任一活跃则取之（figure 优先）
   const figStage = fig ?? sol

@@ -1375,7 +1375,7 @@ async function runRegen(indexes?: number[]) {
       const ns = res.failed.map((f) => f.index).join('、')
       ElMessage.warning(`第 ${ns} 题重生未成功（已保留原题，可再试或撤销）`)
     } else if (res.regenerated.length) {
-      ElMessage.success(`已重生第 ${res.regenerated.join('、')} 题（过闸B 重验）`)
+      ElMessage.success(`已重生第 ${res.regenerated.join('、')} 题（已重新验算）`)
     } else {
       ElMessage.info('没有待重生的题')
     }
@@ -1434,9 +1434,9 @@ async function onEditMotherDna(payload: { field: DnaField; value: DnaEditValue }
   try {
     const a = await editVariantDna(threadId.value, 1, payload.field, payload.value)
     if (a) artifact.value = a
-    ElMessage.success('已更新母题守恒维（下游变式已标待重生，点「重生下游变式」按新基准重出）')
+    ElMessage.success('已更新母题考点（下游变式已标待重生，点「重生下游变式」按新基准重出）')
   } catch (e) {
-    ElMessage.error(`更新母题守恒维失败：${e instanceof Error ? e.message : String(e)}`)
+    ElMessage.error(`更新母题考点失败：${e instanceof Error ? e.message : String(e)}`)
   }
 }
 

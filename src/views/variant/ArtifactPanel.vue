@@ -427,10 +427,10 @@ function regenAll() {
       <!-- PRD-C-015 批5：母题脏 / 待重生提示条（致命①入库拦截原因外显） -->
       <div v-if="hasDirty" class="dirty-banner">
         <template v-if="artifact?.header.motherDirty">
-          母题守恒维改过，下游变式已标「待重生」——点上方「重生」按新基准重出，重生前不可入库。
+          母题考点改过，下游变式已标「待重生」——点上方「重生」按新基准重出，重生前不可入库。
         </template>
         <template v-else>
-          第 {{ regenPendingIndexes.join('、') }} 题改了还没重生，点「重生」按新 DNA 重出后才能入库。
+          第 {{ regenPendingIndexes.join('、') }} 题改了还没重生，点「重生」按新特征重出后才能入库。
         </template>
       </div>
       <!-- PRD-A-017 改点④：去掉头部「主考点 / 年级」重复 badge（锚定 chip 由母题卡 MotherCard 承载，

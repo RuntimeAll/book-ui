@@ -272,7 +272,7 @@ const figureNotNeeded = computed(
         锚定待人审
       </span>
       <!-- 🔴 B3.6 母题脏标记（守恒维改了、下游待按新基准重生） -->
-      <span v-if="motherDirty" class="mc-dirty-flag" title="母题守恒维已改，下游变式待按新基准重生">
+      <span v-if="motherDirty" class="mc-dirty-flag" title="母题考点已改，下游变式待按新基准重生">
         待重生
       </span>
       <span class="mc-spacer" />
@@ -308,7 +308,7 @@ const figureNotNeeded = computed(
         :type="persisted ? 'success' : 'primary'"
         :loading="persisting"
         :disabled="sending || persisted || persistBlockedByDirty"
-        :title="persistBlockedByDirty ? '母题守恒维已改，请先点「重生下游变式」再入库' : ''"
+        :title="persistBlockedByDirty ? '母题考点已改，请先点「重生下游变式」再入库' : ''"
         @click="emit('persist-mother')"
       >
         {{ persisted ? '✓ 已入库' : '母题入库' }}
@@ -522,7 +522,7 @@ const figureNotNeeded = computed(
 
         <!-- 🔴 B3.6 母题脏提示条（守恒维改了、下游待重生 → 引导点重生） -->
         <p v-if="motherDirty && hasVariants" class="mc-dirty-hint">
-          母题守恒维已改 → 下游变式已标「待重生」，点右上「重生下游变式」按新基准重出（沿用 C-015 四分流通路）。
+          母题考点已改 → 下游变式已标「待重生」，点右上「重生下游变式」按新基准重出。
         </p>
       </div>
     </div>

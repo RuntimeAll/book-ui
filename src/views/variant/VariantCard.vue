@@ -421,7 +421,7 @@ function toggleVerify() {
 
 const geneBadge = computed(() => {
   // 4d：只说好——warn 等负面值一律沉默（双闸低由 verifyBadge 的 ⚠ 承担）
-  return props.item.gene === 'pass' ? { cls: 'gb-teal', text: '平行度 ✓' } : null
+  return props.item.gene === 'pass' ? { cls: 'gb-teal', text: '考点一致 ✓' } : null
 })
 
 // PRD-C-013 P8：难度按数值渲染星级。上限动态（存量库题可能 5，新生成题 1-4）——
@@ -679,7 +679,7 @@ function saveFieldEdit() {
       <span
         v-if="isDirty"
         class="dirty-tag"
-        :title="`改了 ${[...allDirtyDims].join('、')}，点「重生」按新 DNA 重出（重生前入库会被拦）`"
+        :title="`改了 ${[...allDirtyDims].join('、')}，点「重生」按新特征重出（重生前入库会被拦）`"
       >⏳ 待重生</span>
       <span v-if="item.manualBlock" class="manual-tag is-layout" title="本题被老师手动排版过（A-015 网格编辑器存过 blockJson）">🎨 手动排版</span>
       <span v-else-if="item.manualEdited" class="manual-tag" title="本题有维度被手动编辑过">✎ 手动编辑</span>
@@ -1038,7 +1038,7 @@ function saveFieldEdit() {
       <!-- ============ 🧬 题目 DNA（G13 ③：默认收起 = 图标 chip；点开展开全维，逐维可改） ============ -->
       <div class="dna-zone">
         <button type="button" class="dna-chip" :class="{ open: dnaOpen }" @click="dnaOpen = !dnaOpen">
-          <span class="dna-spiral">🧬</span>题目 DNA
+          <span class="dna-spiral">🧬</span>题目特征
           <span class="dna-caret">{{ dnaOpen ? '▴' : '▾' }}</span>
         </button>
 
@@ -1185,7 +1185,7 @@ function saveFieldEdit() {
                   type="textarea"
                   :autosize="{ minRows: 2, maxRows: 6 }"
                   resize="none"
-                  placeholder="解法骨架（【】包最难步基因；改它=换基因，点「重生这道」重写解析过闸B）"
+                  placeholder="解法骨架（【】包最难步考法；改它=换考法，点「重生这道」重写解析）"
                 />
                 <div class="inline-edit-actions">
                   <button type="button" class="inline-cancel" @click="cancelFieldEdit">取消</button>
@@ -1329,7 +1329,7 @@ function saveFieldEdit() {
 
       <!-- PRD-C-015 批5：dirty 题入库拦截提示（致命①新不变量，前端先拦给体验，后端硬闸兜底） -->
       <div v-if="isDirty" class="dirty-block-hint">
-        本题改了「{{ [...allDirtyDims].join('、') }}」还没重生，先点下方「重生」按新 DNA 重出，或「撤销重生」回上一版，才能入库 / 加试题篮。
+        本题改了「{{ [...allDirtyDims].join('、') }}」还没重生，先点下方「重生」按新特征重出，或「撤销重生」回上一版，才能入库 / 加试题篮。
       </div>
 
       <!-- 入库行：收录入库（T1）+ 加入试题篮（T2）—— PRD-C-015 批5：dirty 题禁用（致命①） -->

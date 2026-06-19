@@ -139,9 +139,9 @@ function swapImage() {
       <button type="button" class="mb-toggle" @click="collapsed = !collapsed">
         {{ collapsed ? '▼' : '▲' }} 母题
       </button>
-      <span class="mb-title">母题守恒基准（变式的基准·改基准则下游回流）</span>
+      <span class="mb-title">母题考点基准（变式的基准·改基准则下游回流）</span>
       <!-- 确定性异常未确认 → 卡头红点提示 -->
-      <span v-if="showConfirmFace" class="mb-flag-dot" title="母题守恒维需确认">● 待确认</span>
+      <span v-if="showConfirmFace" class="mb-flag-dot" title="母题考点需确认">● 待确认</span>
       <span class="mb-spacer" />
       <button type="button" class="mb-swap" :disabled="sending" title="换母题图 = 全新母题（重置）" @click="swapImage">
         换母题图
@@ -155,7 +155,7 @@ function swapImage() {
         <div
           v-if="motherImg"
           class="mb-img"
-          title="当前母题（守恒锚）·点开看大图"
+          title="当前母题·点开看大图"
           @click="emit('preview', motherImg)"
         >
           <img :src="motherImg" alt="母题" referrerpolicy="no-referrer" />
@@ -175,13 +175,13 @@ function swapImage() {
       <div class="mb-dna">
         <!-- 合并确认面（D-merge7 确定性异常才停 + 缺口5 三锚+守恒维一次外显） -->
         <div v-if="showConfirmFace" class="mb-confirm">
-          <p class="mb-confirm-title">⚠ 母题守恒维需确认（异常才打扰，过/改后再出变式）</p>
+          <p class="mb-confirm-title">⚠ 母题考点需确认（异常才打扰，过/改后再出变式）</p>
           <ul v-if="confirmFlags.length" class="mb-confirm-flags">
             <li v-for="(f, i) in confirmFlags" :key="i">{{ f }}</li>
           </ul>
-          <p v-else class="mb-confirm-flags">年级 / 主考点 / 题型（三锚）未定死，请在下方核对守恒基准维。</p>
+          <p v-else class="mb-confirm-flags">年级 / 主考点 / 题型（三锚）未定死，请在下方核对考点基准。</p>
           <p class="mb-confirm-hint">
-            一次核对：年级 + 主考点 + 题型（三锚）｜ 副考点 · 考察类型 · 骨架最难步 · 难点（守恒维）。
+            一次核对：年级 + 主考点 + 题型（三锚）｜ 副考点 · 考察类型 · 骨架最难步 · 难点（考点不变）。
             下方逐维可改；没问题点「过，出变式」。
           </p>
           <button type="button" class="mb-confirm-go" :disabled="sending" @click="dismissConfirm">
@@ -190,7 +190,7 @@ function swapImage() {
         </div>
 
         <!-- 上段：守恒基准维（可改） -->
-        <p class="mb-seg-title">守恒基准维 · 可改（改→下游变式回流待重生）</p>
+        <p class="mb-seg-title">考点基准 · 可改（改→下游变式回流待重生）</p>
         <div class="mb-grid">
           <!-- 副考点（多选 ≤3） -->
           <span class="mb-k">副考点</span>
@@ -232,7 +232,7 @@ function swapImage() {
                 type="textarea"
                 :autosize="{ minRows: 2, maxRows: 5 }"
                 resize="none"
-                placeholder="解法骨架（【】包最难步基因；改它=换基因，下游变式重写解析）"
+                placeholder="解法骨架（【】包最难步考法；改它=换考法，下游变式重写解析）"
               />
               <div class="mb-edit-actions">
                 <button type="button" class="mb-cancel" @click="skelEditing = false">取消</button>

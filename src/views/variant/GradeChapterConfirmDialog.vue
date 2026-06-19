@@ -126,7 +126,7 @@ function close() {
 
 function onConfirm() {
   if (!chapterId.value) {
-    ElMessage.warning('请先选定「章」（章是后续打标锚定的范围闸）')
+    ElMessage.warning('请先选定「章」（章是后续打标锚定的范围）')
     return
   }
   emit('confirm', {
@@ -149,7 +149,7 @@ function onConfirm() {
     @update:model-value="emit('update:modelValue', $event)"
   >
     <p class="gc-intro">
-      举一反三前请先确认母题所属的<b>年级册</b>与<b>章</b>——这是后续 AI 解题打标的锚定范围闸，
+      举一反三前请先确认母题所属的<b>年级册</b>与<b>章</b>——这是后续 AI 解题打标的锚定范围，
       确认对了后面才不会跑偏。
     </p>
 
