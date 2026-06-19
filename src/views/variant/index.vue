@@ -121,6 +121,8 @@ function bubbleSemantic(b: Bubble): string {
 const stream = ref<StreamItem[]>([])
 const input = ref('')
 const imageUrl = ref('') // URL 输入框：手贴公网图地址（回车/发送时并入 pendingImages）
+// 🔴 PRD-A-017 composer 对齐设计稿：URL 输入框默认收起，点「🔗 链接」内联展开（纯 UI 开合，逻辑零改）
+const showUrlInput = ref(false)
 // PRD-C-013 P10：待发附件缩略图（粘贴上传 / 贴 URL 都进这里）。发送时随用户气泡进流后清空。
 const pendingImages = ref<string[]>([])
 const motherImg = ref('') // 已发出的母题图，顶部小徽章常驻（守恒锚视觉提示）
@@ -1958,91 +1960,107 @@ onBeforeUnmount(() => {
       </div>
 
       <footer class="chat-input">
-        <!-- 🔴 PRD-A-017 空态高保真：母题图入口（Ctrl+V 粘贴 / 贴 URL / 📎 上传图片）收进底部
-             composer 区（贴近设计稿 cbar「上传/链接」在输入区的语义），不再独占 chat-head 下整条。
-             逻辑零改：URL 输入 + 隐藏 file input + 待发附件缩略图全部原样，仅换了位置。 -->
-        <div class="mother-bar">
-          <div class="mother-input">
-            <el-input
-              v-model="imageUrl"
-              size="default"
-              placeholder="可直接 Ctrl+V 粘贴截图，或贴 OSS / 公网图片地址（http…）后回车加入附件"
-              :disabled="sending || uploading"
-              clearable
-              @keyup.enter.prevent="commitUrlInput"
-              @blur="commitUrlInput"
-            >
-              <template #prepend>🖼 母题图</template>
-              <!-- 改点②：📎 上传图片 = 点击弹原生文件选择框（复用 uploadPastedImage） -->
-              <template #append>
-                <el-button
-                  class="pick-file-btn"
-                  :disabled="sending || uploading"
-                  :loading="uploading"
-                  title="选择本地图片上传"
-                  @click="pickImageFile"
-                >
-                  📎 上传图片
-                </el-button>
-              </template>
-            </el-input>
-            <!-- 隐藏 file input：pickImageFile 触发其 click，选中走 onFilePicked → uploadPastedImage -->
-            <input
-              ref="fileInput"
-              type="file"
-              accept="image/jpeg,image/png,image/webp,image/gif"
-              style="display: none"
-              @change="onFilePicked"
-            />
-            <!-- P10：待发附件缩略图（可删除），发送时随用户气泡进流 -->
-            <div v-if="pendingImages.length" class="pending-imgs">
-              <div v-for="(u, k) in pendingImages" :key="k" class="pending-thumb">
-                <img :src="u" referrerpolicy="no-referrer" @click="previewUrl = u" />
-                <button type="button" class="pending-del" :disabled="sending" @click="removePending(u)">
-                  ✕
-                </button>
-              </div>
+        <!-- 🔴 PRD-A-017 composer 对齐设计稿（restyle.html .cbox/.cbar）：统一一个框 —— 上半=主输入
+             textarea，下半=按钮条 [📎 上传图片][🔗 链接] …右对齐… [思考过程开关][发送 ➤]。
+             逻辑零改：paste（document 级监听）/ URL 贴图 / 文件上传 / 发送 / 思考开关 五条链路全部保留，
+             仅 URL 输入框默认收起、点「🔗 链接」内联展开（showUrlInput，纯 UI 开合）。 -->
+        <div class="composer-box">
+          <!-- P10：待发附件缩略图（可删除），置于主输入上方一行 -->
+          <div v-if="pendingImages.length" class="pending-imgs">
+            <div v-for="(u, k) in pendingImages" :key="k" class="pending-thumb">
+              <img :src="u" referrerpolicy="no-referrer" @click="previewUrl = u" />
+              <button type="button" class="pending-del" :disabled="sending" @click="removePending(u)">
+                ✕
+              </button>
             </div>
-            <p v-if="uploading" class="uploading-hint">截图上传中…</p>
           </div>
-        </div>
-        <div class="chat-input-row">
+          <p v-if="uploading" class="uploading-hint">截图上传中…</p>
+
+          <!-- 内联 URL 输入：点「🔗 链接」才出（默认收起，贴近设计稿干净版式） -->
+          <el-input
+            v-if="showUrlInput"
+            v-model="imageUrl"
+            size="default"
+            class="url-inline"
+            placeholder="贴 OSS / 公网图片地址（http…）后回车加入附件"
+            :disabled="sending || uploading"
+            clearable
+            @keyup.enter.prevent="commitUrlInput"
+            @blur="commitUrlInput"
+          >
+            <template #prepend>🔗 图片链接</template>
+          </el-input>
+
+          <!-- 主输入：textarea（粘贴截图 / 编辑指令） -->
           <el-input
             v-model="input"
             type="textarea"
+            class="composer-textarea"
             :rows="2"
             resize="none"
-            placeholder="贴好图后回车「出3道」，或直接说编辑指令（删第2 / 难一点 / 补2道 / 可以了）…"
+            placeholder="粘贴截图 / 拖入图片 / 贴图片链接，回车「出3道」，或说编辑指令（删第2 / 难一点 / 可以了）…"
             :disabled="sending"
             @keyup.enter.exact.prevent="send"
           />
-          <el-button
-            type="primary"
-            class="send-btn"
-            :loading="sending"
-            :disabled="!input.trim() && !imageUrl.trim() && pendingImages.length === 0"
-            @click="send"
-          >
-            发送
-          </el-button>
-        </div>
-        <!-- 🔴 思考过程开关（PRD-A-017 空态重建：从原 mother-bar 默认配方块迁来）：
-             设计稿空态本无此开关，故放到输入区底部一行不喧宾、不破坏空态版式；功能保留。
-             开 → 走支持思考链的中转站，流式展示 AI 思考过程（更慢 + 付费）；关（默认）→ 更快更省。 -->
-        <div class="thinking-toggle-bar">
-          <el-switch
-            v-model="thinkingStream"
-            size="small"
-            :disabled="sending"
-            data-testid="thinking-stream-switch"
+
+          <!-- 隐藏 file input：pickImageFile 触发其 click，选中走 onFilePicked → uploadPastedImage -->
+          <input
+            ref="fileInput"
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/gif"
+            style="display: none"
+            @change="onFilePicked"
           />
-          <span class="thinking-toggle-label">思考过程</span>
-          <el-tooltip
-            placement="top"
-            content="开启后展示 AI 的思考过程（可折叠），会走支持思考链的通道，稍慢且按思考输出额外计费；关闭则更快更省，不展示思考。"
-          >
-            <span class="thinking-toggle-hint">ⓘ</span>
-          </el-tooltip>
+
+          <!-- 按钮条 .cbar -->
+          <div class="composer-bar">
+            <button
+              type="button"
+              class="inbtn key"
+              :disabled="sending || uploading"
+              title="选择本地图片上传"
+              @click="pickImageFile"
+            >
+              📎 上传图片
+            </button>
+            <button
+              type="button"
+              class="inbtn"
+              :class="{ active: showUrlInput }"
+              :disabled="sending || uploading"
+              title="贴图片链接"
+              @click="showUrlInput = !showUrlInput"
+            >
+              🔗 链接
+            </button>
+
+            <!-- 思考过程开关（挪进按钮条，靠右对齐前，功能保留） -->
+            <div class="composer-thinking">
+              <el-switch
+                v-model="thinkingStream"
+                size="small"
+                :disabled="sending"
+                data-testid="thinking-stream-switch"
+              />
+              <span class="thinking-toggle-label">思考过程</span>
+              <el-tooltip
+                placement="top"
+                content="开启后展示 AI 的思考过程（可折叠），会走支持思考链的通道，稍慢且按思考输出额外计费；关闭则更快更省，不展示思考。"
+              >
+                <span class="thinking-toggle-hint">ⓘ</span>
+              </el-tooltip>
+            </div>
+
+            <el-button
+              type="primary"
+              class="send-btn"
+              :loading="sending"
+              :disabled="!input.trim() && !imageUrl.trim() && pendingImages.length === 0"
+              @click="send"
+            >
+              发送 ➤
+            </el-button>
+          </div>
         </div>
       </footer>
     </section>
@@ -2597,28 +2615,90 @@ onBeforeUnmount(() => {
 
 .chat-input {
   flex-shrink: 0;
-  padding: 12px 14px;
+  padding: 12px;
   border-top: 1px solid var(--line-soft);
+  background: linear-gradient(0deg, var(--bg-soft), transparent);
+}
+/* 🔴 PRD-A-017 统一 composer 框（对齐 restyle.html .cbox） */
+.composer-box {
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--paper);
+  padding: 9px 11px;
   display: flex;
   flex-direction: column;
   gap: 6px;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
 }
-/* 输入框 + 发送按钮横排（思考开关另起一行落于其下） */
-.chat-input-row {
+.composer-box:focus-within {
+  border-color: var(--teal-line);
+  box-shadow: 0 0 0 3px var(--teal-50);
+}
+/* 主输入 textarea：去边框，融进 cbox（边框由 .composer-box 提供） */
+.composer-textarea :deep(.el-textarea__inner) {
+  border: none;
+  box-shadow: none;
+  padding: 2px 2px;
+  font-size: 13px;
+  resize: none;
+}
+.url-inline {
+  margin-bottom: 2px;
+}
+/* 按钮条 .cbar */
+.composer-bar {
   display: flex;
-  gap: 10px;
-  align-items: flex-end;
+  align-items: center;
+  gap: 7px;
+  margin-top: 1px;
 }
-.chat-input-row :deep(.el-textarea) {
-  flex: 1;
+/* 描边小按钮 .inbtn */
+.inbtn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 5px 10px;
+  background: var(--paper);
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
 }
-/* 思考开关在输入区底部，去掉原 mother-bar 内的上外边距，紧贴输入框下 */
-.chat-input .thinking-toggle-bar {
-  margin: 0 2px;
+.inbtn:hover:not(:disabled) {
+  border-color: var(--teal-line);
+}
+.inbtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.inbtn.key {
+  border-color: var(--teal-line);
+  color: var(--teal-700);
+}
+.inbtn.active {
+  border-color: var(--teal-line);
+  background: var(--teal-50);
+  color: var(--teal-700);
+}
+/* 思考开关：在按钮条内，发送按钮前靠右 */
+.composer-thinking {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 5px;
 }
 .send-btn {
-  height: 56px;
-  padding: 0 22px;
+  height: 32px;
+  padding: 0 18px;
+  border-radius: 9px;
+  font-weight: 600;
 }
 
 /* 会话列表（popover 内容由本组件模板渲染，scoped 样式可达） */
