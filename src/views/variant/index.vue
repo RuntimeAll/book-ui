@@ -1850,12 +1850,12 @@ onBeforeUnmount(() => {
         </el-button>
       </header>
 
-      <!-- 🔴 PRD-A-017 空态高保真：chat-head 下方「待机」状态条（restyle.html 空态 .pstat）。
-           空态（无对话且非恢复中）才显示，PhasedStatusRail 收空 stages → isEmpty 分支渲染
-           「[待机] 定题中 0/2阶段 + ○ 待机 · 拍一道题丢进来，自动开始读图锚定」。
-           对话开始后本条隐藏，真正的逐轮思路条由 chat-stream 内的 rail 锚点接管。 -->
-      <div v-if="stream.length === 0 && !restoring" class="idle-rail-wrap">
-        <PhasedStatusRail :stages="[]" />
+      <!-- 🔴 PRD-A-017 验收纠偏（用户「全局统一状态进度不见了」）：状态条 = chat-head 下方
+           【常驻顶栏】，始终显示当前阶段（空态待机 → 定题中 → 出题中），不再「开聊就消失」。
+           绑当前活跃轮 stages（currentRail，onStage 实时更新）；对话流内不再逐轮各放一条
+           （对齐设计稿 design-ref-02/03 = 单条常驻顶栏）。恢复会话时不显（避免闪）。 -->
+      <div v-if="!restoring" class="idle-rail-wrap">
+        <PhasedStatusRail :stages="currentRail?.stages ?? []" />
       </div>
 
       <div ref="streamRef" class="chat-stream">
@@ -1943,9 +1943,8 @@ onBeforeUnmount(() => {
                 <pre v-show="item.reasoningOpen" class="reasoning-body">{{ item.reasoning }}</pre>
               </div>
             </div>
-            <div v-if="item.stages.length > 0" class="msg-row is-ai">
-              <PhasedStatusRail class="stage-rail-wrap" :stages="item.stages" />
-            </div>
+            <!-- 🔴 PRD-A-017 验收纠偏：状态进度移到 chat-head 下常驻顶栏（绑 currentRail.stages），
+                 对话流内不再逐轮重复渲染状态条（避免「全局统一进度」散落多条 + 沉底找不到）。 -->
           </template>
         </template>
 
