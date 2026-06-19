@@ -348,8 +348,11 @@ const figureNotNeeded = computed(
         </template>
         <!-- G4：确需配图但没切出来 → ⚠待补图。🔴 Fix-B：reason 表「不适合切图」时去噪不显。 -->
         <div v-else-if="figureNeedsFigure && !figureReasonSaysNotNeeded && !figureReasonIsInfra" class="mc-figure-warn">⚠ 待补图</div>
-        <!-- 切图 / 重切按钮（loading 期转圈） -->
+        <!-- 切图 / 重切按钮（loading 期转圈）。🔴 验收纠偏：纯文本/不需切图/基建缺失态不显
+             （避免母题图下方挂一个无意义的「切图形」孤儿按钮 + 空框，王老师/张校长挑刺）。
+             仅「已切出图（可重切）」或「确需切图且非 infra/非不适合」才显。 -->
         <el-button
+          v-if="figureList.length || (figureNeedsFigure && !figureReasonSaysNotNeeded && !figureReasonIsInfra)"
           text
           size="small"
           class="mc-figure-btn"

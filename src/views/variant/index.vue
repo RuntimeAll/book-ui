@@ -1736,11 +1736,11 @@ const chatW = ref(
     } catch {
       /* ignore */
     }
-    return 380
+    return 440
   })(),
 )
 let dragStartX = 0
-let dragStartW = 380
+let dragStartW = 440
 function onSplitterMove(e: MouseEvent) {
   const next = dragStartW + (e.clientX - dragStartX)
   chatW.value = Math.min(CHAT_W_MAX, Math.max(CHAT_W_MIN, next))
@@ -1808,8 +1808,11 @@ onBeforeUnmount(() => {
     >
       <header class="chat-head">
         <span class="head-spark">✦</span>
-        <span class="chat-title">AI 命题搭子</span>
-        <span class="chat-sub">举一反三 · 图片变式</span>
+        <!-- 🔴 验收纠偏：标题+副标题竖叠成块（对齐设计稿 chat-head），避免「AI 命题搭子」在窄栏折行 -->
+        <div class="chat-title-block">
+          <span class="chat-title">AI 命题搭子</span>
+          <span class="chat-sub">举一反三 · 图片变式</span>
+        </div>
         <!-- 会话管理（用户反馈④）：历史会话列表（切换/删除）+ 新会话 -->
         <el-popover placement="bottom-end" :width="300" trigger="click">
           <template #reference>
@@ -2230,15 +2233,27 @@ onBeforeUnmount(() => {
 .head-spark {
   color: var(--violet); /* AI 在场 */
   font-size: 15px;
+  flex-shrink: 0;
+}
+/* 🔴 验收纠偏：标题块竖叠（标题在上、副标题在下），整块不收缩、标题不折行 */
+.chat-title-block {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex-shrink: 0;
 }
 .chat-title {
-  font-size: 15px;
+  font-size: 14.5px;
   font-weight: 700;
   color: var(--ink);
+  white-space: nowrap;
+  letter-spacing: -0.01em;
 }
 .chat-sub {
-  font-size: 12px;
+  font-size: 11.5px;
   color: var(--faint);
+  white-space: nowrap;
 }
 .sessions-btn {
   margin-left: auto;

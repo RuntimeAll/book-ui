@@ -528,8 +528,10 @@ function regenAll() {
       </template>
 
       <!-- 🔴 PRD-A-017 空态高保真重建（restyle.html 空态右栏）：hero 三叠卡 + 标题副文 +
-           4 步 stepper + recipe-note 配方引导。逐元素照搬设计稿，颜色用 token。 -->
-      <div v-else class="empty-canvas">
+           4 步 stepper + recipe-note 配方引导。逐元素照搬设计稿，颜色用 token。
+           🔴 验收纠偏（张校长「成品页底下还压着欢迎插画=状态没切干净」）：完整引导只在
+           纯空态（无母题）显；母题已就绪/出题中则不显这条「上传一道题」引导（走下方轻提示）。 -->
+      <div v-else-if="isPureEmpty" class="empty-canvas">
         <svg class="hero-ic" viewBox="0 0 108 92" fill="none">
           <rect x="20" y="14" width="64" height="48" rx="7" fill="#fff" stroke="#CBE2DF" stroke-width="1.4" />
           <rect x="30" y="24" width="64" height="48" rx="7" fill="#F5F8F8" stroke="#CBE2DF" stroke-width="1.4" />
@@ -556,6 +558,12 @@ function regenAll() {
           <span class="sep">·</span> 想多出 / 调难度，贴图时说「出 5 道」「难一点」即可
         </div>
       </div>
+
+      <!-- 🔴 验收纠偏：母题已就绪但还没出变式 → 轻提示占位（不再压「上传一道题」完整引导） -->
+      <div v-else class="variant-await-hint">
+        <span class="vah-dot" />
+        变式会出现在这里 · 点上方「开始举一反三」生成
+      </div>
     </div>
   </section>
 </template>
@@ -570,6 +578,23 @@ function regenAll() {
   background: var(--bg-soft);
   border-radius: var(--r);
   overflow: hidden;
+}
+/* 🔴 验收纠偏：母题就绪待出变式的轻提示（替代「上传一道题」完整引导，避免成品页压欢迎插画） */
+.variant-await-hint {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 40px 20px;
+  font-size: 12.5px;
+  color: var(--faint);
+}
+.variant-await-hint .vah-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--violet);
+  animation: pulse 1.5s infinite ease-in-out;
 }
 
 .canvas-head {

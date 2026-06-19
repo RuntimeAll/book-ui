@@ -382,10 +382,31 @@ const verifyBadge = computed(() => {
 // 🔴 禁翻译/篡改真值：detail 是程序英文输出，原样展示，只在前面加中文引导「sympy 验算明细」。
 // ---------------------------------------------------------------------------
 const verifyOpen = ref(false)
+const verifyRawOpen = ref(false)
 /** 是否有可展开的真证据（任一非空）→ 徽章加可点标识；两者皆 null = 诚实留空，不假装可展开 */
 const hasVerifyEvidence = computed(
   () => !!(props.item.verifyComputed || props.item.verifyDetail)
 )
+// 🔴 PRD-A-017 验收纠偏（三角色一致挑刺：验算证据夹生英文/方括号/sympy 像后台报错，张校长不敢端给家长）：
+//   把真值翻译成「质检报告」式中文人话外显——computed 是真算出的解集（[3,4]），verdict=pass。
+//   禁假数据底线：原始程序输出（含 sympy 英文明细）折叠在「程序原始输出」里仍可查，只是不再当主文案。
+//   纯展示层翻译，不改任何真值/判决。
+/** 把程序算出的解集 [3, 4] / [46] / x1=2,x2=3 格式化成人话「3、4」「46」「x1=2，x2=3」 */
+const verifyComputedHuman = computed(() => {
+  const raw = props.item.verifyComputed
+  if (!raw) return ''
+  let s = String(raw).trim().replace(/^[[{(]\s*/, '').replace(/\s*[\]})]$/, '')
+  const parts = s.split(/\s*,\s*/).map((p) => p.trim()).filter(Boolean)
+  return parts.join('、')
+})
+/** 中文验算结论（据 tier/verify 真值，不编造）：verified=程序独立验算过 / self_ok=独立复算一致 */
+const verifyHumanConclusion = computed(() => {
+  const tier = props.item.tier
+  if (tier === 'self_ok') return '已独立复算，与本题标准答案一致'
+  if (tier === 'verified' || props.item.verify === 'sympy_pass')
+    return '与本题标准答案完全一致，程序验算通过'
+  return '已通过验算'
+})
 /**
  * 仅「有真证据」的徽章可展开（无证据的不假装可点；改点②第4条）。
  * 过渡态 / 重算中徽章不参与（那些走独立 vb-checking，本就无 verifyBadge）。
@@ -689,15 +710,26 @@ function saveFieldEdit() {
     <div v-if="verifyOpen && verifyExpandable" class="verify-evidence">
       <div class="ve-head">
         <span class="ve-title">验算证据</span>
-        <span class="ve-sub">程序输出，原样呈现</span>
+        <span class="ve-sub">程序独立验算</span>
       </div>
-      <div v-if="item.verifyComputed" class="ve-row">
-        <span class="ve-k">程序算得</span>
-        <code class="ve-v mono">{{ item.verifyComputed }}</code>
+      <!-- 🔴 中文质检结论（真值人话化，张校长可端给家长）：computed 真解集 + verdict 结论 -->
+      <div v-if="verifyComputedHuman" class="ve-row ve-human">
+        <span class="ve-k">程序独立解得</span>
+        <span class="ve-v-human mono">{{ verifyComputedHuman }}</span>
       </div>
-      <div v-if="item.verifyDetail" class="ve-row ve-detail-row">
-        <span class="ve-k">sympy 验算明细</span>
-        <code class="ve-v mono">{{ item.verifyDetail }}</code>
+      <div class="ve-conclusion">✓ {{ verifyHumanConclusion }}</div>
+      <!-- 禁假数据底线：原始程序输出（含 sympy 英文明细）折叠可查，不当主文案 -->
+      <button
+        v-if="item.verifyComputed || item.verifyDetail"
+        type="button"
+        class="ve-raw-toggle"
+        @click="verifyRawOpen = !verifyRawOpen"
+      >
+        程序原始输出 {{ verifyRawOpen ? '▴' : '▾' }}
+      </button>
+      <div v-if="verifyRawOpen" class="ve-raw">
+        <code v-if="item.verifyComputed" class="mono">computed = {{ item.verifyComputed }}</code>
+        <code v-if="item.verifyDetail" class="mono">{{ item.verifyDetail }}</code>
       </div>
     </div>
 
@@ -1655,6 +1687,51 @@ function saveFieldEdit() {
 .ve-detail-row .ve-v {
   font-size: 11.5px;
   color: var(--ink-2);
+}
+/* 🔴 验收纠偏：中文质检结论（主文案）+ 原始输出折叠（次要） */
+.ve-human .ve-k {
+  color: var(--ink-2);
+  font-weight: 600;
+}
+.ve-v-human {
+  color: var(--ink);
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+}
+.ve-conclusion {
+  margin-top: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--green);
+}
+.ve-raw-toggle {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+.ve-raw-toggle:hover {
+  color: var(--ink-2);
+}
+.ve-raw {
+  margin-top: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 7px 9px;
+  background: var(--paper);
+  border: 1px dashed var(--green-line);
+  border-radius: var(--r-xs);
+}
+.ve-raw code {
+  font-size: 11px;
+  color: var(--muted);
+  word-break: break-all;
+  white-space: pre-wrap;
 }
 
 .gene-badge {
