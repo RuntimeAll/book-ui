@@ -403,11 +403,19 @@ async function onCropMotherFigure() {
       )
     } else {
       motherFigureNeeds.value = res.needsFigure && !motherFigures.value.length
-      // 无图：本来就有旧图则 done（保留旧图）；否则 warn（待补图）
+      // 🔴 PRD-A-018 C2(A-11)：纯文本/纯公式母题(needs_figure=false)= 本就无图可切 → 跳过(done)，
+      //   不标 ⚠待补图(warn)，避免母题切图节点对无图母题误显「异常」。仅「本应有图却没切出」才 warn。
+      const skipNoFigure = !motherFigures.value.length && !res.needsFigure
+      // 无图：有旧图→done(沿用)；本就无图可切→done(跳过)；本应有图却缺→warn(待补图)
       upsertFigureStage(
         FIGURE_STAGE_MOTHER,
-        motherFigures.value.length ? 'done' : 'warn',
-        res.reason || (motherFigures.value.length ? '沿用上一版图' : '未切出图形')
+        motherFigures.value.length ? 'done' : skipNoFigure ? 'done' : 'warn',
+        res.reason ||
+          (motherFigures.value.length
+            ? '沿用上一版图'
+            : skipNoFigure
+              ? '无图可切（纯文本/公式题）'
+              : '未切出图形')
       )
     }
     motherFigureReason.value = res.reason
@@ -471,11 +479,19 @@ async function onComposeVariantFigure(payload: { index: number; correctionPrompt
       // 🔴 主动引导：BE 标 needUserDesc（画不准/画不出且本应有图）→ FE 提示补描述（无旧图时才催，避免对已有好图误催）。
       st.needUserDesc = res.needUserDesc && !st.png
       st.directionReview = false
-      // 单元1：无新图 → 本有旧图则 done（沿用旧图），否则 warn（待补图）
+      // 🔴 PRD-A-018 C2(A-11)：区分「本就无需配图(needs_figure=false，纯文本/纯代数变式)」与「本应有图却没产出」。
+      //   前者 = 跳过(done)，不让纯文本变式把配图节点污染成「异常·待补图」、不挂住题组就绪；
+      //   后者(本应有图却没产出且无旧图)才 ⚠待补图(warn)。
+      const skipNoFigure = !st.png && !res.needsFigure
+      // 单元1：有旧图→done(沿用)；本就无需图→done(跳过)；本应有图却缺→warn(待补图)
       upsertFigureStage(
         stageKey,
-        st.png ? 'done' : 'warn',
-        st.png ? `第 ${payload.index} 题·沿用上一版图` : `第 ${payload.index} 题·待补图`
+        st.png ? 'done' : skipNoFigure ? 'done' : 'warn',
+        st.png
+          ? `第 ${payload.index} 题·沿用上一版图`
+          : skipNoFigure
+            ? `第 ${payload.index} 题·无需配图`
+            : `第 ${payload.index} 题·待补图`
       )
     }
     st.reason = res.reason
