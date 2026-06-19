@@ -7,10 +7,11 @@
  *
  * 抽离自第十二波前的 src/views/question/index.vue（模板行 766-892 / style 1265-1410）。
  */
-import { ref, reactive } from 'vue'
+import { ref, reactive, nextTick, watch, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { ShoppingCart, Delete, DocumentAdd, Close, ZoomIn } from '@element-plus/icons-vue'
+import Sortable from 'sortablejs'
+import { ShoppingCart, Delete, DocumentAdd, Close, ZoomIn, Rank } from '@element-plus/icons-vue'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
 import { getQuestionDetail, type QuestionItem } from '@/api/question/index'
 // 放大预览复用题库/组卷工作台共享题卡组件（actions=[] 关掉操作按钮，纯展示题干大图 + meta），不另造预览渲染。
@@ -45,6 +46,53 @@ function handleClearBasket() {
 function handleRemoveBasket(id: string) {
   basket.remove(id)
 }
+
+// ── PRD-A-017 批2e：试题栏可拖拽重排（复用 ArtifactPanel 的 sortablejs 范式）──
+//   手柄 .drag-handle 拖动 .basket-item；drop 后按新 DOM 顺序读各项 data-item-id → 调
+//   basket.reorder 回写顺序（落 LS，不只动 DOM）。dialog 关闭时列表 DOM 销毁 → 重开再 init。
+const listEl = ref<HTMLElement | null>(null)
+let sortable: Sortable | null = null
+
+function onBasketDrop() {
+  const root = listEl.value
+  if (!root) return
+  const orderedIds: string[] = []
+  root.querySelectorAll<HTMLElement>('[data-item-id]').forEach((el) => {
+    const id = el.dataset.itemId
+    if (id) orderedIds.push(id)
+  })
+  basket.reorder(orderedIds)
+}
+
+function initBasketSortable() {
+  if (sortable || !listEl.value) return
+  sortable = Sortable.create(listEl.value, {
+    handle: '.drag-handle',
+    animation: 160,
+    ghostClass: 'basket-item-ghost',
+    chosenClass: 'basket-item-chosen',
+    draggable: '.basket-item',
+    onEnd: onBasketDrop,
+  })
+}
+
+// dialog 开 → 等列表渲染后 init；关 → 销毁（重开重建，避免持有已卸载节点）
+watch(
+  () => basket.dialogVisible.value,
+  (open) => {
+    if (open) {
+      void nextTick(() => initBasketSortable())
+    } else {
+      sortable?.destroy()
+      sortable = null
+    }
+  },
+)
+
+onBeforeUnmount(() => {
+  sortable?.destroy()
+  sortable = null
+})
 
 function getQuestionTypeLabel(type: number): string {
   const map: Record<number, string> = { 1: '选择题', 4: '填空题', 5: '简答题' }
@@ -181,12 +229,23 @@ async function openPreview(item: QuestionItem) {
         </template>
       </el-empty>
       <el-scrollbar max-height="380px">
+        <div ref="listEl" class="basket-list">
         <div
           v-for="item in basket.items.value"
           :key="item.id"
           class="basket-item"
+          :data-item-id="item.id"
         >
           <div class="basket-item-header">
+            <!-- 拖手柄：按住可拖动重排（仅本手柄触发拖拽，不影响项内按钮） -->
+            <span
+              v-if="basket.items.value.length > 1"
+              class="drag-handle"
+              title="拖动调整顺序"
+              aria-label="拖动调整顺序"
+            >
+              <el-icon><Rank /></el-icon>
+            </span>
             <span class="type-tag" :class="`type-tag--${getQuestionTypeTag(item.questionType)}`">
               {{ getQuestionTypeLabel(item.questionType) }}
             </span>
@@ -256,6 +315,7 @@ async function openPreview(item: QuestionItem) {
               <span v-else class="basket-explain-empty">暂无解析</span>
             </template>
           </div>
+        </div>
         </div>
       </el-scrollbar>
     </div>
@@ -428,6 +488,34 @@ async function openPreview(item: QuestionItem) {
 
 .basket-item:last-child {
   border-bottom: none;
+}
+
+/* PRD-A-017 批2e 拖拽重排：手柄 + sortable 拖拽态（青系冷浅，与设计语言一致） */
+.drag-handle {
+  display: inline-flex;
+  align-items: center;
+  color: #9dafad;
+  cursor: grab;
+  padding: 0 2px;
+  flex-shrink: 0;
+  touch-action: none;
+  user-select: none;
+  transition: color 0.15s;
+}
+.drag-handle:hover {
+  color: #1e8a8a;
+}
+.drag-handle:active {
+  cursor: grabbing;
+}
+/* sortable 拖拽态：占位幽灵半透 + 抬起项加阴影 */
+.basket-item-ghost {
+  opacity: 0.4;
+  background: #f5f8f8;
+}
+.basket-item-chosen {
+  box-shadow: 0 2px 6px rgba(20, 60, 58, 0.05), 0 12px 28px -12px rgba(20, 60, 58, 0.16);
+  background: #fff;
 }
 
 .basket-item-header {

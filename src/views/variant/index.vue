@@ -413,6 +413,16 @@ async function onCropMotherFigure() {
 }
 
 /**
+ * 🔴 AC-TOKEN：母题卡上老师手点的「切图形 / 重新切图」走这里——切图调中转造图（耗 token）→ 先过确认闸。
+ *   首轮自动切图（maybeAutoFirstFigures → onCropMotherFigure 直调）不经此包装、不弹闸（系统自动行为）。
+ */
+async function onCropMotherFigureFromUser() {
+  if (motherFigureLoading.value || !motherImg.value) return
+  if (!(await confirmTokenSpend('切图会调用 AI 处理母题图形、消耗 token。'))) return
+  await onCropMotherFigure()
+}
+
+/**
  * 变式造图（compose_variant）：为某道变式造配图。correctionPrompt 非空 = 图片重生（人在回路）。
  */
 async function onComposeVariantFigure(payload: { index: number; correctionPrompt?: string }) {
@@ -473,6 +483,18 @@ async function onComposeVariantFigure(payload: { index: number; correctionPrompt
     st.loading = false
   }
 }
+
+/**
+ * 🔴 AC-TOKEN：变式卡上老师手点的「配图 / 重新配图 / 图歪了重新生成」走这里——配图调中转造图（耗 token）
+ *   → 先过确认闸，确认才真造图。首轮自动出图（maybeAutoFirstFigures → onComposeVariantFigure 直调）
+ *   不经此包装、不弹闸（系统自动行为，非老师按钮触发）。模板 @compose-figure 绑此包装。
+ */
+async function onComposeFigureFromUser(payload: { index: number; correctionPrompt?: string }) {
+  const st = variantFigures[payload.index]
+  if (st?.loading) return
+  if (!(await confirmTokenSpend('配图会调用 AI 生成图形、消耗 token。'))) return
+  await onComposeVariantFigure(payload)
+}
 // 题组编辑器：正在重新验算的题 index（1-based），驱动该卡 loading 态
 const reverifyingIndex = ref<number | null>(null)
 // PRD-C-014 T1/T2：正在「收录入库」/「加入试题篮」的题 index（1-based），驱动该卡按钮 loading
@@ -516,6 +538,21 @@ async function uploadPastedImage(file: File) {
   } finally {
     uploading.value = false
   }
+}
+
+// ── 改点②（PRD-A-017 批2e）：📎 上传图片 = 点按钮弹原生文件选择框 ──
+//   原仅支持 Ctrl+V 粘贴 / 贴 URL；补一个隐藏 file input + 📎 按钮 click 触发它，
+//   选中文件复用既有 uploadPastedImage handler（同口径校验 + 传 OSS + 进待发附件），上传后处理逻辑不变。
+const fileInput = ref<HTMLInputElement | null>(null)
+function pickImageFile() {
+  if (sending.value || uploading.value) return
+  fileInput.value?.click()
+}
+function onFilePicked(e: Event) {
+  const target = e.target as HTMLInputElement
+  const file = target.files?.[0]
+  if (file) void uploadPastedImage(file)
+  target.value = '' // 复位，使同一文件可再次选中触发 change
 }
 
 /** 移除一张待发附件 */
@@ -685,6 +722,33 @@ async function scrollToBottom() {
   await nextTick()
   const el = streamRef.value
   if (el) el.scrollTop = el.scrollHeight
+}
+
+// ---------------------------------------------------------------------------
+// 🔴 PRD-A-017 批2e · AC-TOKEN — 耗 token 必经老师确认闸。
+//   规则：任何会「调 AI 生成 / 消耗 token」的动作，执行前先弹确认（老师知情同意才烧 token）。
+//   豁免：老师自己在对话框打字「发送」（send，打字+发送本身即同意）。
+//   实现：统一 confirmTokenSpend()（包 ElMessageBox.confirm，文案点明「消耗 token」，青紫冷浅样式）。
+//     取消（reject）→ resolve(false)，调用方据此「不触发 emit / 不调接口」直接 return。
+//   挂闸点（见各 handler 入口）：换一批 / 重生(单题·下游·全部) / 换数字·换场景·答疑 / 答疑 /
+//     重新验算 / 开始举一反三 / 改主考点·年级触发的整组重出（BUG-01 静默烧 token 也套闸）/
+//     变式配图·重新配图·图片重生（compose-figure，调中转造图耗 token）。
+//   不挂闸（非耗 token / 本地动作）：入库 / 加篮 / 编辑 / 手动排版 / 撤销重生 / DNA meta 改 / 折叠展开。
+// ---------------------------------------------------------------------------
+async function confirmTokenSpend(
+  detail = '此操作将调用 AI 生成、消耗 token。',
+): Promise<boolean> {
+  try {
+    await ElMessageBox.confirm(`${detail}确认继续？`, '确认消耗 token', {
+      type: 'warning',
+      confirmButtonText: '确认继续',
+      cancelButtonText: '取消',
+      customClass: 'token-confirm-box',
+    })
+    return true
+  } catch {
+    return false // 老师取消 → 不触发耗 token 动作
+  }
 }
 
 /**
@@ -929,9 +993,11 @@ function send() {
   dispatch(message, shown, imgs)
 }
 
-/** 卡片快捷键（换数字/换场景/答疑，需要 LLM）：预设句走 chat 通道，用户气泡照常显示（铁律 1） */
-function sendUtterance(text: string) {
+/** 卡片快捷键（换数字/换场景/答疑，需要 LLM）：预设句走 chat 通道，用户气泡照常显示（铁律 1）。
+ *  🔴 AC-TOKEN：这些动作均调 AI 生成 → 先过确认闸（老师知情同意才烧 token）。 */
+async function sendUtterance(text: string) {
   if (sending.value) return
+  if (!(await confirmTokenSpend())) return
   dispatch(text)
 }
 
@@ -1007,8 +1073,10 @@ function onConfirmGradeChapter(value: {
  * 回传 start_variants=true，toolkit 直奔生成变式（不重跑 opus 解题）。生成中按钮 loading 由
  * sending 驱动（dispatch 置 sending=true）。
  */
-function onStartVariants() {
+async function onStartVariants() {
   if (sending.value) return
+  // 🔴 AC-TOKEN：开始举一反三 = generate 起跑（耗 token）→ 先过确认闸。
+  if (!(await confirmTokenSpend('「开始举一反三」会调用 AI 生成整组变式、消耗 token。'))) return
   dispatch('开始举一反三，按确认的年级册与章生成变式', '▶ 开始举一反三', undefined, {
     startVariants: true,
     // 顺带回传确认章/年级册名（toolkit resume 时不丢锚定上下文）
@@ -1151,6 +1219,8 @@ async function onEditItem(payload: {
 /** 单题重新验算：跑闸B（LLM+sympy，几秒），徽章变真实验算结果。loading 落本题。 */
 async function onReverify(index: number) {
   if (sending.value || reverifyingIndex.value !== null) return
+  // 🔴 AC-TOKEN：重新验算触发 LLM 重解（耗 token）→ 先过确认闸。
+  if (!(await confirmTokenSpend('「重新验算」会调用 AI 重新解题验算、消耗 token。'))) return
   reverifyingIndex.value = index
   try {
     const a = await reverifyVariantItem(threadId.value, index)
@@ -1288,6 +1358,10 @@ async function confirmRegenIfManual(targets: number[]): Promise<boolean> {
 /** 重生：indexes 省略 = 全待重生集合（D-merge8）；命中题驱动 loading。 */
 async function runRegen(indexes?: number[]) {
   if (sending.value || regeneratingIndexes.value.length > 0) return
+  // 🔴 AC-TOKEN：重生（单题 / 下游变式 / 全部待重生）= 调 AI 重出（耗 token）→ 先过确认闸。
+  //   覆盖单题「重生这道」(onRegenOne)、母题守恒维改后的「重生下游变式」/「重生 N 题」(onRegenAll)、
+  //   DNA 改触发的 soft_regen / hard_anchor 重出（均汇流到此）。在 confirmRegenIfManual 覆盖警告之前先征同意。
+  if (!(await confirmTokenSpend('「重生」会调用 AI 重新出题、消耗 token。'))) return
   // loading 目标：指定 indexes，否则取当前 header.regen_pending（含母题脏波及）
   const targets =
     indexes && indexes.length ? indexes : (artifact.value?.header.regenPending ?? [])
@@ -1461,15 +1535,25 @@ async function onAddToBasket(index: number) {
  * 受约束指令（同 thread_id，agent 据此整组重锚定/重出）。这是组级改动唯一已落地的安全路径。
  * 🔴 联调点：若后续 BE 提供组级 set-header 直连端点，这两处可改直连（零 LLM）。
  */
-function onEditHeaderKp(kp: { id: string; name: string }) {
+async function onEditHeaderKp(kp: { id: string; name: string }) {
   if (sending.value) return
+  // 🔴 AC-TOKEN（BUG-01 知情）：改主考点在前端会触发整组按新考点重出（耗 token，且后端目前强制重出
+  //   不可回退）→ 至少先弹确认闸，让老师知情同意，绝不静默烧 token（前端套闸 ≠ 改后端重出逻辑）。
+  if (
+    !(await confirmTokenSpend(
+      '改主考点会按新考点重新生成整组变式、消耗 token（且重出后当前组不可回退）。',
+    ))
+  )
+    return
   // 🔴 修1/修2：改主考点 = 整组按新考点重出 → 是「新的一组」。先清旧配图缓存 + 复位首图 guard，
   //   新题来时按自己题面重画、第一张重新自动出（onArtifact 会再兜底，这里提前清免重出期残留旧图）。
   resetFigureCachesForNewGroup()
   dispatch(`把整组主考点改成「${kp.name}」，按新主考点重新出这组变式`, `主考点 → ${kp.name}`)
 }
-function onEditHeaderGrade(grade: string) {
+async function onEditHeaderGrade(grade: string) {
   if (sending.value || !grade) return
+  // 🔴 AC-TOKEN：改年级 = 整组重出（耗 token）→ 先过确认闸。
+  if (!(await confirmTokenSpend('改年级会按新年级重新生成整组变式、消耗 token。'))) return
   // 🔴 修1/修2：改年级 = 整组重出，同上复位配图缓存 + 首图 guard。
   resetFigureCachesForNewGroup()
   dispatch(`把整组年级改成「${grade}」，按新年级重新出这组变式`, `年级 → ${grade}`)
@@ -1486,9 +1570,11 @@ function resetFigureCachesForNewGroup() {
   autoComposedIndexes.clear()
 }
 
-/** 换一批：重发初始出题 utterance（整组重新出，agent 重新分析母题） */
-function regenerate() {
+/** 换一批：重发初始出题 utterance（整组重新出，agent 重新分析母题）。
+ *  🔴 AC-TOKEN：整组重出 = 调 AI 生成（耗 token）→ 先过确认闸。 */
+async function regenerate() {
   if (sending.value || !firstComposeMessage) return
+  if (!(await confirmTokenSpend('「换一批」会调用 AI 重新生成整组变式、消耗 token。'))) return
   // PRD-C-011 line 102 方案 b =「清空当前卡 + 重发初始出题 utterance」：先清画布，
   // 骨架卡接管重出期（约数十秒），避免老师把滞留的旧卡当成结果抄题
   artifact.value = null
@@ -1775,7 +1861,27 @@ onBeforeUnmount(() => {
             @blur="commitUrlInput"
           >
             <template #prepend>🖼 母题图</template>
+            <!-- 改点②：📎 上传图片 = 点击弹原生文件选择框（复用 uploadPastedImage） -->
+            <template #append>
+              <el-button
+                class="pick-file-btn"
+                :disabled="sending || uploading"
+                :loading="uploading"
+                title="选择本地图片上传"
+                @click="pickImageFile"
+              >
+                📎 上传图片
+              </el-button>
+            </template>
           </el-input>
+          <!-- 隐藏 file input：pickImageFile 触发其 click，选中走 onFilePicked → uploadPastedImage -->
+          <input
+            ref="fileInput"
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/gif"
+            style="display: none"
+            @change="onFilePicked"
+          />
           <!-- P10：待发附件缩略图（可删除），发送时随用户气泡进流 -->
           <div v-if="pendingImages.length" class="pending-imgs">
             <div v-for="(u, k) in pendingImages" :key="k" class="pending-thumb">
@@ -1963,7 +2069,7 @@ onBeforeUnmount(() => {
       @undo-regen="onUndoRegen"
       @edit-models="onEditModels"
       @regen-all="onRegenAll"
-      @compose-figure="onComposeVariantFigure"
+      @compose-figure="onComposeFigureFromUser"
       @preview="(u: string) => (previewUrl = u)"
       @manual-layout="onManualLayout"
     >
@@ -1992,7 +2098,7 @@ onBeforeUnmount(() => {
           @regen-mother="onRegenAll"
           @start-variants="onStartVariants"
           @preview="(u: string) => (previewUrl = u)"
-          @crop-figure="onCropMotherFigure"
+          @crop-figure="onCropMotherFigureFromUser"
           @manual-layout-mother="onManualLayoutMother"
         />
       </template>
@@ -2532,5 +2638,28 @@ onBeforeUnmount(() => {
 }
 .img-preview-close:hover {
   background: rgba(255, 255, 255, 0.32);
+}
+</style>
+
+<!-- 🔴 AC-TOKEN 确认闸样式（非 scoped）：ElMessageBox teleport 到 body，取不到 .variant-page 上的
+     token 变量，故此处用 DESIGN.md 青紫冷浅 hex 直写，仅命中 .token-confirm-box 不污染其它弹窗。 -->
+<style>
+.token-confirm-box {
+  border-radius: 14px;
+}
+.token-confirm-box .el-message-box__title {
+  color: #176e6e; /* teal-700 老师拍板色 */
+  font-weight: 700;
+}
+.token-confirm-box .el-message-box__content {
+  color: #3c5654; /* ink-2 */
+}
+.token-confirm-box .el-message-box__btns .el-button--primary {
+  --el-button-bg-color: #1e8a8a; /* teal 主操作 */
+  --el-button-border-color: #1e8a8a;
+  --el-button-hover-bg-color: #176e6e;
+  --el-button-hover-border-color: #176e6e;
+  --el-button-active-bg-color: #176e6e;
+  --el-button-active-border-color: #176e6e;
 }
 </style>
