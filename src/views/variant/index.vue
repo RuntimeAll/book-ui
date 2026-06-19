@@ -1869,8 +1869,8 @@ async function restoreSession(id: string) {
     const meta = sessions.value.find((s) => s.id === id)
     if (meta?.img && !motherImg.value) motherImg.value = meta.img
   } catch (e) {
-    console.warn('[variant] 历史会话恢复失败:', e)
-    ElMessage.warning('历史会话拉取失败（举一反三服务 :8093 未启动？），已开新会话')
+    console.warn('[variant] 历史会话恢复失败（举一反三服务 :8093 未启动？）:', e)
+    ElMessage.warning('历史会话暂时拉取不到，已为你开一个新会话。稍后可重试，或联系管理员。')
     threadId.value = crypto.randomUUID()
   } finally {
     restoring.value = false

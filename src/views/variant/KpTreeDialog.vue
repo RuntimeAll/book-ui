@@ -157,7 +157,7 @@ watch(
         </template>
       </el-tree>
       <p v-if="!loading && treeData.length === 0" class="kp-empty">
-        知识点树为空（举一反三服务 :8090 未启动？）
+        暂时取不到知识点列表，请稍后重试，或联系管理员。
       </p>
     </div>
     <p class="kp-hint">
