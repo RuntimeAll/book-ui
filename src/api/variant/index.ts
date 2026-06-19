@@ -246,12 +246,22 @@ export const REGEN_CLASS: Record<DnaField, RegenClass> = {
   hard_points: 'meta',
 }
 
-/** 四分流徽章文案（FE 维度旁挂角标） */
+/**
+ * 四分流徽章文案（FE 维度旁挂角标）。
+ * 🔴 A-18（PRD-A-018 去黑话）：面向老师只说人话，禁内部 REGEN_CLASS 引擎术语
+ *   （硬锚 / 软重生 / 重写解析 / 过闸B / 解冻重锚 等）进 UI。
+ *   label/hint 即「老师人话」的唯一术语映射表，所有徽章经 regenClassBadgeOf 统一过滤。
+ */
 export const REGEN_CLASS_BADGE: Record<RegenClass, { label: string; hint: string }> = {
-  hard_anchor: { label: '硬锚', hint: '改→立即解冻重锚' },
-  soft_regen: { label: '软重生', hint: '改→待重生，点重生统一重出' },
-  rewrite_solve: { label: '重写解析', hint: '改→重写解析（过闸B）' },
-  meta: { label: '只标注', hint: '改→即时生效不重出' },
+  hard_anchor: { label: '改了要重新出题', hint: '改这一项后，需要重新出题才会生效' },
+  soft_regen: { label: '改了重出本题', hint: '改这一项后，重新出这道题才会生效' },
+  rewrite_solve: { label: '改了重写解析', hint: '改这一项后，会重新写这道题的解析' },
+  meta: { label: '改了即时生效', hint: '改这一项立即生效，不用重新出题' },
+}
+
+/** 取某 field 的人话徽章（统一过滤入口，禁绕过直接读内部 REGEN_CLASS 字面进 UI） */
+export function regenClassBadgeOf(field: string): { label: string; hint: string } {
+  return REGEN_CLASS_BADGE[regenClassOf(field)]
 }
 
 /** 取某 field 的 regen_class（未知 field 兜底 meta，不崩） */

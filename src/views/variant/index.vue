@@ -613,6 +613,18 @@ function onPaste(e: ClipboardEvent) {
   }
 }
 
+/**
+ * 🔴 PRD-A-018 A-7：placeholder 写「拖入图片」必须真能拖——补 drop 监听复用 uploadPastedImage，
+ *   避免「写了拖入但拖图没反应/页面跳走」的失信。dragover 须 preventDefault 才能触发 drop。
+ */
+function onImageDrop(e: DragEvent) {
+  if (sending.value) return
+  const file = e.dataTransfer?.files?.[0]
+  if (file && file.type.startsWith('image/')) {
+    void uploadPastedImage(file)
+  }
+}
+
 onMounted(() => document.addEventListener('paste', onPaste))
 
 // ---------------------------------------------------------------------------
@@ -967,7 +979,8 @@ function dispatch(
         scrollToBottom()
       },
       onError: (err) => {
-        console.error('[variant] 流异常:', err)
+        // 🔴 A-21：技术详情（含端口/服务名）只进 console，给老师人话
+        console.error('[variant] 流异常（AI 服务连接，toolkit :8093 ？）:', err)
         thinking.value = false
         sending.value = false
         settleStages()
@@ -975,7 +988,7 @@ function dispatch(
           type: 'bubble',
           role: 'ai',
           kind: 'error',
-          text: '网络或 AI 服务异常，未能完成本次请求。请确认举一反三服务（toolkit :8093）已启动后重试。',
+          text: 'AI 服务暂时连不上，本次请求没能完成。请稍后重试，或联系管理员。',
         })
         scrollToBottom()
       },
@@ -1943,7 +1956,9 @@ onBeforeUnmount(() => {
       @cancel="onCancelGradeChapter"
     />
 
-    <!-- 🔴 PRD-C-100 B6·成本相关 UI：今日 AI 额度用尽横幅（文案用后端原文，含已用/上限 ¥） -->
+    <!-- 🔴 PRD-C-100 B6·成本相关 UI：今日 AI 额度用尽横幅。
+         A-21（PRD-A-018 去黑话）：老师人话兜底 + 后端原文（含已用/上限 ¥）折叠进「技术详情」，
+         不把内部原文直接抛在面上。 -->
     <el-alert
       v-if="budgetExceeded"
       class="budget-banner"
@@ -1951,9 +1966,16 @@ onBeforeUnmount(() => {
       show-icon
       :closable="true"
       title="今日 AI 额度已用尽"
-      :description="budgetMessage || '今日 AI 调用额度已用完，请明日再试或联系管理员调整额度。'"
       @close="budgetExceeded = false"
-    />
+    >
+      <template #default>
+        <p class="budget-friendly">今日 AI 调用额度已用完，请明日再试，或联系管理员调整额度。</p>
+        <details v-if="budgetMessage" class="budget-detail">
+          <summary>技术详情</summary>
+          <span>{{ budgetMessage }}</span>
+        </details>
+      </template>
+    </el-alert>
 
     <!-- 下方双栏：左聊天 / 右变式题组 -->
     <div class="variant-main">
@@ -2033,8 +2055,10 @@ onBeforeUnmount(() => {
             <circle cx="84" cy="72" r="3" fill="#1E8A8A" />
             <path d="M94 72A10 10 0 0090 63" stroke="#7B6CF0" stroke-width="1.3" />
           </svg>
+          <!-- 🔴 PRD-A-018 A-19：空态承诺改诚实——出题是多步（贴图→确认年级章→点开始→出 3 道），
+               不暗示「丢图就自动出」。数量承诺（出 3 道）本身正确，保留。 -->
           <h3>拍一道题丢进来，我帮你出 3 道变式</h3>
-          <p>AI 先读出年级 / 考点 / 题型，再出 3 道考点一致、只换数字情境的变式。</p>
+          <p>贴上母题图 → 确认年级和章节 → 点「开始举一反三」，就会出 3 道考点一致、只换数字情境的变式。</p>
         </div>
 
         <template v-for="(item, i) in stream" :key="i">
@@ -2121,7 +2145,7 @@ onBeforeUnmount(() => {
              textarea，下半=按钮条 [📎 上传图片][🔗 链接] …右对齐… [思考过程开关][发送 ➤]。
              逻辑零改：paste（document 级监听）/ URL 贴图 / 文件上传 / 发送 / 思考开关 五条链路全部保留，
              仅 URL 输入框默认收起、点「🔗 链接」内联展开（showUrlInput，纯 UI 开合）。 -->
-        <div class="composer-box">
+        <div class="composer-box" @drop.prevent="onImageDrop" @dragover.prevent>
           <!-- P10：待发附件缩略图（可删除），置于主输入上方一行 -->
           <div v-if="pendingImages.length" class="pending-imgs">
             <div v-for="(u, k) in pendingImages" :key="k" class="pending-thumb">
@@ -2329,6 +2353,27 @@ onBeforeUnmount(() => {
 .budget-banner {
   margin-bottom: 12px;
   flex-shrink: 0;
+}
+/* A-21：额度横幅老师人话 + 折叠技术详情 */
+.budget-friendly {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.budget-detail {
+  margin-top: 6px;
+  font-size: 12px;
+}
+.budget-detail > summary {
+  cursor: pointer;
+  color: #8a6d3b;
+  user-select: none;
+}
+.budget-detail > span {
+  display: block;
+  margin-top: 4px;
+  color: #9a7b4f;
+  word-break: break-all;
 }
 /* 下方双栏容器：左聊天 / 右变式题组（占满母题横条以下剩余高度） */
 .variant-main {

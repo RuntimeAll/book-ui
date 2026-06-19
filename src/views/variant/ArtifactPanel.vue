@@ -611,16 +611,18 @@ function regenAll() {
           <circle cx="96" cy="40" r="9" fill="#E4F4ED" stroke="#1F9D6B" stroke-width="1.4" />
           <path d="M92 40l3 3 5-6" stroke="#1F9D6B" stroke-width="1.6" fill="none" stroke-linecap="round" />
         </svg>
+        <!-- 🔴 PRD-A-018 A-19：stepper/副文改诚实——出题是多步交互（贴图→确认年级章→点开始→出 3 道），
+             不暗示「贴图就自动出」。数量承诺（出 3 道）本身正确，保留。 -->
         <h2>上传一道题，开始举一反三</h2>
         <p class="sub">
-          在左侧贴一张母题图，AI 读出它的考点·年级·题型，出 3 道考点一致、只换数字情境的变式，逐题验算后可一键入库。
+          在左侧贴一张母题图，先确认它的年级和章节，点「开始举一反三」，就会出 3 道考点一致、只换数字情境的变式，逐题验算后可一键入库。
         </p>
         <div class="stepper">
           <div class="node"><div class="nd" /><div class="nl">贴母题图</div></div>
           <div class="seg" />
-          <div class="node"><div class="nd" /><div class="nl">AI 读图<br />定考点·年级</div></div>
+          <div class="node"><div class="nd" /><div class="nl">确认<br />年级·章节</div></div>
           <div class="seg" />
-          <div class="node"><div class="nd" /><div class="nl">出 3 道变式</div></div>
+          <div class="node"><div class="nd" /><div class="nl">点开始<br />出 3 道变式</div></div>
           <div class="seg" />
           <div class="node"><div class="nd" /><div class="nl">验算 · 入库</div></div>
         </div>

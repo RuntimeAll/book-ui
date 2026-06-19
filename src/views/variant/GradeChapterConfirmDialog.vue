@@ -104,7 +104,9 @@ async function loadTree() {
     else if (result && typeof result === 'object') tree.value = [result as unknown as SubjectNode]
     presetFromNano()
   } catch (e) {
-    ElMessage.error(`年级册/章树加载失败：${e instanceof Error ? e.message : String(e)}（举一反三服务 :8090 未启动？）`)
+    // 🔴 A-21：对老师只说人话（隐端口/服务名），技术详情进 console 折叠
+    console.error('[GCD] 年级册/章树加载失败：', e)
+    ElMessage.error('暂时取不到年级章节列表，请稍后重试，或联系管理员。')
   } finally {
     loading.value = false
   }
@@ -143,7 +145,7 @@ function onDialogUpdate(v: boolean) {
 
 function onConfirm() {
   if (!chapterId.value) {
-    ElMessage.warning('请先选定「章」（章是后续打标锚定的范围）')
+    ElMessage.warning('请先选定「章节」（AI 会照这个章节来出题）')
     return
   }
   emit('confirm', {
@@ -158,7 +160,7 @@ function onConfirm() {
 <template>
   <el-dialog
     :model-value="modelValue"
-    title="确认母题的年级册 + 章"
+    title="确认这道题的年级和章节"
     width="520px"
     append-to-body
     :close-on-click-modal="false"
@@ -166,8 +168,8 @@ function onConfirm() {
     @update:model-value="onDialogUpdate"
   >
     <p class="gc-intro">
-      举一反三前请先确认母题所属的<b>年级册</b>与<b>章</b>——这是后续 AI 解题打标的锚定范围，
-      确认对了后面才不会跑偏。
+      举一反三前请先确认这道题所属的<b>年级</b>与<b>章节</b>——AI 会照这个年级和章节来出题，
+      选对了出的题才不会跑偏。
     </p>
 
     <!-- nano 候选参考（仅展示，提醒老师人工核对） -->
@@ -185,7 +187,7 @@ function onConfirm() {
         <el-select
           v-model="gradeBookId"
           filterable
-          placeholder="选年级册（biz_subject 顶层）"
+          placeholder="选年级册"
           class="gc-select"
           :disabled="submitting"
           @change="onChangeGradeBook"
@@ -207,19 +209,20 @@ function onConfirm() {
         </el-select>
       </div>
       <p v-if="!loading && gradeBooks.length === 0" class="gc-empty">
-        年级册/章树为空（举一反三服务 :8090 未启动？）—— 无法选章，请确认服务后重开本面。
+        <!-- 🔴 A-21：隐端口/服务名，给老师人话 -->
+        暂时取不到年级章节列表，请稍后重试，或联系管理员。
       </p>
     </div>
 
     <p v-if="chapterId" class="gc-confirmed">
-      将锚定到：<b>{{ selectedGradeBookName }}</b> / <b>{{ selectedChapterName }}</b>
-      <span class="gc-chid">（chapter_id: {{ chapterId }}）</span>
+      <!-- 🔴 A-20：对老师隐藏内部 chapter_id，只显年级/章节名 -->
+      将照这个出题：<b>{{ selectedGradeBookName }}</b> / <b>{{ selectedChapterName }}</b>
     </p>
 
     <template #footer>
       <el-button :disabled="submitting" @click="close">取消</el-button>
       <el-button type="primary" :loading="submitting" :disabled="!chapterId" @click="onConfirm">
-        确认，开始解题打标
+        确认，开始出题
       </el-button>
     </template>
   </el-dialog>
