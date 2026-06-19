@@ -39,10 +39,11 @@ const props = defineProps<{
   /** 🔴 BUG-09：正在手动「验算」的题 index（1-based）；该卡验算徽章 loading */
   verifyingIndex?: number | null
   /**
-   * 🔴 BUG-09：手动验算结果表（按 1-based index 持有 verify-one 回填）。
-   * 命中的卡按 verdict 显徽章 + 证据面板；缺省按 item.verifyStatus（pending→灰待验算）。
+   * 🔴 BUG-09 / PRD-A-018 A-3：手动验算结果表，**按题面 stem 持有**（不再按 1-based index）。
+   *   原因：换一批/改年级/重生后 index/seq 复用 → 按 index 持有会让旧「✓通过」串到新题（假徽章）。
+   *   命中的卡按 verdict 显徽章 + 证据面板；缺省按 item.verifyStatus（pending→灰待验算）。
    */
-  verifyResults?: Record<number, { verdict: 'pass' | 'fail' | 'degrade' | null; detail: string | null; computed: string | null }>
+  verifyResults?: Record<string, { verdict: 'pass' | 'fail' | 'degrade' | null; detail: string | null; computed: string | null }>
 
   /** PRD-C-014 T1：正在「收录入库」的题 index（1-based）；该卡入库按钮 loading */
   persistingIndex?: number | null
@@ -58,6 +59,14 @@ const props = defineProps<{
    *   母题卡共用同一真值，避免两份。为空则 chip 不渲染（母题未就绪时）。
    */
   anchorChip?: string | null
+  /**
+   * 🔴 PRD-A-018 A-8：待发态——左栏已贴图但还没回车发送（pendingImages>0）。此态右栏不应再显
+   *   「上传一道题」完整 4 步引导（左右栏矛盾：左边明明图已就位）。父组件传入后，右栏切轻提示
+   *   「图已就位，回车即可出题」。
+   */
+  hasPendingUpload?: boolean
+  /** 待发图张数（轻提示文案用） */
+  pendingUploadCount?: number
 }>()
 
 const emit = defineEmits<{
@@ -216,7 +225,9 @@ const isPureEmpty = computed(
     items.value.length === 0 &&
     pendingCount.value === 0 &&
     !props.sending &&
-    !hasMother.value
+    !hasMother.value &&
+    // 🔴 PRD-A-018 A-8：待发态（左栏已贴图待回车）不算纯空态——不显「上传一道题」完整引导（左右栏矛盾）
+    !props.hasPendingUpload
 )
 
 // PRD-C-015 批5：待重生集合（致命①入库拦截 + 「重生全部」按钮）。
@@ -241,7 +252,8 @@ const checking = computed(() => props.artifact?.partial === true)
 // 🔴 BUG-09：待验算题（verify_status==='pending' 且无手动验算结果）→ 「全部验算」按钮可点。
 const pendingVerifyIndexes = computed<number[]>(() =>
   items.value
-    .filter((i) => i.verifyStatus === 'pending' && !props.verifyResults?.[i.index])
+    // 🔴 A-3：按 stem 判「是否已有手动验算结果」（与持有键一致）
+    .filter((i) => i.verifyStatus === 'pending' && !props.verifyResults?.[i.stem || ''])
     .map((i) => i.index)
 )
 const hasVerifying = computed(
@@ -537,7 +549,7 @@ function regenAll() {
             :checking="checking"
             :reverifying="reverifyingIndex === it.index"
             :verifying="verifyingIndex === it.index"
-            :verify-result="verifyResults?.[it.index] ?? null"
+            :verify-result="verifyResults?.[it.stem || ''] ?? null"
             :persisting="persistingIndex === it.index"
             :basketing="basketingIndex === it.index"
             :regenerating="!!(regeneratingIndexes && regeneratingIndexes.includes(it.index))"
@@ -578,14 +590,13 @@ function regenAll() {
         </div>
       </template>
 
-      <!-- 生成中骨架卡（尚无快照时） -->
-      <template v-else-if="sending">
-        <div v-for="n in 3" :key="n" class="skeleton-card" :style="{ animationDelay: `${(n - 1) * 120}ms` }">
-          <div class="sk-line sk-w40" />
-          <div class="sk-line" />
-          <div class="sk-line sk-w70" />
-        </div>
-      </template>
+      <!-- 🔴 PRD-A-018 A-9：读图/定题阶段（连母题/题数都没定，pendingCount=0）不写死 3 张变式骨架
+           （误导「已定 3 道」，且与缺陷2「可能 1 道」打架）。改显「读图定题中…」占位——真正的
+           变式骨架在进 generate（partial 帧带 expectedTotal → pendingCount>0）后按真实题数渲染。 -->
+      <div v-else-if="sending" class="define-loading">
+        <span class="dl-dot" />
+        读图定题中…
+      </div>
 
       <!-- 🔴 PRD-A-017 空态高保真重建（restyle.html 空态右栏）：hero 三叠卡 + 标题副文 +
            4 步 stepper + recipe-note 配方引导。逐元素照搬设计稿，颜色用 token。
@@ -617,6 +628,13 @@ function regenAll() {
           <b>默认出 3 道</b>（2 普通 1 难）<span class="sep">·</span> 守考点 · 换数字 / 情境
           <span class="sep">·</span> 想多出 / 调难度，贴图时说「出 5 道」「难一点」即可
         </div>
+      </div>
+
+      <!-- 🔴 PRD-A-018 A-8：待发态（左栏已贴图、还没回车）→ 右栏轻提示「图已就位，回车即可出题」，
+           不显「上传一道题」完整引导（左右栏不再矛盾）。 -->
+      <div v-else-if="hasPendingUpload && !hasMother" class="variant-await-hint">
+        <span class="vah-dot" />
+        图已就位<template v-if="(pendingUploadCount ?? 0) > 1">（{{ pendingUploadCount }} 张）</template> · 回车即可开始出题
       </div>
 
       <!-- 🔴 验收纠偏：母题已就绪但还没出变式 → 轻提示占位（不再压「上传一道题」完整引导） -->
@@ -654,6 +672,23 @@ function regenAll() {
   color: var(--faint);
 }
 .variant-await-hint .vah-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--violet);
+  animation: pulse 1.5s infinite ease-in-out;
+}
+/* 🔴 PRD-A-018 A-9：读图/定题阶段占位（替代写死 3 张变式骨架），紫系呼吸点 + 文案 */
+.define-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 40px 20px;
+  font-size: 12.5px;
+  color: var(--violet-700);
+}
+.define-loading .dl-dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;

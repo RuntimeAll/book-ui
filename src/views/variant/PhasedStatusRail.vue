@@ -20,7 +20,13 @@
 import { computed, ref, watch } from 'vue'
 import type { VariantStage } from '@/api/variant'
 
-const props = defineProps<{ stages: VariantStage[] }>()
+// 🔴 PRD-A-018 C3(A-24)：starting = 已点「开始举一反三」/ 已发起一轮，但首帧（generate）还没到达的
+//   过渡窗口。此态下若 stages 仍空，状态条显「启动中」而非「待机」——避免「系统在跑（sending=true、
+//   母题卡还在）却显待机」的瞬态矛盾。宿主传 :starting="sending"。
+const props = withDefaults(
+  defineProps<{ stages: VariantStage[]; starting?: boolean }>(),
+  { starting: false }
+)
 
 type NodeState = 'todo' | 'run' | 'done' | 'err' | 'human'
 
@@ -28,6 +34,9 @@ interface PsNode {
   label: string
   state: NodeState
   desc: string
+  // 🔴 PRD-A-018 C1(A-10)：可选旁挂节点（如程序验算）——照常渲染自己的态，但不计入
+  //   「题组就绪 / 全部完成」判定（allDone），也不让它的 await 把整条状态条挂在「需人工」。
+  optional?: boolean
 }
 
 const ST_LABEL: Record<NodeState, string> = {
@@ -66,9 +75,6 @@ function st(key: string): VariantStage | undefined {
 const CHU_KEYS = ['generate', 'gene_gate', 'verify', 'solution', 'persist', 'assemble']
 const isChu = computed(() => CHU_KEYS.some((k) => has(k)))
 
-// 「figure」key 在两阶段都可能出现：出题阶段时归「配图」，否则归定题「母题切图」。
-const figureInChu = computed(() => isChu.value)
-
 // ── 定题中 节点 ──
 // 🔴 PRD-A-017（新 stage 帧契约，2026-06-19）：定题阶段三节点各读独立 stage key，
 //   不再用 classify+knobs 两 key 硬凑（旧映射致三态自相矛盾，根因见组件顶注释更新）。
@@ -81,7 +87,9 @@ const figureInChu = computed(() => isChu.value)
 //        老师点「开始举一反三」→ review=done → 转 done。（knobs 仍存在但只代表「解析配方」，不驱动本节点）
 const dingNodes = computed<PsNode[]>(() => {
   const cls = st('classify')
-  const fig = !figureInChu.value ? st('figure') : undefined
+  // 🔴 PRD-A-018 C2(A-11)：母题切图节点读宿主 push 的 figure-mother（不再读裸 figure；裸 figure
+  //   是历史混义 key，治标拆开后母题切图灯唯一 key = figure-mother，见 index.vue upsertFigureStage）。
+  const fig = st('figure-mother')
   const review = st('review')
 
   // ① 读图锚定（classify）：await→需人工（仅低置信待确认年级章）/ warn→异常 / done→已完成 / running→进行中
@@ -118,13 +126,22 @@ const dingNodes = computed<PsNode[]>(() => {
   return [n1, n2, n3]
 })
 
+// 🔴 PRD-A-018 C2(A-11)：配图节点聚合源——收集所有配图灯 stage（figure-mother + figure-v{N}），
+//   外加旧字段兜底（legacy 裸 figure / solution，向后兼容旧会话恢复帧）。宿主造每张图时
+//   upsertFigureStage 各亮各灯（见 index.vue），这里聚合成单个「配图」节点真值。
+const figureStages = computed<VariantStage[]>(() =>
+  props.stages.filter(
+    (s) => s.key === 'figure-mother' || s.key.startsWith('figure-v')
+  )
+)
+// 旧兜底：无新式配图灯时，回看 legacy 裸 figure / solution（旧会话/旧后端帧）
+const legacyFigStage = computed(() => st('figure') ?? st('solution'))
+
 // ── 出题中 节点 ──
 const chuNodes = computed<PsNode[]>(() => {
   const gen = st('generate')
   const gate = st('gene_gate')
   const ver = st('verify')
-  const fig = st('figure')
-  const sol = st('solution')
   const persist = st('persist') ?? st('assemble')
 
   const n1: PsNode = {
@@ -137,33 +154,57 @@ const chuNodes = computed<PsNode[]>(() => {
     state: nodeStateFromStatus(gate?.status, 'todo'),
     desc: gate?.detail ?? '逐道与母题对照考点',
   }
+  // 🔴 PRD-A-018 C1(A-10)：程序验算 = 老师自选的可选旁挂步，从出题主干「必经链」摘出，
+  //   不计入 coreDone / 题组就绪 / allDone（手动模式 BE 不再硬发 verify=done，而发 await/pending）。
+  //   节点标「可选·待验算」——await→需人工提示（待老师点验算）、done→已完成、running→进行中、无帧→「可选·待验算」灰态。
   const n3: PsNode = {
     label: '程序验算',
-    state: nodeStateFromStatus(ver?.status, 'todo'),
-    desc: ver?.detail ?? '代入数值核对答案闭合',
+    state:
+      ver?.status === 'await'
+        ? 'human'
+        : nodeStateFromStatus(ver?.status, 'todo'),
+    desc: ver?.detail ?? '可选 · 待老师点「验算」核对答案闭合（不影响题组就绪）',
+    optional: true, // 🔴 C1：可选旁挂，不计入题组就绪/全部完成
   }
-  // 🔴 BUG-10：配图节点收口。配图是「适用才做」的节点（纯文本题不需配图）——不能让它
-  //   永久挂「待完成」把整条状态条卡住。判定：
-  //   ① figure/solution stage 显式 done/skipped → done（收到 done/skipped 即视为完成）；
-  //   ② 无 figure/solution stage，但生成/比对/验算三个核心节点都已完成 → 视为「本组无需配图」
-  //      → done（跳过即完成，不挂待完成）。
-  //   ③ 否则按 stage 状态（running/todo）走。
-  const coreDone =
-    gen?.status === 'done' && gate?.status === 'done' && ver?.status === 'done'
-  const figStage = fig ?? sol
-  const figStatus = figStage?.status
-  const figDone = figStatus === 'done' || figStatus === 'await' // await（toolkit 对「不适用/跳过」也发 await）= 跳过=完成
-  const n4: PsNode = {
-    label: '配图',
-    state: figDone
-      ? 'done'
-      : !figStage && coreDone
-        ? 'done' // 核心都完成、本组无配图 stage → 视为无需配图（跳过=完成）
-        : nodeStateFromStatus(figStatus, 'todo'),
-    desc: figStage?.detail ?? (!figStage && coreDone ? '本组无需配图（已跳过）' : '为带图变式造图'),
+  // 🔴 C1：核心完成 = 生成 + 考点比对（不含验算）。验算摘出后题组就绪只依赖 generate+gate(+真配图)。
+  const coreDone = gen?.status === 'done' && gate?.status === 'done'
+
+  // 🔴 PRD-A-018 C2(A-11)：配图节点聚合所有 figure-v*(+figure-mother)——
+  //   任一 running → run；全 done（含「沿用旧图」done、跳过 await）→ done；
+  //   无任何配图灯且核心已完成 → 视为本组无需配图（跳过=done，不挂待完成卡住整条）。
+  const figs = figureStages.value
+  const legacyFig = legacyFigStage.value
+  const figDoneOf = (s: VariantStage) => s.status === 'done' || s.status === 'await' // await=跳过/不适用=完成
+  let n4State: NodeState
+  let n4Desc: string
+  if (figs.length > 0) {
+    const anyRun = figs.some((s) => s.status === 'running')
+    const anyErr = figs.some((s) => s.status === 'warn')
+    const allDoneFig = figs.every(figDoneOf)
+    n4State = anyRun ? 'run' : anyErr ? 'err' : allDoneFig ? 'done' : 'todo'
+    n4Desc = anyRun
+      ? '为带图变式造图…'
+      : anyErr
+        ? '部分图待补（可在卡上重新配图）'
+        : allDoneFig
+          ? '配图完成'
+          : '为带图变式造图'
+  } else if (legacyFig) {
+    // 旧帧兜底（单个 legacy figure/solution stage）
+    n4State = figDoneOf(legacyFig) ? 'done' : nodeStateFromStatus(legacyFig.status, 'todo')
+    n4Desc = legacyFig.detail ?? '为带图变式造图'
+  } else if (coreDone) {
+    // 无任何配图灯 + 核心完成 → 本组无需配图（跳过=完成）
+    n4State = 'done'
+    n4Desc = '本组无需配图（已跳过）'
+  } else {
+    n4State = 'todo'
+    n4Desc = '为带图变式造图'
   }
-  // 题组就绪：persist done → done；await → human；🔴 BUG-10：无 persist stage 但核心+配图都完成
-  //   → 整组收口为「就绪」（不再等一个从不到来的 persist 帧把它永久挂在「待完成」）。
+  const n4: PsNode = { label: '配图', state: n4State, desc: n4Desc }
+
+  // 题组就绪：persist done → done；await → human；无 persist stage 但核心+配图都完成 → 收口为「就绪」。
+  //   🔴 C1：不依赖验算（n3）；🔴 C2：依赖聚合后的配图（n4），任一变式图未完成则不显就绪。
   const groupReady = coreDone && n4.state === 'done'
   const n5: PsNode = {
     label: '题组就绪',
@@ -185,20 +226,30 @@ const phaseName = computed(() => (isChu.value ? '出题中' : '定题中'))
 const phaseTag = computed(() => (isChu.value ? '阶段 ②' : '阶段 ①'))
 const phaseStep = computed(() => (isChu.value ? '2 / 2 阶段' : '1 / 2 阶段'))
 
-// 当前活跃节点（run 优先，其次 human）—— 决定播报内容与 mini 摘要
+// 当前活跃节点（run 优先，其次 human）—— 决定播报内容与 mini 摘要。
+// 🔴 PRD-A-018 C1：先在「必经」节点里找活跃（在跑/需人工）；都没有再回看可选节点（程序验算 await）。
+//   这样「核心+配图都完成、只剩可选验算待老师点」时，allDone 先收口为「全部完成」，
+//   播报不被可选验算的 await 劫持成「待验算·像卡住」。
 const activeNode = computed<PsNode | undefined>(() => {
-  return nodes.value.find((n) => n.state === 'run') ?? nodes.value.find((n) => n.state === 'human')
+  const core = nodes.value.filter((n) => !n.optional)
+  return (
+    core.find((n) => n.state === 'run') ??
+    core.find((n) => n.state === 'human') ??
+    nodes.value.find((n) => n.state === 'run') ??
+    nodes.value.find((n) => n.state === 'human')
+  )
 })
 const isAwait = computed(() => activeNode.value?.state === 'human')
 
-// 🔴 BUG-10：全部「适用」节点完成即收口为「就绪」——没有 run/human 节点（无在跑、无待人工），
-//   且至少有一个节点已 done（已开过工，非纯待机）→ 视为全部完成。此态停转圈、播报「全部完成」。
-//   不被「不适用/已跳过」节点永久挂起（配图/题组就绪已在 chuNodes 收口为 done）。
+// 🔴 BUG-10 + PRD-A-018 C1：全部「必经」节点完成即收口为「就绪」——只看非可选节点：
+//   无必经节点在跑/待人工、无错误、至少一个必经节点已 done → 全部完成。可选节点（程序验算）
+//   不计入（验算未点也能就绪=题组就绪秒到，不被从不到来的验算挂住）。
 const allDone = computed(() => {
   if (isEmpty.value) return false
-  const hasActive = nodes.value.some((n) => n.state === 'run' || n.state === 'human')
-  const hasErr = nodes.value.some((n) => n.state === 'err')
-  const anyDone = nodes.value.some((n) => n.state === 'done')
+  const core = nodes.value.filter((n) => !n.optional)
+  const hasActive = core.some((n) => n.state === 'run' || n.state === 'human')
+  const hasErr = core.some((n) => n.state === 'err')
+  const anyDone = core.some((n) => n.state === 'done')
   return !hasActive && !hasErr && anyDone
 })
 
@@ -213,6 +264,8 @@ const miniHuman = computed(() => activeNode.value?.state === 'human')
 
 // 空态（无任何 stage）
 const isEmpty = computed(() => props.stages.length === 0)
+// 🔴 C3：启动中空态（已发起一轮、首帧未到）——显「启动中」而非「待机」
+const isStarting = computed(() => isEmpty.value && props.starting)
 
 // ── 真值流式播报：取活跃节点的 detail 作播报文案 ──
 const castText = computed(() => {
@@ -242,9 +295,10 @@ function toggleCollapse() {
     <!-- 头部：可点收起 -->
     <div class="ps-head" @click="toggleCollapse">
       <span v-if="!isEmpty" class="ps-caret">▾</span>
-      <span class="ps-ph">{{ isEmpty ? '待机' : phaseTag }}</span>
-      <span class="ps-name">{{ phaseName }}</span>
-      <span class="ps-step">{{ isEmpty ? '0 / 2 阶段' : phaseStep }}</span>
+      <!-- 🔴 C3：启动中（已发起、首帧未到）显「启动中」，纯空态才显「待机」 -->
+      <span class="ps-ph">{{ isStarting ? '启动中' : isEmpty ? '待机' : phaseTag }}</span>
+      <span class="ps-name">{{ isStarting ? '定题中' : phaseName }}</span>
+      <span class="ps-step">{{ isEmpty ? (isStarting ? '· · ·' : '0 / 2 阶段') : phaseStep }}</span>
     </div>
 
     <!-- 收起态一行摘要 -->
@@ -253,8 +307,11 @@ function toggleCollapse() {
       <span class="mtx">{{ miniText }}</span>
     </div>
 
-    <!-- 空态 -->
-    <div v-if="isEmpty" class="ps-stat-empty">○ 待机 · 拍一道题丢进来，自动开始读图锚定</div>
+    <!-- 空态：🔴 C3 启动中（已发起、首帧未到）显「启动中」呼吸态，纯空态显「待机」引导 -->
+    <div v-if="isEmpty" class="ps-stat-empty" :class="{ starting: isStarting }">
+      <template v-if="isStarting">◌ 启动中 · 正在唤起 AI，马上开始读图…</template>
+      <template v-else>○ 待机 · 拍一道题丢进来，自动开始读图锚定</template>
+    </div>
 
     <template v-else>
       <!-- 节点列 -->
@@ -507,6 +564,11 @@ function toggleCollapse() {
   font-size: 11px;
   color: var(--faint);
   font-family: var(--mono);
+}
+/* 🔴 C3：启动中态——紫系呼吸，与「进行中」语义一致（区别于待机灰） */
+.ps-stat-empty.starting {
+  color: var(--violet-700);
+  animation: ps-breathe 1.8s infinite ease-in-out;
 }
 
 /* 收起态摘要 */

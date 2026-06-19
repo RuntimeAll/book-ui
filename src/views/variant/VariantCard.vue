@@ -1114,7 +1114,9 @@ function saveFieldEdit() {
           </p>
 
           <div class="dna-grid">
-            <!-- 主考点（hard_anchor：改→立即解冻重锚） -->
+            <!-- 主考点（soft_regen：改主考点 = 标 dirty + await 显式重生 + 可回退，与其它 soft_regen 维一致；
+                 🔴 PRD-A-018 C4(A-2)：BE/FE 常量已统一为 soft_regen，行为由常量直驱、无 BE 特判补丁，
+                 不再是旧「hard_anchor：改→立即解冻重锚」语义） -->
             <span class="dna-k">
               主考点
               <span class="rc-badge" :class="`rc-${classBadge('main_kp').cls}`" :title="classBadge('main_kp').hint">{{ classBadge('main_kp').label }}</span>

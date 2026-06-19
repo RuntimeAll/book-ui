@@ -507,9 +507,22 @@ const reverifyingIndex = ref<number | null>(null)
 // 🔴 BUG-09 手动验算：正在「验算」的题 index（1-based）+ 验算结果表（按 index 持有 verify-one 回填）。
 //   生成后不自动验算（item.verifyStatus='pending'），老师点「验算」/「全部验算」主动触发。
 const verifyingIndex = ref<number | null>(null)
+// 🔴 PRD-A-018 A-3 根治串台：验算结果改按【题面 stem】持有（不再按裸 1-based index）。
+//   原因：换一批/改年级/重生后 index/seq 会复用，按 index 持有 → 旧「✓验算通过」盖到新题（串台假徽章）。
+//   stem 是跨重批最稳定的题身份；新题 stem 不同 → 自然不命中旧结果。配套生命周期清理：
+//   整组路径（clearCanvas[含切会话/新会话] / 换一批 / 改年级）清空；单题路径（编辑/重验/重生/撤销重生/改DNA）
+//   按操作前捕获的旧 stem delete。
 const verifyResults = reactive<
-  Record<number, { verdict: 'pass' | 'fail' | 'degrade' | null; detail: string | null; computed: string | null }>
+  Record<string, { verdict: 'pass' | 'fail' | 'degrade' | null; detail: string | null; computed: string | null }>
 >({})
+/** 清空全部验算结果（整组路径：切会话 / 新会话 / 换一批 / 改年级）。 */
+function clearAllVerifyResults() {
+  for (const k of Object.keys(verifyResults)) delete verifyResults[k]
+}
+/** 按题面 stem 清单题验算结果（单题路径：编辑 / 重验 / 重生 / 撤销重生 / 改DNA 后旧结果作废）。 */
+function clearVerifyResultByStem(stem: string | undefined | null) {
+  if (stem && stem in verifyResults) delete verifyResults[stem]
+}
 // PRD-C-014 T1/T2：正在「收录入库」/「加入试题篮」的题 index（1-based），驱动该卡按钮 loading
 const persistingIndex = ref<number | null>(null)
 const basketingIndex = ref<number | null>(null)
@@ -1220,10 +1233,16 @@ async function onEditItem(payload: {
   solution?: string
 }) {
   if (sending.value) return
+  // 🔴 PRD-A-018 A-5：编辑前捕获旧 stem——保存成功后据此清掉旧验算结果，
+  //   否则 BE 已置 tier=manual，但残留的 verifyResult（verifyResultBadge）会压过 manual 徽章，
+  //   卡仍显旧「✓通过」=误导（改了答案的题挂旧背书）。
+  const prevStem = findItem(payload.index)?.stem
   try {
     const { index, ...patch } = payload
     const a = await editVariantItem(threadId.value, index, patch)
     if (a) artifact.value = a
+    // 🔴 A-5：清旧验算结果（让 tier=manual「✎ 手动编辑·验算待重跑」徽章不被旧 ✓ 压过）
+    clearVerifyResultByStem(prevStem)
     ElMessage.success('已保存修改（验算待重跑，可点「重新验算」）')
   } catch (e) {
     ElMessage.error(`保存失败：${e instanceof Error ? e.message : String(e)}`)
@@ -1236,9 +1255,14 @@ async function onReverify(index: number) {
   // 🔴 AC-TOKEN：重新验算触发 LLM 重解（耗 token）→ 先过确认闸。
   if (!(await confirmTokenSpend('「重新验算」会调用 AI 重新解题验算、消耗 token。'))) return
   reverifyingIndex.value = index
+  // 🔴 PRD-A-018 A-5：重验前捕获旧 stem——重验后 BE 重新置 tier，旧的手动 verifyResult 须清，
+  //   否则新的程序验算结果被旧徽章压过白点（看不到重验的真结果）。
+  const prevStem = findItem(index)?.stem
   try {
     const a = await reverifyVariantItem(threadId.value, index)
     if (a) artifact.value = a
+    // 🔴 A-5：清旧验算结果，让重验后的真实 tier 徽章生效
+    clearVerifyResultByStem(prevStem)
   } catch (e) {
     ElMessage.error(`重新验算失败：${e instanceof Error ? e.message : String(e)}`)
   } finally {
@@ -1265,7 +1289,8 @@ async function onVerifyOne(index: number) {
   verifyingIndex.value = index
   try {
     const res = await verifyVariantOne(it.stem || '', it.answer || '')
-    verifyResults[index] = { verdict: res.verdict, detail: res.detail, computed: res.computed }
+    // 🔴 A-3：按 stem 持有（防 index 复用串台）
+    verifyResults[it.stem || ''] = { verdict: res.verdict, detail: res.detail, computed: res.computed }
   } catch (e) {
     ElMessage.error(`验算失败：${e instanceof Error ? e.message : String(e)}`)
   } finally {
@@ -1277,7 +1302,8 @@ async function onVerifyOne(index: number) {
 async function onVerifyAll() {
   if (sending.value || verifyingIndex.value !== null) return
   const pending = (artifact.value?.items ?? [])
-    .filter((i) => i.verifyStatus === 'pending' && !verifyResults[i.index])
+    // 🔴 A-3：按 stem 判「是否已有结果」（与持有键一致）
+    .filter((i) => i.verifyStatus === 'pending' && !verifyResults[i.stem || ''])
     .map((i) => i.index)
   for (const idx of pending) {
     const it = itemByIndex(idx)
@@ -1285,7 +1311,8 @@ async function onVerifyAll() {
     verifyingIndex.value = idx
     try {
       const res = await verifyVariantOne(it.stem || '', it.answer || '')
-      verifyResults[idx] = { verdict: res.verdict, detail: res.detail, computed: res.computed }
+      // 🔴 A-3：按 stem 持有（防 index 复用串台）
+      verifyResults[it.stem || ''] = { verdict: res.verdict, detail: res.detail, computed: res.computed }
     } catch (e) {
       ElMessage.error(`第 ${idx} 题验算失败：${e instanceof Error ? e.message : String(e)}`)
     }
@@ -1316,9 +1343,13 @@ async function onEditDna(payload: {
   value: DnaEditValue
 }) {
   if (sending.value) return
+  // 🔴 PRD-A-018 A-3：改 DNA（考点/题型/难度等）→ 该题被标待重生、特征已变，旧验算结果失效，
+  //   清掉防其串到后续重生题。
+  const prevStem = findItem(payload.index)?.stem
   try {
     const a = await editVariantDna(threadId.value, payload.index, payload.field, payload.value)
     if (a) artifact.value = a
+    clearVerifyResultByStem(prevStem)
     ElMessage.success('已更新（你说了算）')
   } catch (e) {
     ElMessage.error(`更新失败：${e instanceof Error ? e.message : String(e)}`)
@@ -1429,9 +1460,16 @@ async function runRegen(indexes?: number[]) {
   // 🔴 BC3 (c) 定稿态：手改/手动排版题重生前二次确认 + 清脏 block（取消则不重生）
   if (!(await confirmRegenIfManual(targets))) return
   regeneratingIndexes.value = targets.length ? [...targets] : [-1] // -1 占位让按钮转圈
+  // 🔴 PRD-A-018 A-3：重生前捕获被重生题的旧 stem——重生后题面变了（新 stem），旧验算结果须作废，
+  //   否则旧「✓通过」会因 index/seq 复用串到重生后的新题上（假徽章）。
+  const regenStems = (artifact.value?.items ?? [])
+    .filter((it) => targets.includes(it.index))
+    .map((it) => it.stem)
   try {
     const res = await regenVariant(threadId.value, indexes)
     if (res.artifact) artifact.value = res.artifact
+    // 🔴 A-3：清掉被重生题的旧验算结果（新题 stem 不同，旧结果不该再展示）
+    for (const s of regenStems) clearVerifyResultByStem(s)
     if (res.failed.length) {
       const ns = res.failed.map((f) => f.index).join('、')
       ElMessage.warning(`第 ${ns} 题重生未成功（已保留原题，可再试或撤销）`)
@@ -1459,9 +1497,13 @@ function onRegenAll() {
 /** 撤销重生：回上一版快照（缺口12）。 */
 async function onUndoRegen(index: number) {
   if (sending.value || regeneratingIndexes.value.length > 0) return
+  // 🔴 PRD-A-018 A-3：撤销重生 = 题面回退到上一版（stem 又变），当前版的验算结果须作废，
+  //   防旧结果串到回退后的题上。
+  const prevStem = findItem(index)?.stem
   try {
     const a = await undoRegenVariant(threadId.value, index)
     if (a) artifact.value = a
+    clearVerifyResultByStem(prevStem)
     ElMessage.success(`已撤销第 ${index} 题的重生，回到上一版`)
   } catch (e) {
     ElMessage.error(`撤销重生失败：${e instanceof Error ? e.message : String(e)}`)
@@ -1615,6 +1657,8 @@ async function onEditHeaderGrade(grade: string) {
   if (!(await confirmTokenSpend('改年级会按新年级重新生成整组变式、消耗 token。'))) return
   // 🔴 修1/修2：改年级 = 整组重出，同上复位配图缓存 + 首图 guard。
   resetFigureCachesForNewGroup()
+  // 🔴 PRD-A-018 A-3：改年级 = 整组重出 → 清验算结果（防旧徽章串到新出的整组变式）
+  clearAllVerifyResults()
   dispatch(`把整组年级改成「${grade}」，按新年级重新出这组变式`, `年级 → ${grade}`)
 }
 
@@ -1639,6 +1683,8 @@ async function regenerate() {
   artifact.value = null
   // 🔴 修1/修2：换一批 = 新的一组 → 清旧配图缓存 + 复位首图 guard（防旧图串到新题、首张图重新直出）。
   resetFigureCachesForNewGroup()
+  // 🔴 PRD-A-018 A-3：换一批 = 整组重出 → 清验算结果（防旧「✓通过」盖到新题=串台假徽章）
+  clearAllVerifyResults()
   dispatch(firstComposeMessage, '🔁 换一批（按原母题重新出一组）')
 }
 
@@ -1677,6 +1723,8 @@ function clearCanvas() {
   for (const k of Object.keys(figureStemAtIndex)) delete figureStemAtIndex[Number(k)]
   autoCropMotherDone = false
   autoComposedIndexes.clear()
+  // 🔴 PRD-A-018 A-3：验算结果随会话重置（切会话/新会话从零开始，旧徽章不串到新会话）
+  clearAllVerifyResults()
 }
 
 /** 新会话（原「新母题」）：换新 thread；首条消息发出时才登记进会话列表 */
@@ -1914,7 +1962,9 @@ onBeforeUnmount(() => {
            绑当前活跃轮 stages（currentRail，onStage 实时更新）；对话流内不再逐轮各放一条
            （对齐设计稿 design-ref-02/03 = 单条常驻顶栏）。恢复会话时不显（避免闪）。 -->
       <div v-if="!restoring" class="idle-rail-wrap">
-        <PhasedStatusRail :stages="currentRail?.stages ?? []" />
+        <!-- 🔴 PRD-A-018 C3(A-24)：点开始→首帧的过渡窗口，sending=true 但 currentRail.stages 仍空，
+             传 :starting 让状态条显「启动中」而非「待机」（消除「系统在跑却显待机」瞬态矛盾）。 -->
+        <PhasedStatusRail :stages="currentRail?.stages ?? []" :starting="sending" />
       </div>
 
       <div ref="streamRef" class="chat-stream">
@@ -2145,6 +2195,8 @@ onBeforeUnmount(() => {
       :regenerating-indexes="regeneratingIndexes"
       :variant-figures="variantFigures"
       :anchor-chip="anchorChip"
+      :has-pending-upload="pendingImages.length > 0"
+      :pending-upload-count="pendingImages.length"
       @utterance="sendUtterance"
       @regenerate="regenerate"
       @persist="persistAll"
