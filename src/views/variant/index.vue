@@ -249,7 +249,7 @@ function normalizeCommands(raw: unknown): string[] {
 const variantFigures = reactive<Record<number, VariantFigureState>>({})
 
 // 🔴 修1（图串台 root cause）：variantFigures 按「裸 1-based index」缓存，而 index 在「换一批」/
-//   改主考点·年级重出 / onArtifact 整量替换后会被新一组题复用 —— 旧 index 的图直接套到新题上。
+//   改年级重出 / 重生 / onArtifact 整量替换后会被新一组题复用 —— 旧 index 的图直接套到新题上。
 //   这里记下「该 index 当前缓存的图是为哪条题面（stem）生成的」，onArtifact 收到新快照时逐 index 比对，
 //   凡题面变了的 index 一律作废它的旧图（删 variantFigures[index]），让新题用自己的题面重画，不复用旧图。
 //   选 (a)「按 stem 比对作废」而非 (b)「换 key」：因为「换一批」是新的一组题、seq 仍从 1 重排，
@@ -744,9 +744,10 @@ async function scrollToBottom() {
 //   实现：统一 confirmTokenSpend()（包 ElMessageBox.confirm，文案点明「消耗 token」，青紫冷浅样式）。
 //     取消（reject）→ resolve(false)，调用方据此「不触发 emit / 不调接口」直接 return。
 //   挂闸点（见各 handler 入口）：换一批 / 重生(单题·下游·全部) / 换数字·换场景·答疑 / 答疑 /
-//     重新验算 / 开始举一反三 / 改主考点·年级触发的整组重出（BUG-01 静默烧 token 也套闸）/
+//     重新验算 / 开始举一反三 / 改年级触发的整组重出（hard_anchor，仍重出耗 token）/
 //     变式配图·重新配图·图片重生（compose-figure，调中转造图耗 token）。
-//   不挂闸（非耗 token / 本地动作）：入库 / 加篮 / 编辑 / 手动排版 / 撤销重生 / DNA meta 改 / 折叠展开。
+//   不挂闸（非耗 token / 本地动作）：入库 / 加篮 / 编辑 / 手动排版 / 撤销重生 / DNA meta 改 / 折叠展开 /
+//     🔴 BUG-01 改主考点（now soft_regen：只标待重生不立即重出 → 改时零 token，重生在「重生」按钮自带闸）。
 // ---------------------------------------------------------------------------
 async function confirmTokenSpend(
   detail = '此操作将调用 AI 生成、消耗 token。',
@@ -1494,7 +1495,12 @@ async function onEditMotherDna(payload: { field: DnaField; value: DnaEditValue }
   try {
     const a = await editVariantDna(threadId.value, 1, payload.field, payload.value)
     if (a) artifact.value = a
-    ElMessage.success('已更新母题考点（下游变式已标待重生，点「重生下游变式」按新基准重出）')
+    // 🔴 BUG-01：改主考点专属提示（不会清 items / 整组重出，仅标待重生，可撤销）。
+    if (payload.field === 'main_kp') {
+      ElMessage.success('已更新主考点（变式未清空、已标「待重生」；点「重生」按新考点重出，或「撤销改考点」回退）')
+    } else {
+      ElMessage.success('已更新母题考点（下游变式已标待重生，点「重生下游变式」按新基准重出）')
+    }
   } catch (e) {
     ElMessage.error(`更新母题考点失败：${e instanceof Error ? e.message : String(e)}`)
   }
@@ -1590,25 +1596,18 @@ async function onAddToBasket(index: number) {
 }
 
 /**
- * G13 ⑤：头部「主考点 / 年级」可改 —— 这是【组级守恒锚】（影响整组），非单题维。
- * T3/T4 的 edit-dna/revise 都是单题端点，无组级头部端点契约 → 走【既有 chat 通道】发一句
- * 受约束指令（同 thread_id，agent 据此整组重锚定/重出）。这是组级改动唯一已落地的安全路径。
- * 🔴 联调点：若后续 BE 提供组级 set-header 直连端点，这两处可改直连（零 LLM）。
+ * 🔴 BUG-01（2026-06-19）改主考点 —— 新行为：走 edit-dna(index=1, field=main_kp) 落 mother_dna，
+ * BE【不再】清 items / 回母题确认态 / 整组重锚重出（旧行为静默烧 token）。改为：只更新主考点 +
+ * items 全保留 + 被影响变式标 dna_dirty + 母题 dirty + 帧顶层带 main_kp_prev（旧考点快照）+ 一条
+ * 引导 AIMessage。老师据新考点重出 = 显式点母题卡「重生下游变式」（既有 regen_pending 通路）。
+ *
+ * 故此处不再：弹「整组重出不可回退」token 闸 / resetFigureCachesForNewGroup（清配图）/ chat 重出
+ * dispatch。改为零 LLM 直连 edit-dna（与改副考点等守恒维一致），返回的 artifact 整量替换即生效；
+ * 重生在老师显式点「重生」时才走（runRegen 自带 token 闸）。复用既有 onEditMotherDna 通路。
  */
-async function onEditHeaderKp(kp: { id: string; name: string }) {
+function onEditHeaderKp(kp: { id: string; name: string }) {
   if (sending.value) return
-  // 🔴 AC-TOKEN（BUG-01 知情）：改主考点在前端会触发整组按新考点重出（耗 token，且后端目前强制重出
-  //   不可回退）→ 至少先弹确认闸，让老师知情同意，绝不静默烧 token（前端套闸 ≠ 改后端重出逻辑）。
-  if (
-    !(await confirmTokenSpend(
-      '改主考点会按新考点重新生成整组变式、消耗 token（且重出后当前组不可回退）。',
-    ))
-  )
-    return
-  // 🔴 修1/修2：改主考点 = 整组按新考点重出 → 是「新的一组」。先清旧配图缓存 + 复位首图 guard，
-  //   新题来时按自己题面重画、第一张重新自动出（onArtifact 会再兜底，这里提前清免重出期残留旧图）。
-  resetFigureCachesForNewGroup()
-  dispatch(`把整组主考点改成「${kp.name}」，按新主考点重新出这组变式`, `主考点 → ${kp.name}`)
+  void onEditMotherDna({ field: 'main_kp', value: { id: kp.id, name: kp.name } })
 }
 async function onEditHeaderGrade(grade: string) {
   if (sending.value || !grade) return
@@ -2179,6 +2178,7 @@ onBeforeUnmount(() => {
           :persisted="motherPersisted"
           :persisting="motherPersisting"
           :mother-dirty="!!artifact?.header.motherDirty"
+          :main-kp-prev="artifact?.mainKpPrev ?? null"
           :has-variants="!!artifact?.items.length"
           :regenerating="regeneratingIndexes.length > 0"
           :sending="sending"

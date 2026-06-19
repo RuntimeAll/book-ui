@@ -197,11 +197,16 @@ export interface VariantDna {
 // ---------------------------------------------------------------------------
 // PRD-C-015 批5 — DNA 改→重生四分流（前后端共用常量）。
 // 每个 DNA 维按 regen_class 分四类，FE 据此渲染分流徽章 + 决定改后行为：
-//   hard_anchor 【主考点/年级】 改 → 立即解冻重锚（清 items 重出，不进 dirty 攒批）
-//   soft_regen  【题型/难度/考察类型/场景】改 → 标 dna_dirty + 角标，点「重生」统一重出
+//   hard_anchor 【年级】 改 → 立即解冻重锚（清 items 重出，不进 dirty 攒批）
+//   soft_regen  【主考点/题型/难度/考察类型/场景】改 → 标 dna_dirty + 角标，点「重生」统一重出
 //   rewrite_solve【解法骨架/models】 改 → 重写解析（过闸B），置 dirty 直到重写完
 //   meta        【标签/副考点】 改 → 只标注即时生效，不进 dirty
 // 🔴 与 BE src/agents/variant.py REGEN_CLASS 严格对齐（批4 落）。
+// 🔴 BUG-01（2026-06-19）：main_kp 从 hard_anchor 降为 soft_regen —— BE 改主考点不再清 items /
+//    回母题确认态 / 整组重锚重出（旧行为静默烧 token），改为：只更新主考点字段 + items 全保留 +
+//    被影响变式标 dna_dirty + 母题 dirty + artifact 顶层带 main_kp_prev（旧考点快照）+ 一条引导
+//    AIMessage。老师据新考点重出 = 显式点「重生」（复用 soft_regen 的 regen_pending 通路）。
+//    故 FE 同步：main_kp 不再触发「整组重做」的本地 UI（清配图缓存 / chat 重出 dispatch 全去除）。
 // ---------------------------------------------------------------------------
 export type RegenClass = 'hard_anchor' | 'soft_regen' | 'rewrite_solve' | 'meta'
 
@@ -221,7 +226,8 @@ export type DnaField =
 
 /** field → regen_class 映射（前后端共用常量，按 field 渲染四分流徽章） */
 export const REGEN_CLASS: Record<DnaField, RegenClass> = {
-  main_kp: 'hard_anchor',
+  // 🔴 BUG-01：main_kp 改 → 软重生（标 dirty + 待重生），不再 hard_anchor 立即重锚清 items。
+  main_kp: 'soft_regen',
   grade: 'hard_anchor',
   qtype: 'soft_regen',
   difficulty: 'soft_regen',
@@ -400,10 +406,29 @@ export interface VariantArtifactHeader {
   mother_card: unknown
 }
 
+/**
+ * 🔴 BUG-01（2026-06-19）— 改主考点旧考点快照（artifact 顶层 main_kp_prev）。
+ * BE 改主考点（edit-dna field=main_kp）后在 artifact 顶层带这个旧考点快照，FE 据它：
+ *   ① 提示「主考点已从 X 改为 Y，被影响变式待重生」；
+ *   ② 提供「撤销改考点」入口（拿 main_kp/kp_node 再调一次 edit-dna 回旧考点）。
+ * 结构形如 {main_kp, kp_node}（kp_node 通常含旧考点 id/name，撤销时回写）。无 → null。
+ */
+export interface VariantMainKpPrev {
+  /** 旧主考点名（撤销时展示 + 回写 name） */
+  mainKp: string | null
+  /** 旧主考点知识点 id（撤销时回写 edit-dna value.id；缺则仅按名回退） */
+  mainKpId: string | null
+}
+
 /** artifact 快照（整帧 = 当前题组全量） */
 export interface VariantArtifact {
   items: VariantArtifactItem[]
   header: VariantArtifactHeader
+  /**
+   * 🔴 BUG-01：改主考点后 BE 在帧顶层带旧考点快照（main_kp_prev）。非空 → 母题卡显「撤销改考点」
+   * 入口 + 待重生提示。无（未改 / 旧后端 / 已撤销）→ null。
+   */
+  mainKpPrev?: VariantMainKpPrev | null
   /**
    * PRD-C-012 P2 渐进渲染 — 增量帧标记：true = 流内增量帧（items = 已完成题的
    * 全量快照，按生成序）；定稿帧没有 partial 键（解析后为 undefined = 定稿语义）。
@@ -506,6 +531,26 @@ function pickMotherConfirm(v: unknown): VariantMotherConfirm | null {
       ? strArr(o.confirmed_dims)
       : strArr(o.confirmedDims),
   }
+}
+
+/**
+ * 🔴 BUG-01 — 从原始值解出 main_kp_prev（artifact 顶层旧考点快照；结构不符 → null）。
+ * 兼容 BE 结构 {main_kp, kp_node:{id,name}} 与散键（main_kp_id / kp_id）。
+ * mainKp/mainKpId 任一非空才返回对象（纯空 → null，FE 视作「未改 / 已撤销」不显撤销入口）。
+ */
+function pickMainKpPrev(v: unknown): VariantMainKpPrev | null {
+  if (!v || typeof v !== 'object') return null
+  const o = v as Record<string, unknown>
+  const node = (o.kp_node && typeof o.kp_node === 'object' ? o.kp_node : null) as Record<
+    string,
+    unknown
+  > | null
+  const mainKp = str(o.main_kp) ?? str(o.mainKp) ?? (node ? str(node.name) ?? str(node.title) : null)
+  const idRaw =
+    o.main_kp_id ?? o.mainKpId ?? o.kp_id ?? (node ? node.id ?? node.code : undefined)
+  const mainKpId = idRaw == null || String(idRaw).trim() === '' ? null : String(idRaw)
+  if (!mainKp && !mainKpId) return null
+  return { mainKp, mainKpId }
 }
 
 // ---------------------------------------------------------------------------
@@ -829,6 +874,8 @@ function pickArtifact(msg: ToolkitChatMessage): VariantArtifact | null {
   if (ax.partial === true) out.partial = true
   const et = typeof ax.expected_total === 'number' ? ax.expected_total : Number(ax.expected_total)
   if (Number.isFinite(et) && et > 0) out.expectedTotal = Math.floor(et)
+  // 🔴 BUG-01：改主考点旧考点快照（顶层 main_kp_prev / 兼容驼峰 mainKpPrev）。无 → null。
+  out.mainKpPrev = pickMainKpPrev(ax.main_kp_prev ?? ax.mainKpPrev)
   return out
 }
 

@@ -33,6 +33,7 @@ import {
   type DnaEditValue,
   type DnaField,
   type MotherFigureItem,
+  type VariantMainKpPrev,
   type VariantMotherCard,
 } from '@/api/variant'
 import MarkdownMath from '@/components/MarkdownMath.vue'
@@ -88,6 +89,11 @@ const props = defineProps<{
    *   缺省 false（展开）；父不传则始终展开（向后兼容）。
    */
   collapsed?: boolean
+  /**
+   * 🔴 BUG-01（2026-06-19）改主考点旧考点快照（artifact.mainKpPrev）。非空 → 主考点行显「撤销改考点」
+   *   入口（拿旧考点再调一次 edit-dna 回退）。无（未改 / 已撤销 / 旧后端）→ 不显撤销入口。
+   */
+  mainKpPrev?: VariantMainKpPrev | null
 }>()
 
 const emit = defineEmits<{
@@ -193,6 +199,28 @@ const kpDialog = ref(false)
 function onPickSecondaryKps(value: Array<{ id: string; name: string }>) {
   emit('edit-mother-dna', { field: 'secondary_kps', value })
   kpDialog.value = false
+}
+
+// ---- 🔴 BUG-01 守恒维：主考点（知识点树单选；改 → edit-mother-dna field=main_kp，软重生）----
+//   BE 改后不清 items、只标待重生 + 带 main_kp_prev 旧考点快照（供撤销）。
+const mainKpDialog = ref(false)
+function onPickMainKp(value: { id: string; name: string }) {
+  emit('edit-mother-dna', { field: 'main_kp', value })
+  mainKpDialog.value = false
+}
+// 撤销改考点：拿 main_kp_prev 的旧考点（优先 id，回退仅名）再调一次 edit-dna 回退。
+const canUndoMainKp = computed(
+  () => !!props.mainKpPrev && (!!props.mainKpPrev.mainKp || !!props.mainKpPrev.mainKpId)
+)
+function onUndoMainKp() {
+  if (props.sending || !props.mainKpPrev) return
+  const prev = props.mainKpPrev
+  const name = prev.mainKp || ''
+  // 旧考点 id 缺失时按名回退（BE 据名解析）；name 也缺则不动（canUndoMainKp 已挡）。
+  emit('edit-mother-dna', {
+    field: 'main_kp',
+    value: { id: prev.mainKpId || '', name },
+  })
 }
 
 // ---- B3.6 守恒维：考察类型（闭集下拉）----
@@ -444,8 +472,23 @@ const hasFigureCol = computed(
 
         <!-- 全 10 维 DNA（副考点 / 考察类型 / 难点 可改 = C-015 守恒维） -->
         <div class="mc-dna-grid">
-          <span class="mc-k">主考点</span>
-          <span class="mc-v"><b>{{ dna?.mainKp || motherCard?.anchorKp || '未锚定' }}</b></span>
+          <span class="mc-k">主考点 <span class="mc-edit-tag">可改</span></span>
+          <span class="mc-v">
+            <b>{{ dna?.mainKp || motherCard?.anchorKp || '未锚定' }}</b>
+            <!-- 🔴 BUG-01：改主考点 = 软重生（不清 items，标待重生）→ 知识点树单选改。 -->
+            <button type="button" class="mc-min-btn" :disabled="sending" @click="mainKpDialog = true">改</button>
+            <!-- 🔴 BUG-01：撤销改考点（main_kp_prev 有旧考点快照才显）→ 拿旧考点回退。 -->
+            <button
+              v-if="canUndoMainKp"
+              type="button"
+              class="mc-undo-btn"
+              :disabled="sending"
+              :title="`撤销，回到旧主考点「${mainKpPrev?.mainKp || ''}」`"
+              @click="onUndoMainKp"
+            >
+              ↩ 撤销改考点
+            </button>
+          </span>
 
           <span class="mc-k">副考点 <span class="mc-edit-tag">可改</span></span>
           <span class="mc-v">
@@ -556,6 +599,14 @@ const hasFigureCol = computed(
       :max="3"
       :preselected="[]"
       @pick-multi="onPickSecondaryKps"
+    />
+
+    <!-- 🔴 BUG-01：主考点知识点树（单选；改 → 软重生，不清 items） -->
+    <KpTreeDialog
+      v-model="mainKpDialog"
+      mode="single"
+      title="改母题主考点（选叶子知识点）"
+      @pick="onPickMainKp"
     />
   </section>
 </template>
@@ -897,6 +948,24 @@ const hasFigureCol = computed(
   background: var(--teal-50);
 }
 .mc-min-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* 🔴 BUG-01：撤销改考点小按钮（琥珀=可回退态，与待重生同色系）。 */
+.mc-undo-btn {
+  font-size: 11px;
+  color: var(--amber, #b45309);
+  background: var(--paper);
+  border: 1px solid var(--amber, #b45309);
+  border-radius: var(--r-xs);
+  padding: 1px 9px;
+  margin-left: 6px;
+  cursor: pointer;
+}
+.mc-undo-btn:hover:not(:disabled) {
+  background: rgba(180, 83, 9, 0.08);
+}
+.mc-undo-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
