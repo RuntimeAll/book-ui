@@ -37,7 +37,7 @@ import { useQuestionBasket } from '@/composables/useQuestionBasket'
 import { createQuestionWithDna, deleteQuestionBlock } from '@/api/question/index'
 import type { CreateQuestionWithDnaBo, QuestionItem } from '@/api/question/index'
 import MarkdownMath from '@/components/MarkdownMath.vue'
-import AiStageRail from '@/components/AiStageRail.vue'
+import PhasedStatusRail from './PhasedStatusRail.vue'
 import ArtifactPanel from './ArtifactPanel.vue'
 import MotherCard from './MotherCard.vue'
 import GradeChapterConfirmDialog from './GradeChapterConfirmDialog.vue'
@@ -97,6 +97,26 @@ interface RailItem {
 }
 
 type StreamItem = Bubble | RailItem
+
+// ---------------------------------------------------------------------------
+// 改点③（PRD-A-017 批2d）：AI 气泡语义高亮分类。
+//   数据现状：Bubble 只有 kind:'normal'|'error'（无结构化语义标记），确认走独立 dialog。
+//   故 normal 气泡按【内容朴素归类】（不硬造数据结构，不改 Bubble 类型）：
+//     error            → t-error   （红左条 ⚠）—— 来自 kind，确定。
+//     含「确认/请核对/开始举一反三」  → t-confirm （紫左条·待确认+行动）。
+//     含「就绪/入库/可以了/完成/通过」 → t-done    （青左条 ✓ 完成通知）。
+//     含「变式」且含「验算/平行度」   → t-summary （题组摘要，卡片化）。
+//     其余                          → t-normal  （朴素灰答疑）。
+//   类名映射到 scoped 左边条样式（见 <style>），全用 var(--xxx)。
+// ---------------------------------------------------------------------------
+function bubbleSemantic(b: Bubble): string {
+  if (b.kind === 'error') return 't-error'
+  const t = b.text || ''
+  if (/确认|请核对|请核实|开始举一反三|是否继续|帮我确认/.test(t)) return 't-confirm'
+  if (/已就绪|可以了|已入库|收录成功|入库成功|完成|通过|搞定/.test(t)) return 't-done'
+  if (/变式/.test(t) && /(验算|平行度|题组|这组)/.test(t)) return 't-summary'
+  return 't-normal'
+}
 
 const stream = ref<StreamItem[]>([])
 const input = ref('')
@@ -1812,7 +1832,27 @@ onBeforeUnmount(() => {
             class="msg-row"
             :class="item.role === 'user' ? 'is-user' : 'is-ai'"
           >
-            <div class="bubble" :class="item.role === 'ai' ? `ai-${item.kind}` : ''">
+            <div
+              class="bubble"
+              :class="
+                item.role === 'ai'
+                  ? [`ai-${item.kind}`, bubbleSemantic(item)]
+                  : ''
+              "
+            >
+              <!-- 改点③：AI 气泡语义高亮领标（确认请求显「待确认」紫标，完成通知显 ✓ 青标） -->
+              <span
+                v-if="item.role === 'ai' && bubbleSemantic(item) === 't-confirm'"
+                class="bubble-tag tag-confirm"
+              >
+                ◇ 待确认
+              </span>
+              <span
+                v-else-if="item.role === 'ai' && bubbleSemantic(item) === 't-done'"
+                class="bubble-tag tag-done"
+              >
+                ✓ 已完成
+              </span>
               <!-- P10：图随气泡进流（~120px 缩略图，点开看大图）；同气泡可带文字 -->
               <div v-if="item.images && item.images.length" class="bubble-imgs">
                 <img
@@ -1851,7 +1891,7 @@ onBeforeUnmount(() => {
               </div>
             </div>
             <div v-if="item.stages.length > 0" class="msg-row is-ai">
-              <AiStageRail class="stage-rail-wrap" :stages="item.stages" />
+              <PhasedStatusRail class="stage-rail-wrap" :stages="item.stages" />
             </div>
           </template>
         </template>
@@ -2259,6 +2299,50 @@ onBeforeUnmount(() => {
   border: 1px solid var(--red-line);
   color: var(--red);
   border-bottom-left-radius: 4px;
+}
+
+/* ── 改点③：AI 气泡语义高亮（左边条 + 领标），全 var(--xxx） ── */
+/* 普通答疑：朴素灰（沿用 ai-normal，无额外左条） */
+.is-ai .bubble.t-confirm {
+  background: var(--violet-50);
+  border-color: var(--violet-line);
+  border-left: 3px solid var(--violet);
+}
+.is-ai .bubble.t-done {
+  background: var(--teal-50);
+  border-color: var(--teal-line);
+  border-left: 3px solid var(--teal);
+}
+.is-ai .bubble.t-summary {
+  background: var(--paper);
+  border-color: var(--teal-line);
+  border-left: 3px solid var(--teal);
+}
+.is-ai .bubble.t-error {
+  background: var(--red-50);
+  border-color: var(--red-line);
+  border-left: 3px solid var(--red);
+}
+/* 语义领标 */
+.bubble-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  font-weight: 700;
+  border-radius: 5px;
+  padding: 1px 7px;
+  margin-bottom: 6px;
+}
+.bubble-tag.tag-confirm {
+  color: var(--violet-700);
+  background: #fff;
+  border: 1px solid var(--violet-line);
+}
+.bubble-tag.tag-done {
+  color: var(--teal-700);
+  background: #fff;
+  border: 1px solid var(--teal-line);
 }
 
 /* 思路条在消息流里的占宽（视觉本体在 AiStageRail 组件内） */
