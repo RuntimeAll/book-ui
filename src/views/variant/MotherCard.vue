@@ -245,6 +245,14 @@ const REASON_NOT_NEEDED = /不适合配图|未给命令|无需配图|不需配�
 const figureReasonSaysNotNeeded = computed(
   () => !!props.figureReason && REASON_NOT_NEEDED.test(props.figureReason)
 )
+// 🔴 PRD-A-017 polish2：切图基建缺失（doclayout_yolo/torch/cv2 未装、权重缺）会回「母题切图失败:
+//   No module named …」之类**原始 Python 异常**——老师看不懂、无法处置，是 infra 噪音不是产品信息。
+//   命中即整体当「切图不可用」收起：不显 ⚠待补图、不显原始异常文案（真失败留后端日志/bug 池 BUG-02，
+//   不漏给老师；纯文本母题本就无图可切，收起亦无误导）。非禁假数据——切图确不可用，诚实地不假装有图。
+const REASON_IS_INFRA = /no module|modulenotfound|importerror|traceback|切图失败|无法加载|errno|exception|\bError\b/i
+const figureReasonIsInfra = computed(
+  () => !!props.figureReason && REASON_IS_INFRA.test(props.figureReason)
+)
 const figureNotNeeded = computed(
   () =>
     figureList.value.length === 0 &&
@@ -339,7 +347,7 @@ const figureNotNeeded = computed(
           </div>
         </template>
         <!-- G4：确需配图但没切出来 → ⚠待补图。🔴 Fix-B：reason 表「不适合切图」时去噪不显。 -->
-        <div v-else-if="figureNeedsFigure && !figureReasonSaysNotNeeded" class="mc-figure-warn">⚠ 待补图</div>
+        <div v-else-if="figureNeedsFigure && !figureReasonSaysNotNeeded && !figureReasonIsInfra" class="mc-figure-warn">⚠ 待补图</div>
         <!-- 切图 / 重切按钮（loading 期转圈） -->
         <el-button
           text
@@ -352,7 +360,7 @@ const figureNotNeeded = computed(
           {{ figureList.length ? '重新切图' : '切图形' }}
         </el-button>
         <!-- 🔴 Fix-B：不需切图态不显 reason（避免「母题切图失败」对纯文本母题的误报噪音） -->
-        <p v-if="figureReason && !figureNotNeeded" class="mc-figure-reason">{{ figureReason }}</p>
+        <p v-if="figureReason && !figureNotNeeded && !figureReasonIsInfra" class="mc-figure-reason">{{ figureReason }}</p>
       </div>
 
       <div class="mc-main">

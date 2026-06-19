@@ -162,18 +162,24 @@ const REASON_NOT_NEEDED = /不适合配图|未给命令|无需配图|不需配�
 const figureReasonSaysNotNeeded = computed(
   () => !!props.figureReason && REASON_NOT_NEEDED.test(props.figureReason)
 )
+// 🔴 PRD-A-017 polish2：配图基建缺失（doclayout_yolo/torch/cv2/权重）回的原始 Python 异常文案
+//   是 infra 噪音（老师看不懂、无法处置）→ 当「配图不可用」收起，不漏 ⚠待补图/异常给老师（真失败留 BUG-02）。
+const REASON_IS_INFRA = /no module|modulenotfound|importerror|traceback|配图失败|切图失败|无法加载|errno|exception|\bError\b/i
+const figureReasonIsInfra = computed(
+  () => !!props.figureReason && REASON_IS_INFRA.test(props.figureReason)
+)
 const figureNotNeeded = computed(
   () =>
     !props.figurePng &&
     (figureReasonSaysNotNeeded.value || (!props.figureNeedsFigure && !!props.figureReason))
 )
-// 配图区是否整体渲染：有图 / 进行中 / 确需配图但缺（且 reason 非「不适合」语义）才显；
-//   「不需配图（含 reason 自相矛盾态）」与「未尝试」时收起（去噪，设计稿纯文本题无配图区）。
+// 配图区是否整体渲染：有图 / 进行中 / 确需配图但缺（且 reason 非「不适合」语义、非 infra 异常）才显；
+//   「不需配图（含 reason 自相矛盾态）」「infra 异常」与「未尝试」时收起（去噪，设计稿纯文本题无配图区）。
 const showFigureZone = computed(
   () =>
     !!props.figurePng ||
     !!props.figureLoading ||
-    (!!props.figureNeedsFigure && !figureReasonSaysNotNeeded.value)
+    (!!props.figureNeedsFigure && !figureReasonSaysNotNeeded.value && !figureReasonIsInfra.value)
 )
 
 // ---------------------------------------------------------------------------
