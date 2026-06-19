@@ -190,6 +190,17 @@ const allPersisted = computed(
   () => items.value.length > 0 && items.value.every((i) => i.persisted)
 )
 
+// 🔴 PRD-A-017 空态高保真：纯空态 = 无题卡、无占位、非发送中、母题未就绪。
+//   此态下 ① 画布头去掉「换一批 / 全部入库 / 重生」按钮（设计稿空态画布头只剩「变式」标题）；
+//   ② 画布体渲染设计稿 hero 三叠卡 + 4 步 stepper + recipe-note 引导（restyle.html 空态右栏）。
+const isPureEmpty = computed(
+  () =>
+    items.value.length === 0 &&
+    pendingCount.value === 0 &&
+    !props.sending &&
+    !hasMother.value
+)
+
 // PRD-C-015 批5：待重生集合（致命①入库拦截 + 「重生全部」按钮）。
 // 优先读 header.regen_pending（BE 权威）；缺失则从 item.dnaDirty / dirtyDims / motherDirtyDims 兜算。
 const regenPendingIndexes = computed<number[]>(() => {
@@ -354,35 +365,38 @@ function regenAll() {
           <span class="vh-flow">举一反三 <b>{{ items.length }}</b> 道变式</span>
         </template>
         <!-- 兜底：母题未就绪 → 原「变式题组 · N 道」标题 -->
-        <h2 v-else class="canvas-title">变式题组<template v-if="items.length"> · {{ items.length }} 道</template></h2>
+        <h2 v-else class="canvas-title">变式<template v-if="items.length">题组 · {{ items.length }} 道</template></h2>
         <span class="head-spacer" />
-        <!-- PRD-C-015 批5：待重生集合非空 → 「重生 N 题」按钮（D-merge8 一键重出全集合） -->
-        <el-button
-          v-if="regenPendingIndexes.length > 0"
-          size="small"
-          class="regen-all-btn"
-          :loading="!!(regeneratingIndexes && regeneratingIndexes.length)"
-          :disabled="sending"
-          @click="regenAll"
-        >
-          🔄 重生 {{ regenPendingIndexes.length }} 题
-        </el-button>
-        <el-button
-          size="small"
-          :disabled="sending || !canRegenerate"
-          @click="regenerate"
-        >
-          换一批
-        </el-button>
-        <el-button
-          size="small"
-          class="persist-btn"
-          :disabled="sending || items.length === 0 || allPersisted || hasDirty"
-          :title="hasDirty ? '有题改了还没重生，先点「重生」或撤销' : ''"
-          @click="persistAll"
-        >
-          {{ allPersisted ? '已全部收录' : '全部入库' }}
-        </el-button>
+        <!-- 🔴 PRD-A-017 空态：画布头只剩「变式」标题，不显「换一批 / 全部入库 / 重生」（设计稿空态画布头干净） -->
+        <template v-if="!isPureEmpty">
+          <!-- PRD-C-015 批5：待重生集合非空 → 「重生 N 题」按钮（D-merge8 一键重出全集合） -->
+          <el-button
+            v-if="regenPendingIndexes.length > 0"
+            size="small"
+            class="regen-all-btn"
+            :loading="!!(regeneratingIndexes && regeneratingIndexes.length)"
+            :disabled="sending"
+            @click="regenAll"
+          >
+            🔄 重生 {{ regenPendingIndexes.length }} 题
+          </el-button>
+          <el-button
+            size="small"
+            :disabled="sending || !canRegenerate"
+            @click="regenerate"
+          >
+            换一批
+          </el-button>
+          <el-button
+            size="small"
+            class="persist-btn"
+            :disabled="sending || items.length === 0 || allPersisted || hasDirty"
+            :title="hasDirty ? '有题改了还没重生，先点「重生」或撤销' : ''"
+            @click="persistAll"
+          >
+            {{ allPersisted ? '已全部收录' : '全部入库' }}
+          </el-button>
+        </template>
       </div>
       <!-- PRD-C-015 批5：母题脏 / 待重生提示条（致命①入库拦截原因外显） -->
       <div v-if="hasDirty" class="dirty-banner">
@@ -487,14 +501,34 @@ function regenAll() {
         </div>
       </template>
 
-      <!-- 空态引导（旧后端无 artifact 帧时也落这里，左栏不受影响） -->
-      <div v-else class="canvas-empty">
-        <div class="empty-emoji">🗂</div>
-        <p class="empty-title">题组卡片会出现在这里</p>
-        <p class="empty-tip">
-          在左侧贴一张母题图开始出题；每道变式以卡片呈现——题干、解析折叠、
-          验算徽章、换数字 / 换场景快捷键，最后一键「全部入库」。
+      <!-- 🔴 PRD-A-017 空态高保真重建（restyle.html 空态右栏）：hero 三叠卡 + 标题副文 +
+           4 步 stepper + recipe-note 配方引导。逐元素照搬设计稿，颜色用 token。 -->
+      <div v-else class="empty-canvas">
+        <svg class="hero-ic" viewBox="0 0 108 92" fill="none">
+          <rect x="20" y="14" width="64" height="48" rx="7" fill="#fff" stroke="#CBE2DF" stroke-width="1.4" />
+          <rect x="30" y="24" width="64" height="48" rx="7" fill="#F5F8F8" stroke="#CBE2DF" stroke-width="1.4" />
+          <rect x="40" y="34" width="64" height="48" rx="7" fill="#fff" stroke="#1E8A8A" stroke-width="1.5" />
+          <path d="M50 48h30M50 58h44M50 68h22" stroke="#9FD0CC" stroke-width="2" stroke-linecap="round" />
+          <circle cx="96" cy="40" r="9" fill="#E4F4ED" stroke="#1F9D6B" stroke-width="1.4" />
+          <path d="M92 40l3 3 5-6" stroke="#1F9D6B" stroke-width="1.6" fill="none" stroke-linecap="round" />
+        </svg>
+        <h2>上传一道题，开始举一反三</h2>
+        <p class="sub">
+          在左侧贴一张母题图，AI 读出它的考点·年级·题型，出 3 道考点一致、只换数字情境的变式，逐题验算后可一键入库。
         </p>
+        <div class="stepper">
+          <div class="node"><div class="nd" /><div class="nl">贴母题图</div></div>
+          <div class="seg" />
+          <div class="node"><div class="nd" /><div class="nl">AI 读图<br />定考点·年级</div></div>
+          <div class="seg" />
+          <div class="node"><div class="nd" /><div class="nl">出 3 道变式</div></div>
+          <div class="seg" />
+          <div class="node"><div class="nd" /><div class="nl">验算 · 入库</div></div>
+        </div>
+        <div class="recipe-note">
+          <b>默认出 3 道</b>（2 普通 1 难）<span class="sep">·</span> 守考点 · 换数字 / 情境
+          <span class="sep">·</span> 想多出 / 调难度，贴图时说「出 5 道」「难一点」即可
+        </div>
       </div>
     </div>
   </section>
@@ -794,24 +828,85 @@ function regenAll() {
   color: var(--muted);
 }
 
-.canvas-empty {
+/* 🔴 PRD-A-017 空态高保真（restyle.html .empty-canvas / .hero-ic / .stepper / .recipe-note）：
+   居中三叠卡 + 标题副文 + 4 步横向 stepper（青点 + 渐变连线）+ recipe-note 配方引导。 */
+.empty-canvas {
   margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   text-align: center;
+}
+.hero-ic {
+  width: 108px;
+  height: 92px;
+  opacity: 0.92;
+  margin-bottom: 20px;
+}
+.empty-canvas h2 {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.empty-canvas .sub {
+  font-size: 13px;
   color: var(--muted);
-  max-width: 360px;
+  max-width: 380px;
+  margin-top: 8px;
+  line-height: 1.7;
 }
-.empty-emoji {
-  font-size: 36px;
+.stepper {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin-top: 30px;
 }
-.empty-title {
-  font-size: 14px;
-  font-weight: 600;
+.stepper .node {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 104px;
+}
+.stepper .nd {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--teal);
+  box-shadow: 0 0 0 4px var(--teal-50);
+}
+.stepper .nl {
+  font-size: 12px;
   color: var(--ink-2);
-  margin: 8px 0 4px;
+  font-weight: 500;
+  line-height: 1.35;
 }
-.empty-tip {
+.stepper .seg {
+  width: 46px;
+  height: 1.5px;
+  background: linear-gradient(90deg, var(--teal-line), var(--teal-line));
+  margin-bottom: 25px;
+  border-radius: 2px;
+}
+.recipe-note {
+  margin-top: 34px;
   font-size: 12px;
   color: var(--faint);
-  line-height: 1.7;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+  max-width: 480px;
+}
+.recipe-note b {
+  color: var(--muted);
+  font-weight: 600;
+}
+.recipe-note .sep {
+  color: var(--teal-line);
 }
 </style>

@@ -1847,74 +1847,12 @@ onBeforeUnmount(() => {
         </el-button>
       </header>
 
-      <!-- 顶部：图入口（Ctrl+V 粘贴截图 / 贴 URL）。改点③：去掉冗余母题缩略徽章，
-           母题图已在用户气泡里展示（守恒锚靠右栏母题卡承载） -->
-      <div class="mother-bar">
-        <div class="mother-input">
-          <el-input
-            v-model="imageUrl"
-            size="default"
-            placeholder="可直接 Ctrl+V 粘贴截图，或贴 OSS / 公网图片地址（http…）后回车加入附件"
-            :disabled="sending || uploading"
-            clearable
-            @keyup.enter.prevent="commitUrlInput"
-            @blur="commitUrlInput"
-          >
-            <template #prepend>🖼 母题图</template>
-            <!-- 改点②：📎 上传图片 = 点击弹原生文件选择框（复用 uploadPastedImage） -->
-            <template #append>
-              <el-button
-                class="pick-file-btn"
-                :disabled="sending || uploading"
-                :loading="uploading"
-                title="选择本地图片上传"
-                @click="pickImageFile"
-              >
-                📎 上传图片
-              </el-button>
-            </template>
-          </el-input>
-          <!-- 隐藏 file input：pickImageFile 触发其 click，选中走 onFilePicked → uploadPastedImage -->
-          <input
-            ref="fileInput"
-            type="file"
-            accept="image/jpeg,image/png,image/webp,image/gif"
-            style="display: none"
-            @change="onFilePicked"
-          />
-          <!-- P10：待发附件缩略图（可删除），发送时随用户气泡进流 -->
-          <div v-if="pendingImages.length" class="pending-imgs">
-            <div v-for="(u, k) in pendingImages" :key="k" class="pending-thumb">
-              <img :src="u" referrerpolicy="no-referrer" @click="previewUrl = u" />
-              <button type="button" class="pending-del" :disabled="sending" @click="removePending(u)">
-                ✕
-              </button>
-            </div>
-          </div>
-          <p v-if="uploading" class="uploading-hint">截图上传中…</p>
-          <p class="default-hint">
-            默认配方：守考点 + 年级 + 难度，换数字 / 情境，出 3 道（2 普通 1 难）。
-            出题后可直接点右侧卡片上的「换数字 / 换场景 / 答疑」，或在这里说
-            「删第2」「难一点」「补2道同第3」，最后说「可以了」入库。
-          </p>
-          <!-- 🔴 思考过程开关：开 → 走支持思考链的中转站，流式展示 AI 思考过程（更慢 + 付费）。
-               关（默认）→ 走主站、不展示思考、更快更省。开了但站点不支持则静默忽略、不报错。 -->
-          <div class="thinking-toggle-bar">
-            <el-switch
-              v-model="thinkingStream"
-              size="small"
-              :disabled="sending"
-              data-testid="thinking-stream-switch"
-            />
-            <span class="thinking-toggle-label">思考过程</span>
-            <el-tooltip
-              placement="top"
-              content="开启后展示 AI 的思考过程（可折叠），会走支持思考链的通道，稍慢且按思考输出额外计费；关闭则更快更省，不展示思考。"
-            >
-              <span class="thinking-toggle-hint">ⓘ</span>
-            </el-tooltip>
-          </div>
-        </div>
+      <!-- 🔴 PRD-A-017 空态高保真：chat-head 下方「待机」状态条（restyle.html 空态 .pstat）。
+           空态（无对话且非恢复中）才显示，PhasedStatusRail 收空 stages → isEmpty 分支渲染
+           「[待机] 定题中 0/2阶段 + ○ 待机 · 拍一道题丢进来，自动开始读图锚定」。
+           对话开始后本条隐藏，真正的逐轮思路条由 chat-stream 内的 rail 锚点接管。 -->
+      <div v-if="stream.length === 0 && !restoring" class="idle-rail-wrap">
+        <PhasedStatusRail :stages="[]" />
       </div>
 
       <div ref="streamRef" class="chat-stream">
@@ -1922,13 +1860,19 @@ onBeforeUnmount(() => {
           <div class="empty-emoji">⏳</div>
           <p class="empty-title">正在恢复上次会话…</p>
         </div>
-        <div v-else-if="stream.length === 0" class="chat-empty">
-          <div class="empty-emoji">🧮</div>
-          <p class="empty-title">贴一张题目图，开始举一反三</p>
-          <p class="empty-tip">
-            AI 会先分析这道母题的年级 / 考点 / 题型，再出 3 道考点一致、只换数字情境的变式题。
-            题组会以卡片形式出现在右侧画布，左侧保留 AI 的分析与解释。
-          </p>
+        <!-- 🔴 PRD-A-017 空态高保真（restyle.html 空态左栏 .empty-chat）：
+             几何罗盘插画 .geo（逐行照搬 SVG）+ 标题「拍一道题丢进来，我帮你出 3 道变式」+ 副文。 -->
+        <div v-else-if="stream.length === 0" class="empty-chat">
+          <svg class="geo" viewBox="0 0 168 148" fill="none" stroke-linecap="round">
+            <circle cx="84" cy="72" r="44" stroke="#9FD0CC" stroke-width="1.4" />
+            <path d="M30 72H138M84 18V126" stroke="#C7DAD8" stroke-width="1.1" />
+            <path d="M44 106L124 38" stroke="#B6A8F2" stroke-width="1.4" />
+            <path d="M48 40L120 106" stroke="#7FC6C2" stroke-width="1.4" />
+            <circle cx="84" cy="72" r="3" fill="#1E8A8A" />
+            <path d="M94 72A10 10 0 0090 63" stroke="#7B6CF0" stroke-width="1.3" />
+          </svg>
+          <h3>拍一道题丢进来，我帮你出 3 道变式</h3>
+          <p>AI 先读出年级 / 考点 / 题型，再出 3 道考点一致、只换数字情境的变式。</p>
         </div>
 
         <template v-for="(item, i) in stream" :key="i">
@@ -2012,24 +1956,92 @@ onBeforeUnmount(() => {
       </div>
 
       <footer class="chat-input">
-        <el-input
-          v-model="input"
-          type="textarea"
-          :rows="2"
-          resize="none"
-          placeholder="贴好图后回车「出3道」，或直接说编辑指令（删第2 / 难一点 / 补2道 / 可以了）…"
-          :disabled="sending"
-          @keyup.enter.exact.prevent="send"
-        />
-        <el-button
-          type="primary"
-          class="send-btn"
-          :loading="sending"
-          :disabled="!input.trim() && !imageUrl.trim() && pendingImages.length === 0"
-          @click="send"
-        >
-          发送
-        </el-button>
+        <!-- 🔴 PRD-A-017 空态高保真：母题图入口（Ctrl+V 粘贴 / 贴 URL / 📎 上传图片）收进底部
+             composer 区（贴近设计稿 cbar「上传/链接」在输入区的语义），不再独占 chat-head 下整条。
+             逻辑零改：URL 输入 + 隐藏 file input + 待发附件缩略图全部原样，仅换了位置。 -->
+        <div class="mother-bar">
+          <div class="mother-input">
+            <el-input
+              v-model="imageUrl"
+              size="default"
+              placeholder="可直接 Ctrl+V 粘贴截图，或贴 OSS / 公网图片地址（http…）后回车加入附件"
+              :disabled="sending || uploading"
+              clearable
+              @keyup.enter.prevent="commitUrlInput"
+              @blur="commitUrlInput"
+            >
+              <template #prepend>🖼 母题图</template>
+              <!-- 改点②：📎 上传图片 = 点击弹原生文件选择框（复用 uploadPastedImage） -->
+              <template #append>
+                <el-button
+                  class="pick-file-btn"
+                  :disabled="sending || uploading"
+                  :loading="uploading"
+                  title="选择本地图片上传"
+                  @click="pickImageFile"
+                >
+                  📎 上传图片
+                </el-button>
+              </template>
+            </el-input>
+            <!-- 隐藏 file input：pickImageFile 触发其 click，选中走 onFilePicked → uploadPastedImage -->
+            <input
+              ref="fileInput"
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              style="display: none"
+              @change="onFilePicked"
+            />
+            <!-- P10：待发附件缩略图（可删除），发送时随用户气泡进流 -->
+            <div v-if="pendingImages.length" class="pending-imgs">
+              <div v-for="(u, k) in pendingImages" :key="k" class="pending-thumb">
+                <img :src="u" referrerpolicy="no-referrer" @click="previewUrl = u" />
+                <button type="button" class="pending-del" :disabled="sending" @click="removePending(u)">
+                  ✕
+                </button>
+              </div>
+            </div>
+            <p v-if="uploading" class="uploading-hint">截图上传中…</p>
+          </div>
+        </div>
+        <div class="chat-input-row">
+          <el-input
+            v-model="input"
+            type="textarea"
+            :rows="2"
+            resize="none"
+            placeholder="贴好图后回车「出3道」，或直接说编辑指令（删第2 / 难一点 / 补2道 / 可以了）…"
+            :disabled="sending"
+            @keyup.enter.exact.prevent="send"
+          />
+          <el-button
+            type="primary"
+            class="send-btn"
+            :loading="sending"
+            :disabled="!input.trim() && !imageUrl.trim() && pendingImages.length === 0"
+            @click="send"
+          >
+            发送
+          </el-button>
+        </div>
+        <!-- 🔴 思考过程开关（PRD-A-017 空态重建：从原 mother-bar 默认配方块迁来）：
+             设计稿空态本无此开关，故放到输入区底部一行不喧宾、不破坏空态版式；功能保留。
+             开 → 走支持思考链的中转站，流式展示 AI 思考过程（更慢 + 付费）；关（默认）→ 更快更省。 -->
+        <div class="thinking-toggle-bar">
+          <el-switch
+            v-model="thinkingStream"
+            size="small"
+            :disabled="sending"
+            data-testid="thinking-stream-switch"
+          />
+          <span class="thinking-toggle-label">思考过程</span>
+          <el-tooltip
+            placement="top"
+            content="开启后展示 AI 的思考过程（可折叠），会走支持思考链的通道，稍慢且按思考输出额外计费；关闭则更快更省，不展示思考。"
+          >
+            <span class="thinking-toggle-hint">ⓘ</span>
+          </el-tooltip>
+        </div>
       </footer>
     </section>
 
@@ -2235,13 +2247,11 @@ onBeforeUnmount(() => {
   margin-left: 0;
 }
 
-/* 母题图入口（改点③：去母题缩略徽章后，仅余 URL/上传入口） */
+/* 母题图入口（改点③：去母题缩略徽章后，仅余 URL/上传入口）。
+   🔴 PRD-A-017：移入底部 composer 后去掉独立 border/底色，融入输入区（贴设计稿 cbar）。 */
 .mother-bar {
   display: flex;
   gap: 12px;
-  padding: 12px 18px;
-  border-bottom: 1px solid var(--line-soft);
-  background: var(--bg-soft);
   flex-shrink: 0;
 }
 .mother-input {
@@ -2296,11 +2306,11 @@ onBeforeUnmount(() => {
   font-size: 12px;
   color: var(--violet);
 }
-.default-hint {
-  margin: 8px 2px 0;
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--faint);
+
+/* 🔴 PRD-A-017 空态：chat-head 下方「待机」状态条容器（与 mother-bar 同左右内边距对齐） */
+.idle-rail-wrap {
+  padding: 12px 18px 0;
+  flex-shrink: 0;
 }
 
 /* 思考过程开关条 */
@@ -2347,6 +2357,37 @@ onBeforeUnmount(() => {
   color: var(--faint);
   max-width: 420px;
   line-height: 1.7;
+}
+
+/* 🔴 PRD-A-017 空态高保真（restyle.html 空态左栏 .empty-chat / .geo）：
+   居中几何罗盘插画 + 标题副文。 */
+.empty-chat {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 20px;
+  gap: 6px;
+}
+.empty-chat .geo {
+  width: 168px;
+  height: 148px;
+  margin-bottom: 8px;
+}
+.empty-chat h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.empty-chat p {
+  font-size: 12.5px;
+  color: var(--faint);
+  max-width: 236px;
+  line-height: 1.6;
 }
 
 .msg-row {
@@ -2545,11 +2586,21 @@ onBeforeUnmount(() => {
   padding: 12px 14px;
   border-top: 1px solid var(--line-soft);
   display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+/* 输入框 + 发送按钮横排（思考开关另起一行落于其下） */
+.chat-input-row {
+  display: flex;
   gap: 10px;
   align-items: flex-end;
 }
-.chat-input :deep(.el-textarea) {
+.chat-input-row :deep(.el-textarea) {
   flex: 1;
+}
+/* 思考开关在输入区底部，去掉原 mother-bar 内的上外边距，紧贴输入框下 */
+.chat-input .thinking-toggle-bar {
+  margin: 0 2px;
 }
 .send-btn {
   height: 56px;
