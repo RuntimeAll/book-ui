@@ -271,6 +271,13 @@ export interface VariantArtifactItem {
   /** check.verify 或 check.review（证明类只有 review 键，如 proof_needs_human） */
   verify: string | null
   /**
+   * 🔴 BUG-09/前端配合 — 生成后不自动验算：每道 item 带 verify_status。
+   *   'pending' = 待验算（生成后默认，徽章显灰「待验算」+ 显「验算」按钮）；
+   *   'pass'/'fail'/'degrade' = 手动「验算」后写回的判决（pass→青/ fail→红 / degrade→琥珀）；
+   *   null = 旧后端/不带该键（向后兼容，走原 tier/verify 徽章逻辑）。
+   */
+  verifyStatus: 'pending' | 'pass' | 'fail' | 'degrade' | null
+  /**
    * 🔴 PRD-A-017 R1·验算可查真证据（BE 透传 sympy verify() 的 detail/computed）：
    *   verifyDetail = 逐步核对话术（如「computed=46.0, claimed=46.0, tol=1e-6: within tolerance」）；
    *   verifyComputed = 真算出的解集/真值（如「[46]」）。VariantCard 验算徽章展开层渲染。
@@ -447,6 +454,11 @@ function pickDna(o: Record<string, unknown>): VariantDna {
     // PRD-C-015 块②：models 维（[{id,name}]；兼容嵌套 d.models 或散键，缺失 → []）
     models: pickModels(d.models),
   }
+}
+
+/** 宽松解析 verify_status（仅 pending/pass/fail/degrade 放行，其余 → null） */
+function parseVerifyStatus(v: unknown): 'pending' | 'pass' | 'fail' | 'degrade' | null {
+  return v === 'pending' || v === 'pass' || v === 'fail' || v === 'degrade' ? v : null
 }
 
 /** 宽松取数字数组（1-based 题号；非数组 → []）—— header.regen_pending 用 */
@@ -631,6 +643,11 @@ export interface VariantMotherCard {
   anchorGrade: string | null
   /** 确认的章 id（锚定前缀；toolkit 补专帧后透传，现可空） */
   anchorChapterId: string | null
+  /**
+   * 🔴 BUG-08：母题 anchor 新增章名（与后端并行加 anchor.chapter_name）。优先于 chapter_id
+   *   显示「锚定章」（有章名显章名，没有才回退 id）。缺 → null。
+   */
+  anchorChapterName: string | null
   /** 锚定待人审（闸B 留空的诚实提示）→ true 时母题卡标「锚定待人审」 */
   needAnchorReview: boolean
 }
@@ -680,6 +697,9 @@ export function pickMotherCard(a: VariantArtifact | null): VariantMotherCard | n
       anchorGrade: a.header.grade,
       anchorChapterId:
         str(anchor.chapter_id) ?? str(o.anchor_chapter_id) ?? str(o.confirmed_chapter_id),
+      // 🔴 BUG-08：章名优先（anchor.chapter_name；兼容驼峰 / 顶层散键）
+      anchorChapterName:
+        str(anchor.chapter_name) ?? str(anchor.chapterName) ?? str(o.chapter_name),
       needAnchorReview: o.need_anchor_review === true || o.needAnchorReview === true,
     }
   }
@@ -700,6 +720,7 @@ export function pickMotherCard(a: VariantArtifact | null): VariantMotherCard | n
     anchorKp: a.header.kp ?? it0.dna.mainKp,
     anchorGrade: a.header.grade,
     anchorChapterId: null,
+    anchorChapterName: null, // 兜底路径无章名
     needAnchorReview: false, // 兜底路径无此信号，保守不标
   }
 }
@@ -728,6 +749,9 @@ function pickArtifact(msg: ToolkitChatMessage): VariantArtifact | null {
       difficulty: typeof o.difficulty === 'number' ? o.difficulty : Number(o.difficulty) || 0,
       level: typeof o.level === 'string' && o.level ? o.level : 'normal',
       verify: typeof o.verify === 'string' && o.verify ? o.verify : null,
+      // 🔴 BUG-09 配合：生成后不自动验算 → verify_status='pending'（待验算）。
+      //   兼容 snake/camel；非法/缺失 → null（向后兼容，走原 tier 徽章）。
+      verifyStatus: parseVerifyStatus(o.verify_status ?? o.verifyStatus),
       // 🔴 PRD-A-017 R1·验算可查真证据（缺/非串 → null，证明类如实留空）
       verifyDetail:
         typeof o.verify_detail === 'string' && o.verify_detail ? o.verify_detail : null,
@@ -1203,6 +1227,54 @@ export function reverifyVariantItem(
   index: number
 ): Promise<VariantArtifact | null> {
   return postEdit('/agent/variant/reverify', { thread_id: threadId, index })
+}
+
+// ---------------------------------------------------------------------------
+// 🔴 BUG-09 配合 — 手动验算单题（生成后不自动验算，老师点「验算」按钮主动触发）。
+//   走 toolkit /agent proxy（同变式 SSE 的 base），POST /variant/verify-one。
+//   body {stem, answer} → {verdict, detail, computed}。verdict ∈ pass/fail/degrade。
+//   🔴 验算耗 token，但点按钮即老师主动触发=已同意，不再弹确认框（按钮本身就是同意动作）。
+//   最终 path 以后端回报为准，先按 /variant/verify-one 实现，集成时校对。
+// ---------------------------------------------------------------------------
+
+/** verify-one 返回（FE 据此更新该卡验算徽章 + 复用证据折叠面板） */
+export interface VariantVerifyOneResult {
+  /** 判决：pass→青「验算通过」/ fail→红 / degrade→琥珀 */
+  verdict: 'pass' | 'fail' | 'degrade' | null
+  /** 逐步核对话术（sympy detail，复用「验算证据中文化」面板展示） */
+  detail: string | null
+  /** 真算出的解集/真值（复用证据面板「程序独立解得」展示） */
+  computed: string | null
+}
+
+/**
+ * 手动验算单题（BUG-09 配合）。body {stem, answer} → {verdict, detail, computed}。
+ * 失败抛错，调用方兜底（ElMessage.error，徽章保持 pending）。
+ */
+export async function verifyVariantOne(
+  stem: string,
+  answer: string
+): Promise<VariantVerifyOneResult> {
+  const res = await fetch('/agent/variant/verify-one', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ stem, answer }),
+  })
+  if (!res.ok) {
+    const detail = await res
+      .json()
+      .then((d: { detail?: string; error?: string }) => d.detail || d.error)
+      .catch(() => '')
+    throw new Error(detail || `/variant/verify-one ${res.status}`)
+  }
+  const d = (await res.json()) as Record<string, unknown>
+  const verdict =
+    d.verdict === 'pass' || d.verdict === 'fail' || d.verdict === 'degrade' ? d.verdict : null
+  return {
+    verdict,
+    detail: str0(d.detail),
+    computed: str0(d.computed),
+  }
 }
 
 // ---------------------------------------------------------------------------

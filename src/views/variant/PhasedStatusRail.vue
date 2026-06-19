@@ -107,7 +107,7 @@ const dingNodes = computed<PsNode[]>(() => {
       : fig?.status === 'done'
         ? 'human'
         : 'todo',
-    desc: knobs?.detail ?? '母题卡已就绪，请核对后点「开始举一反三」',
+    desc: knobs?.detail ?? '母题已确认无误？点「开始举一反三」开始生成变式',
   }
   return [n1, n2, n3]
 })
@@ -136,22 +136,39 @@ const chuNodes = computed<PsNode[]>(() => {
     state: nodeStateFromStatus(ver?.status, 'todo'),
     desc: ver?.detail ?? '代入数值核对答案闭合',
   }
-  // 配图：figure 或 solution 任一活跃则取之（figure 优先）
+  // 🔴 BUG-10：配图节点收口。配图是「适用才做」的节点（纯文本题不需配图）——不能让它
+  //   永久挂「待完成」把整条状态条卡住。判定：
+  //   ① figure/solution stage 显式 done/skipped → done（收到 done/skipped 即视为完成）；
+  //   ② 无 figure/solution stage，但生成/比对/验算三个核心节点都已完成 → 视为「本组无需配图」
+  //      → done（跳过即完成，不挂待完成）。
+  //   ③ 否则按 stage 状态（running/todo）走。
+  const coreDone =
+    gen?.status === 'done' && gate?.status === 'done' && ver?.status === 'done'
   const figStage = fig ?? sol
+  const figStatus = figStage?.status
+  const figDone = figStatus === 'done' || figStatus === 'await' // await（toolkit 对「不适用/跳过」也发 await）= 跳过=完成
   const n4: PsNode = {
     label: '配图',
-    state: nodeStateFromStatus(figStage?.status, 'todo'),
-    desc: figStage?.detail ?? '为带图变式造图',
+    state: figDone
+      ? 'done'
+      : !figStage && coreDone
+        ? 'done' // 核心都完成、本组无配图 stage → 视为无需配图（跳过=完成）
+        : nodeStateFromStatus(figStatus, 'todo'),
+    desc: figStage?.detail ?? (!figStage && coreDone ? '本组无需配图（已跳过）' : '为带图变式造图'),
   }
-  // 题组就绪：persist done → done；await → human
+  // 题组就绪：persist done → done；await → human；🔴 BUG-10：无 persist stage 但核心+配图都完成
+  //   → 整组收口为「就绪」（不再等一个从不到来的 persist 帧把它永久挂在「待完成」）。
+  const groupReady = coreDone && n4.state === 'done'
   const n5: PsNode = {
     label: '题组就绪',
     state: persist
       ? persist.status === 'done'
         ? 'done'
         : nodeStateFromStatus(persist.status, 'todo')
-      : 'todo',
-    desc: persist?.detail ?? '可换数字 / 换场景 / 重生这道 / 入库',
+      : groupReady
+        ? 'done'
+        : 'todo',
+    desc: persist?.detail ?? (groupReady ? '全部完成 · 可换数字 / 换场景 / 重生这道 / 入库' : '可换数字 / 换场景 / 重生这道 / 入库'),
   }
   return [n1, n2, n3, n4, n5]
 })
@@ -168,8 +185,20 @@ const activeNode = computed<PsNode | undefined>(() => {
 })
 const isAwait = computed(() => activeNode.value?.state === 'human')
 
+// 🔴 BUG-10：全部「适用」节点完成即收口为「就绪」——没有 run/human 节点（无在跑、无待人工），
+//   且至少有一个节点已 done（已开过工，非纯待机）→ 视为全部完成。此态停转圈、播报「全部完成」。
+//   不被「不适用/已跳过」节点永久挂起（配图/题组就绪已在 chuNodes 收口为 done）。
+const allDone = computed(() => {
+  if (isEmpty.value) return false
+  const hasActive = nodes.value.some((n) => n.state === 'run' || n.state === 'human')
+  const hasErr = nodes.value.some((n) => n.state === 'err')
+  const anyDone = nodes.value.some((n) => n.state === 'done')
+  return !hasActive && !hasErr && anyDone
+})
+
 // 收起态摘要
 const miniText = computed(() => {
+  if (allDone.value) return '题组就绪 · 全部完成' // 🔴 BUG-10
   const n = activeNode.value
   if (!n) return '待机'
   return `${n.label} · ${ST_LABEL[n.state]}`
@@ -181,6 +210,8 @@ const isEmpty = computed(() => props.stages.length === 0)
 
 // ── 真值流式播报：取活跃节点的 detail 作播报文案 ──
 const castText = computed(() => {
+  // 🔴 BUG-10：全部完成 → 播报「就绪」，停止转圈
+  if (allDone.value) return '全部完成 · 题组就绪'
   const n = activeNode.value
   if (!n) return ''
   // 真值优先：活跃节点 desc 即来自 stage.detail（R2 子帧）；无 detail 时退节点标题
@@ -239,9 +270,10 @@ function toggleCollapse() {
         </div>
       </div>
 
-      <!-- 底部流式播报：取活跃节点真值 detail，detail 更新带 castin 动画 -->
-      <div class="ps-cast" :class="{ await: isAwait }">
-        <span class="sp">{{ isAwait ? '⏸' : '' }}</span>
+      <!-- 底部流式播报：取活跃节点真值 detail，detail 更新带 castin 动画。
+           🔴 BUG-10：全部完成 → 显青 ✓ + 「就绪」、不转圈（done 态覆盖 spinner）。 -->
+      <div class="ps-cast" :class="{ await: isAwait, done: allDone }">
+        <span class="sp">{{ allDone ? '✓' : isAwait ? '⏸' : '' }}</span>
         <span :key="castAnimKey" class="txt">{{ castText }}</span>
       </div>
     </template>
@@ -442,6 +474,19 @@ function toggleCollapse() {
   animation: none;
   color: var(--amber);
   font-size: 12px;
+}
+/* 🔴 BUG-10：全部完成态 —— 青 ✓、不转圈 */
+.ps-cast.done {
+  color: var(--teal-700);
+}
+.ps-cast.done .sp {
+  border: none;
+  width: auto;
+  height: auto;
+  animation: none;
+  color: var(--teal);
+  font-size: 12px;
+  font-weight: 700;
 }
 .ps-cast .txt {
   font-family: var(--mono);

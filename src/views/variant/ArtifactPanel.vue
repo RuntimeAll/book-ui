@@ -36,6 +36,14 @@ const props = defineProps<{
   canRegenerate: boolean
   /** 正在重新验算的题 index（1-based）；该卡显示 loading 态 */
   reverifyingIndex?: number | null
+  /** 🔴 BUG-09：正在手动「验算」的题 index（1-based）；该卡验算徽章 loading */
+  verifyingIndex?: number | null
+  /**
+   * 🔴 BUG-09：手动验算结果表（按 1-based index 持有 verify-one 回填）。
+   * 命中的卡按 verdict 显徽章 + 证据面板；缺省按 item.verifyStatus（pending→灰待验算）。
+   */
+  verifyResults?: Record<number, { verdict: 'pass' | 'fail' | 'degrade' | null; detail: string | null; computed: string | null }>
+
   /** PRD-C-014 T1：正在「收录入库」的题 index（1-based）；该卡入库按钮 loading */
   persistingIndex?: number | null
   /** PRD-C-014 T2：正在「加入试题篮」的题 index（1-based）；该卡加篮按钮 loading */
@@ -62,6 +70,10 @@ const emit = defineEmits<{
   (e: 'edit', payload: { index: number; stem?: string; answer?: string; solution?: string }): void
   /** 重新验算：宿主调 reverifyVariantItem */
   (e: 'reverify', index: number): void
+  /** 🔴 BUG-09：手动验算单题（宿主调 verifyVariantOne） */
+  (e: 'verify-one', index: number): void
+  /** 🔴 BUG-09：「全部验算」—— 遍历所有待验算卡逐个验算（宿主实现） */
+  (e: 'verify-all'): void
   /** PRD-C-014 T1：单题收录入库（宿主调 persistVariantOne） */
   (e: 'persist-one', index: number): void
   /** PRD-C-014 T2：单题加入试题篮（宿主透明入库） */
@@ -226,6 +238,33 @@ const hasDirty = computed(
 // 本组仍在增量上屏期 → 传给 VariantCard，使其把「无 tier」解读为验算中过渡态
 const checking = computed(() => props.artifact?.partial === true)
 
+// 🔴 BUG-09：待验算题（verify_status==='pending' 且无手动验算结果）→ 「全部验算」按钮可点。
+const pendingVerifyIndexes = computed<number[]>(() =>
+  items.value
+    .filter((i) => i.verifyStatus === 'pending' && !props.verifyResults?.[i.index])
+    .map((i) => i.index)
+)
+const hasVerifying = computed(
+  () => props.verifyingIndex !== null && props.verifyingIndex !== undefined
+)
+function verifyAll() {
+  if (props.sending || pendingVerifyIndexes.value.length === 0) return
+  emit('verify-all')
+}
+
+// 🔴 BUG-07 变式数量口径统一：头「⟶ N 道变式」与「N 道」徽章/pendingCount 统一为
+//   「存活数」(items.length)，避免剔题后两处打架（头显 2 vs 徽章 3）。若确有题被剔除
+//   （定稿后 expectedTotal > 存活数），在头旁注明「（剔除 N 道）」而不是两个数各说各话。
+//   - culledCount 仅在【定稿态】(非 partial，增量上屏期占位还在算缺口、不算剔除) 才计；
+//     partial 期 expectedTotal>live 是「还没生成完」不是「被剔除」，故此态 culled=0。
+const culledCount = computed(() => {
+  const a = props.artifact
+  if (!a || a.partial === true) return 0
+  const total = a.expectedTotal ?? 0
+  const live = items.value.length
+  return total > live ? total - live : 0
+})
+
 // PRD-C-012 P2 渐进渲染：增量帧（partial=true）期间，在已完成题卡后补
 // (expectedTotal - items.length) 张「生成中」占位骨架卡。定稿帧无 partial 键 →
 // pendingCount 归 0，占位卡消失；expectedTotal 缺失/脏值 → 0（不渲染，绝不为负）。
@@ -373,7 +412,13 @@ function regenAll() {
           </button>
           <span class="mc-titlechip" :title="anchorChip || ''">{{ anchorChip }}</span>
           <span class="vh-arrow">⟶</span>
-          <span class="vh-flow">举一反三 <b>{{ items.length }}</b> 道变式</span>
+          <span class="vh-flow">
+            举一反三 <b>{{ items.length }}</b> 道变式<span
+              v-if="culledCount > 0"
+              class="vh-culled"
+              :title="`原请求 ${items.length + culledCount} 道，有 ${culledCount} 道未通过闸链被剔除`"
+            >（剔除 {{ culledCount }} 道）</span>
+          </span>
         </template>
         <!-- ② 母题态：「变式」标题 + 「母题就绪」徽章（干净，无变式组控件） + 可折叠 caret/chip -->
         <template v-else-if="hasMother">
@@ -390,7 +435,7 @@ function regenAll() {
           <span class="mc-titlechip" :title="anchorChip || ''">{{ anchorChip }}</span>
         </template>
         <!-- ③ 兜底：母题未就绪 → 原「变式题组 · N 道」标题 -->
-        <h2 v-else class="canvas-title">变式<template v-if="items.length">题组 · {{ items.length }} 道</template></h2>
+        <h2 v-else class="canvas-title">变式<template v-if="items.length">题组 · {{ items.length }} 道<span v-if="culledCount > 0" class="vh-culled">（剔除 {{ culledCount }} 道）</span></template></h2>
         <span class="head-spacer" />
         <!-- 🔴 PRD-A-017 Fix-A：变式组动作（重生 / 换一批 / 全部入库）仅「变式态」(hasVariants) 显；
              空态 / 母题态都收起（设计稿母题态、空态画布头都无变式组控件）。 -->
@@ -405,6 +450,18 @@ function regenAll() {
             @click="regenAll"
           >
             🔄 重生 {{ regenPendingIndexes.length }} 题
+          </el-button>
+          <!-- 🔴 BUG-09：「全部验算」（遍历待验算卡逐个验算；点即触发，已同意不弹框） -->
+          <el-button
+            v-if="pendingVerifyIndexes.length > 0"
+            size="small"
+            class="verify-all-btn"
+            :loading="hasVerifying"
+            :disabled="sending"
+            title="对所有待验算的变式逐个调用 AI 验算（消耗 token）"
+            @click="verifyAll"
+          >
+            ✓ 全部验算 {{ pendingVerifyIndexes.length }} 题
           </el-button>
           <el-button
             size="small"
@@ -479,6 +536,8 @@ function regenAll() {
             :sending="sending"
             :checking="checking"
             :reverifying="reverifyingIndex === it.index"
+            :verifying="verifyingIndex === it.index"
+            :verify-result="verifyResults?.[it.index] ?? null"
             :persisting="persistingIndex === it.index"
             :basketing="basketingIndex === it.index"
             :regenerating="!!(regeneratingIndexes && regeneratingIndexes.includes(it.index))"
@@ -491,6 +550,7 @@ function regenAll() {
             @utterance="(t: string) => emit('utterance', t)"
             @edit="(p) => emit('edit', p)"
             @reverify="(i: number) => emit('reverify', i)"
+            @verify-one="(i: number) => emit('verify-one', i)"
             @persist-one="(i: number) => emit('persist-one', i)"
             @add-to-basket="(i: number) => emit('add-to-basket', i)"
             @edit-dna="(p) => emit('edit-dna', p)"
@@ -575,6 +635,10 @@ function regenAll() {
   display: flex;
   flex-direction: column;
   height: 100%;
+  /* 🔴 BUG-05a 吸顶冻结：作为外层 flex 子项必须能收缩到 0，否则内容把面板撑高、
+     整面板（含操作头）随父容器一起滚走。min-height:0 让面板严格吃满给定高度，
+     内部 .canvas-body 才真正成为唯一滚动容器、.canvas-head 常驻钉顶。 */
+  min-height: 0;
   background: var(--bg-soft);
   border-radius: var(--r);
   overflow: hidden;
@@ -690,6 +754,12 @@ function regenAll() {
   font-weight: 700;
   font-size: 13.5px;
 }
+/* 🔴 BUG-07：剔除注记（琥珀，低调，不与存活数抢眼） */
+.vh-culled {
+  margin-left: 2px;
+  font-size: 11.5px;
+  color: var(--amber);
+}
 .head-spacer {
   flex: 1;
 }
@@ -708,6 +778,17 @@ function regenAll() {
   background: var(--teal-100);
   border-color: var(--teal-100);
   color: #fff;
+}
+
+/* 🔴 BUG-09：「全部验算」按钮（青系 outline，与卡内「验算」同色语） */
+.verify-all-btn {
+  color: var(--teal-700);
+  border-color: var(--teal-line);
+}
+.verify-all-btn:hover:not(:disabled) {
+  background: var(--teal-50);
+  color: var(--teal-700);
+  border-color: var(--teal-line);
 }
 
 /* PRD-C-015 批5：「重生 N 题」按钮（amber 实心，与卡内重生按钮同色语） */
@@ -758,6 +839,9 @@ function regenAll() {
 
 .canvas-body {
   flex: 1;
+  /* 🔴 BUG-05a：flex 子项默认 min-height:auto（撑到内容高）→ 不会内滚而是把面板撑高、
+     把吸顶头顶走。min-height:0 强制 .canvas-body 在剩余空间内滚动，头才冻结。 */
+  min-height: 0;
   overflow-y: auto;
   padding: 16px 32px 24px;
   display: flex;

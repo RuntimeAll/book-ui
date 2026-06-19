@@ -126,12 +126,17 @@ const detailExpanded = ref(false)
 const dna = computed(() => props.motherCard?.dna ?? null)
 const hasCard = computed(() => !!props.motherCard)
 
-// 🔴 B4-polish：锚定章显示文本。
-//   优先级：① 老师确认面亲手选的章人话名（最可靠）；② toolkit 母题专帧回灌的 chapter id 兜底；
-//   ③ 都没有 → 「按年级册锚定」（诚实兜底，不露内部字段名，彻底消除「（确认章 id 未透传）」占位）。
+// 🔴 BUG-05b 去原图化：母题题面富文本（已转好的 stem，KaTeX 渲染）。兜底路径无 stem → 空。
+const stemText = computed(() => props.motherCard?.stem || '')
+
+// 🔴 B4-polish + BUG-08：锚定章显示文本。
+//   优先级：① 老师确认面亲手选的章人话名（最可靠）；② 后端 anchor.chapter_name（BUG-08 新增章名）；
+//   ③ toolkit 母题专帧回灌的 chapter id 兜底；④ 都没有 → 「按年级册锚定」（诚实兜底）。
 const anchorChapterText = computed(() => {
   const name = props.confirmedChapterName?.trim()
   if (name) return name
+  const chapterName = props.motherCard?.anchorChapterName?.trim()
+  if (chapterName) return chapterName
   const id = props.motherCard?.anchorChapterId?.trim()
   if (id) return id
   return '按年级册锚定'
@@ -258,6 +263,17 @@ const figureNotNeeded = computed(
     figureList.value.length === 0 &&
     (figureReasonSaysNotNeeded.value || (!props.figureNeedsFigure && !!props.figureReason))
 )
+
+// 🔴 BUG-05b：左切图列是否渲染 —— 仅当有切好的图形 / 进行中 / 确需配图但缺时显；
+//   纯文本母题（无图）整列消失，富文本主区独占。原图缩略已去除（去原图化）。
+const hasFigureCol = computed(
+  () =>
+    figureList.value.length > 0 ||
+    !!props.figureLoading ||
+    (!!props.figureNeedsFigure &&
+      !figureReasonSaysNotNeeded.value &&
+      !figureReasonIsInfra.value)
+)
 </script>
 
 <template>
@@ -328,11 +344,10 @@ const figureNotNeeded = computed(
     </header>
 
     <div v-show="!collapsed" class="mc-body">
-      <!-- 左：母题图缩略（守恒锚） + 🔴 PRD-C-100 B6 切图（图形区） -->
-      <div v-if="motherImg" class="mc-thumb-col">
-        <div class="mc-thumb" title="母题原图 · 点开看大图" @click="emit('preview', motherImg)">
-          <img :src="motherImg" alt="母题" referrerpolicy="no-referrer" />
-        </div>
+      <!-- 🔴 BUG-05b 去原图化：左列不再渲染母题原图缩略（老师看到的是干净富文本题面，
+           不是拍的原图）。仅保留「已转好的」切图（图形区，渲染结果）+ 切图操作。纯文本母题
+           无切图 → 整列不渲染（v-if hasFigureCol），左列消失、富文本主区独占。 -->
+      <div v-if="hasFigureCol" class="mc-thumb-col">
         <!-- 🔴 PRD-C-100 bug-002 单元3：母题切图多图（PNG 无损），v-for 渲染全部，各自点开看大图 -->
         <template v-if="figureList.length">
           <div
@@ -367,6 +382,12 @@ const figureNotNeeded = computed(
       </div>
 
       <div class="mc-main">
+        <!-- 🔴 BUG-05b 去原图化：母题题面富文本（已转好，KaTeX 渲染）。老师看到的是干净题面，
+             不是拍的原图。无 stem（兜底路径）→ 不渲染本块。 -->
+        <div v-if="stemText" class="mc-block mc-stem-block">
+          <span class="mc-block-k">母题题面</span>
+          <div class="mc-stem"><MarkdownMath :content="stemText" /></div>
+        </div>
         <!-- 🔴 收窄区：解法骨架 / 答案 / 解析三块「可能很长」的富文本默认限高折叠（detailExpanded=false）：
              各块 max-height 限高 + 底部渐隐遮罩，超长不撑爆卡、不挤没下方变式区；
              点「展开全部」→ 去限高、块内滚动看全。DNA 维网格等不在此区，始终完整显示。 -->
@@ -715,14 +736,26 @@ const figureNotNeeded = computed(
   font-weight: 600;
 }
 .mc-skeleton,
-.mc-answer {
+.mc-answer,
+.mc-stem {
   font-size: 13px;
   color: var(--ink);
   line-height: 1.6;
 }
 .mc-skeleton :deep(p),
-.mc-answer :deep(p) {
+.mc-answer :deep(p),
+.mc-stem :deep(p) {
   margin: 0;
+}
+/* 🔴 BUG-05b 去原图化：母题题面富文本块（题面是母题卡主角，比其余块稍醒目） */
+.mc-stem-block {
+  padding-bottom: 8px;
+  border-bottom: 1px dashed var(--line);
+  margin-bottom: 10px;
+}
+.mc-stem {
+  color: var(--ink);
+  font-weight: 500;
 }
 /* 最难步【】高亮：骨架里若有【】标记，整块加暖底提示「含最难步基因」 */
 .mc-skeleton.has-mark {

@@ -47,6 +47,17 @@ const props = defineProps<{
   checking?: boolean
   /** 本卡正在重新验算（单题 LLM+sympy，几秒）→ 验算按钮 loading + 卡片轻禁用 */
   reverifying?: boolean
+  /**
+   * 🔴 BUG-09 配合：本卡正在「验算」（手动触发 verify-one，几秒）→ 验算按钮 loading。
+   * 与 reverifying（手动编辑后重跑闸B）区分：verifying = 待验算态老师主动点「验算」。
+   */
+  verifying?: boolean
+  /**
+   * 🔴 BUG-09 配合：本卡的「验算」结果（宿主调 verify-one 后回填，按 index 持有）。
+   * 非空 → 徽章按 verdict 显（pass→青/fail→红/degrade→琥珀）+ 证据面板展示 computed/detail。
+   * 为空 → 走 item.verifyStatus（pending→灰「待验算」）/ 原 tier 徽章逻辑。
+   */
+  verifyResult?: { verdict: 'pass' | 'fail' | 'degrade' | null; detail: string | null; computed: string | null } | null
   /** PRD-C-014 T1：本卡正在「收录入库」（调 persist-one）→ 按钮 loading */
   persisting?: boolean
   /** PRD-C-014 T2：本卡正在「加入试题篮」（透明入库：可能含 persist-one + 篮 add）→ 按钮 loading */
@@ -77,6 +88,8 @@ const emit = defineEmits<{
   (e: 'edit', payload: { index: number; stem?: string; answer?: string; solution?: string }): void
   /** 重新验算（宿主调 reverifyVariantItem） */
   (e: 'reverify', index: number): void
+  /** 🔴 BUG-09 配合：待验算态老师主动点「验算」（宿主调 verifyVariantOne {stem, answer}） */
+  (e: 'verify-one', index: number): void
   /** PRD-C-014 T1：单题「收录入库」（宿主调 persistVariantOne） */
   (e: 'persist-one', index: number): void
   /** PRD-C-014 T2：单题「加入试题篮」（宿主透明入库：未入库先 persist-one 再加篮，已入库直接加篮） */
@@ -357,8 +370,24 @@ const isChecking = computed(() => {
   return props.item.tier === null && props.checking === true
 })
 
+// 🔴 BUG-09 配合：待验算态（生成后不自动验算）—— item.verifyStatus==='pending' 且本卡尚无
+//   手动验算结果 → 灰「待验算」徽章 + 「验算」按钮（替代原自动出的「考点一致✓/验算中」）。
+const isPendingVerify = computed(
+  () => props.item.verifyStatus === 'pending' && !props.verifyResult
+)
+// 手动验算判决徽章（verify-one 回填后）：pass→青 / fail→红 / degrade→琥珀
+const verifyResultBadge = computed(() => {
+  const r = props.verifyResult
+  if (!r || !r.verdict) return null
+  if (r.verdict === 'pass') return { cls: 'vb-green', text: '✓ 验算通过' }
+  if (r.verdict === 'fail') return { cls: 'vb-red', text: '✗ 验算未通过' }
+  return { cls: 'vb-amber', text: '⚠ 验算降级（需核对）' }
+})
+
 const verifyBadge = computed(() => {
   if (isChecking.value) return null // 过渡态由独立呼吸徽章承担，不走此 computed
+  // 🔴 BUG-09：有手动验算结果 → 优先显判决徽章
+  if (verifyResultBadge.value) return verifyResultBadge.value
   const t = props.item.tier
   // 题组编辑器：手动编辑后 BE 置 tier='manual'（验算待重跑）→ 中性徽章，不出 ✓/⚠ 误导
   if (t === 'manual') return { cls: 'vb-manual', text: '✎ 手动编辑（验算待重跑）' }
@@ -383,9 +412,14 @@ const verifyBadge = computed(() => {
 // ---------------------------------------------------------------------------
 const verifyOpen = ref(false)
 const verifyRawOpen = ref(false)
+// 🔴 BUG-09：证据来源统一 —— 手动 verify-one 结果优先，回退 item 上 BE 透传的真证据。
+const evidenceComputed = computed(
+  () => props.verifyResult?.computed ?? props.item.verifyComputed
+)
+const evidenceDetail = computed(() => props.verifyResult?.detail ?? props.item.verifyDetail)
 /** 是否有可展开的真证据（任一非空）→ 徽章加可点标识；两者皆 null = 诚实留空，不假装可展开 */
 const hasVerifyEvidence = computed(
-  () => !!(props.item.verifyComputed || props.item.verifyDetail)
+  () => !!(evidenceComputed.value || evidenceDetail.value)
 )
 // 🔴 PRD-A-017 验收纠偏（三角色一致挑刺：验算证据夹生英文/方括号/sympy 像后台报错，张校长不敢端给家长）：
 //   把真值翻译成「质检报告」式中文人话外显——computed 是真算出的解集（[3,4]），verdict=pass。
@@ -393,7 +427,7 @@ const hasVerifyEvidence = computed(
 //   纯展示层翻译，不改任何真值/判决。
 /** 把程序算出的解集 [3, 4] / [46] / x1=2,x2=3 格式化成人话「3、4」「46」「x1=2，x2=3」 */
 const verifyComputedHuman = computed(() => {
-  const raw = props.item.verifyComputed
+  const raw = evidenceComputed.value
   if (!raw) return ''
   let s = String(raw).trim().replace(/^[[{(]\s*/, '').replace(/\s*[\]})]$/, '')
   const parts = s.split(/\s*,\s*/).map((p) => p.trim()).filter(Boolean)
@@ -401,6 +435,11 @@ const verifyComputedHuman = computed(() => {
 })
 /** 中文验算结论（据 tier/verify 真值，不编造）：verified=程序独立验算过 / self_ok=独立复算一致 */
 const verifyHumanConclusion = computed(() => {
+  // 🔴 BUG-09：手动验算结果优先
+  const v = props.verifyResult?.verdict
+  if (v === 'pass') return '与本题标准答案完全一致，程序验算通过'
+  if (v === 'fail') return '程序验算未通过，请重点核对答案'
+  if (v === 'degrade') return '验算降级（无法机器闭合），建议人工核对'
   const tier = props.item.tier
   if (tier === 'self_ok') return '已独立复算，与本题标准答案一致'
   if (tier === 'verified' || props.item.verify === 'sympy_pass')
@@ -420,6 +459,8 @@ function toggleVerify() {
 }
 
 const geneBadge = computed(() => {
+  // 🔴 BUG-09：待验算态不出「考点一致✓」自动徽章（替代为灰「待验算」），避免「还没验算却已说好」
+  if (isPendingVerify.value) return null
   // 4d：只说好——warn 等负面值一律沉默（双闸低由 verifyBadge 的 ⚠ 承担）
   return props.item.gene === 'pass' ? { cls: 'gb-teal', text: '考点一致 ✓' } : null
 })
@@ -693,6 +734,23 @@ function saveFieldEdit() {
       <span v-else-if="isChecking" class="verify-badge vb-checking">
         <span class="check-dot" />验算中…
       </span>
+      <!-- 🔴 BUG-09：手动「验算」进行中（verify-one）→ 呼吸 loading -->
+      <span v-else-if="verifying" class="verify-badge vb-checking">
+        <span class="check-dot" />验算中…
+      </span>
+      <!-- 🔴 BUG-09：待验算态（生成后不自动验算）→ 灰「待验算」徽章 + 「验算」按钮（点即触发，已同意不弹框） -->
+      <template v-else-if="isPendingVerify">
+        <span class="verify-badge vb-pending">待验算</span>
+        <button
+          type="button"
+          class="verify-do-btn"
+          :disabled="sending"
+          title="调用 AI 验算本题（点击即触发，消耗 token）"
+          @click="emit('verify-one', item.index)"
+        >
+          验算
+        </button>
+      </template>
       <button
         v-else-if="verifyBadge"
         type="button"
@@ -717,10 +775,14 @@ function saveFieldEdit() {
         <span class="ve-k">程序独立解得</span>
         <span class="ve-v-human mono">{{ verifyComputedHuman }}</span>
       </div>
-      <div class="ve-conclusion">✓ {{ verifyHumanConclusion }}</div>
+      <!-- 🔴 BUG-09：fail/degrade 不显 ✓（按真判决出符号），pass/通过显 ✓ -->
+      <div class="ve-conclusion" :class="{ 'is-fail': verifyResult?.verdict === 'fail', 'is-degrade': verifyResult?.verdict === 'degrade' }">
+        {{ verifyResult?.verdict === 'fail' ? '✗' : verifyResult?.verdict === 'degrade' ? '⚠' : '✓' }}
+        {{ verifyHumanConclusion }}
+      </div>
       <!-- 禁假数据底线：原始程序输出（含 sympy 英文明细）折叠可查，不当主文案 -->
       <button
-        v-if="item.verifyComputed || item.verifyDetail"
+        v-if="evidenceComputed || evidenceDetail"
         type="button"
         class="ve-raw-toggle"
         @click="verifyRawOpen = !verifyRawOpen"
@@ -728,8 +790,8 @@ function saveFieldEdit() {
         程序原始输出 {{ verifyRawOpen ? '▴' : '▾' }}
       </button>
       <div v-if="verifyRawOpen" class="ve-raw">
-        <code v-if="item.verifyComputed" class="mono">computed = {{ item.verifyComputed }}</code>
-        <code v-if="item.verifyDetail" class="mono">{{ item.verifyDetail }}</code>
+        <code v-if="evidenceComputed" class="mono">computed = {{ evidenceComputed }}</code>
+        <code v-if="evidenceDetail" class="mono">{{ evidenceDetail }}</code>
       </div>
     </div>
 
@@ -1615,6 +1677,30 @@ function saveFieldEdit() {
   color: var(--ink-2);
   border: 1px solid var(--line);
 }
+/* 🔴 BUG-09 待验算态：中性灰徽章（不抢 ✓/⚠，提示「还没验算」） */
+.vb-pending {
+  background: var(--bg);
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+/* 🔴 BUG-09「验算」按钮（待验算态，青系 outline，点即触发） */
+.verify-do-btn {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--teal-700);
+  background: var(--paper);
+  border: 1px solid var(--teal-line);
+  border-radius: var(--r-xs);
+  padding: 1px 10px;
+  cursor: pointer;
+}
+.verify-do-btn:hover:not(:disabled) {
+  background: var(--teal-50);
+}
+.verify-do-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 /* P2b 验算中过渡态：中性灰底 + 呼吸点，不抢 ✓/⚠ 的视觉权重 */
 .vb-checking {
   display: inline-flex;
@@ -1704,6 +1790,13 @@ function saveFieldEdit() {
   font-size: 12.5px;
   font-weight: 600;
   color: var(--green);
+}
+/* 🔴 BUG-09：验算未通过 / 降级时结论变色（不再绿色 ✓ 误导） */
+.ve-conclusion.is-fail {
+  color: var(--red);
+}
+.ve-conclusion.is-degrade {
+  color: var(--amber);
 }
 .ve-raw-toggle {
   margin-top: 8px;

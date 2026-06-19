@@ -21,6 +21,7 @@ import {
   streamVariant,
   undoRegenVariant,
   uploadMotherImage,
+  verifyVariantOne,
 } from '@/api/variant'
 import type { DnaEditValue, DnaField, MotherFigureItem } from '@/api/variant'
 import type {
@@ -184,8 +185,12 @@ const confirmedGradeBookName = ref('')
 const anchorChip = computed<string | null>(() => {
   if (!motherCard.value) return null
   const grade = confirmedGradeBookName.value.trim() || motherCard.value.anchorGrade?.trim() || ''
+  // 🔴 BUG-08：章 = 老师确认章名 → 后端 anchor.chapter_name（新增章名）→ chapter_id 兜底
   const chapter =
-    confirmedChapterName.value.trim() || motherCard.value.anchorChapterId?.trim() || ''
+    confirmedChapterName.value.trim() ||
+    motherCard.value.anchorChapterName?.trim() ||
+    motherCard.value.anchorChapterId?.trim() ||
+    ''
   if (grade && chapter) return `${grade} · ${chapter}`
   return grade || chapter || null
 })
@@ -499,6 +504,12 @@ async function onComposeFigureFromUser(payload: { index: number; correctionPromp
 }
 // 题组编辑器：正在重新验算的题 index（1-based），驱动该卡 loading 态
 const reverifyingIndex = ref<number | null>(null)
+// 🔴 BUG-09 手动验算：正在「验算」的题 index（1-based）+ 验算结果表（按 index 持有 verify-one 回填）。
+//   生成后不自动验算（item.verifyStatus='pending'），老师点「验算」/「全部验算」主动触发。
+const verifyingIndex = ref<number | null>(null)
+const verifyResults = reactive<
+  Record<number, { verdict: 'pass' | 'fail' | 'degrade' | null; detail: string | null; computed: string | null }>
+>({})
 // PRD-C-014 T1/T2：正在「收录入库」/「加入试题篮」的题 index（1-based），驱动该卡按钮 loading
 const persistingIndex = ref<number | null>(null)
 const basketingIndex = ref<number | null>(null)
@@ -1232,6 +1243,53 @@ async function onReverify(index: number) {
   } finally {
     reverifyingIndex.value = null
   }
+}
+
+// ---------------------------------------------------------------------------
+// 🔴 BUG-09 配合 — 手动验算（生成后不自动验算，老师主动点「验算」/「全部验算」）。
+//   调 verifyVariantOne({stem, answer}) → 用 verdict/detail/computed 更新该卡徽章 + 证据面板。
+//   🔴 验算耗 token，但点按钮即老师主动触发=已同意，不再弹确认框（按钮本身就是同意动作）。
+// ---------------------------------------------------------------------------
+
+/** 取某 1-based index 的题（从当前 artifact，用于拿 stem/answer 发 verify-one）。 */
+function itemByIndex(index: number): VariantArtifactItem | undefined {
+  return artifact.value?.items.find((i) => i.index === index)
+}
+
+/** 单题「验算」：调 verify-one，回填 verifyResults[index]（徽章 + 证据更新）。 */
+async function onVerifyOne(index: number) {
+  if (sending.value || verifyingIndex.value !== null) return
+  const it = itemByIndex(index)
+  if (!it) return
+  verifyingIndex.value = index
+  try {
+    const res = await verifyVariantOne(it.stem || '', it.answer || '')
+    verifyResults[index] = { verdict: res.verdict, detail: res.detail, computed: res.computed }
+  } catch (e) {
+    ElMessage.error(`验算失败：${e instanceof Error ? e.message : String(e)}`)
+  } finally {
+    verifyingIndex.value = null
+  }
+}
+
+/** 「全部验算」：遍历所有待验算（pending 且无结果）卡，逐个调 verify-one。 */
+async function onVerifyAll() {
+  if (sending.value || verifyingIndex.value !== null) return
+  const pending = (artifact.value?.items ?? [])
+    .filter((i) => i.verifyStatus === 'pending' && !verifyResults[i.index])
+    .map((i) => i.index)
+  for (const idx of pending) {
+    const it = itemByIndex(idx)
+    if (!it) continue
+    verifyingIndex.value = idx
+    try {
+      const res = await verifyVariantOne(it.stem || '', it.answer || '')
+      verifyResults[idx] = { verdict: res.verdict, detail: res.detail, computed: res.computed }
+    } catch (e) {
+      ElMessage.error(`第 ${idx} 题验算失败：${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+  verifyingIndex.value = null
 }
 
 // ---------------------------------------------------------------------------
@@ -2081,6 +2139,8 @@ onBeforeUnmount(() => {
       :sending="sending"
       :can-regenerate="!!firstComposeMessage || !!motherImg"
       :reverifying-index="reverifyingIndex"
+      :verifying-index="verifyingIndex"
+      :verify-results="verifyResults"
       :persisting-index="persistingIndex"
       :basketing-index="basketingIndex"
       :regenerating-indexes="regeneratingIndexes"
@@ -2092,6 +2152,8 @@ onBeforeUnmount(() => {
       @reorder="onReorder"
       @edit="onEditItem"
       @reverify="onReverify"
+      @verify-one="onVerifyOne"
+      @verify-all="onVerifyAll"
       @persist-one="onPersistOne"
       @add-to-basket="onAddToBasket"
       @edit-dna="onEditDna"
