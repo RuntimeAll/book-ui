@@ -70,38 +70,37 @@ const isChu = computed(() => CHU_KEYS.some((k) => has(k)))
 const figureInChu = computed(() => isChu.value)
 
 // ── 定题中 节点 ──
+// 🔴 PRD-A-017 polish Fix-D：对齐设计稿 design-ref-02 的 3 节点 ding 布局
+//   （读图锚定 / 母题切图 / 确认母题）。原「范围确认」拆成独立节点 → 设计稿无此节点，
+//   将 classify 的 await/warn（考点范围待确认 / 候选）折进「读图锚定」自身的 human/err 态，
+//   候选名走 detail 文案外显（如「考点范围还有 2 个候选，请确认: 对顶角相等 / 邻补角」）。
 const dingNodes = computed<PsNode[]>(() => {
   const cls = st('classify')
   const knobs = st('knobs')
   const fig = !figureInChu.value ? st('figure') : undefined
 
-  // ① 读图锚定（classify 进行/完成）
-  const n1State: NodeState = cls
-    ? cls.status === 'await' || cls.status === 'warn'
-      ? 'run' // classify 在 await/warn 时，读图本身视作已推进到"待人工范围确认"
-      : nodeStateFromStatus(cls.status, 'todo')
-    : 'todo'
+  // ① 读图锚定（classify）：await→需人工（番人工，候选待确认）/ warn→异常 / done→已完成 / running→进行中
   const n1: PsNode = {
     label: '读图锚定',
-    state: cls && cls.status === 'done' ? 'done' : n1State,
-    desc: cls?.detail ?? '识别题面、判年级·章、锚定考点',
+    state:
+      cls?.status === 'await'
+        ? 'human'
+        : cls?.status === 'warn'
+          ? 'err'
+          : nodeStateFromStatus(cls?.status, 'todo'),
+    desc:
+      cls?.status === 'await' || cls?.status === 'warn'
+        ? (cls?.detail ?? '考点范围拿捏不准，请确认')
+        : (cls?.detail ?? '识别题面、判年级·章、锚定考点'),
   }
-  // ② 范围确认·需人工（仅 classify await/warn 时浮现为 human/err，否则随 classify 完成）
-  const rangeHuman = cls?.status === 'await'
-  const rangeErr = cls?.status === 'warn'
+  // ② 母题切图（figure[定题相]）
   const n2: PsNode = {
-    label: '范围确认',
-    state: rangeHuman ? 'human' : rangeErr ? 'err' : cls?.status === 'done' ? 'done' : 'todo',
-    desc: rangeHuman || rangeErr ? (cls?.detail ?? '考点范围拿捏不准，请确认') : '考点范围确认',
-  }
-  // ③ 母题切图（figure[定题相]）
-  const n3: PsNode = {
     label: '母题切图',
-    state: nodeStateFromStatus(fig?.status, cls?.status === 'done' ? 'todo' : 'todo'),
+    state: nodeStateFromStatus(fig?.status, 'todo'),
     desc: fig?.detail ?? '从原图切出母题图形',
   }
-  // ④ 确认母题·需人工（knobs await，或母题确认信号）
-  const n4: PsNode = {
+  // ③ 确认母题·需人工（knobs await，或母题切图完成后浮现为待人工确认）
+  const n3: PsNode = {
     label: '确认母题',
     state: knobs
       ? nodeStateFromStatus(knobs.status, 'todo')
@@ -110,7 +109,7 @@ const dingNodes = computed<PsNode[]>(() => {
         : 'todo',
     desc: knobs?.detail ?? '母题卡已就绪，请核对后点「开始举一反三」',
   }
-  return [n1, n2, n3, n4]
+  return [n1, n2, n3]
 })
 
 // ── 出题中 节点 ──

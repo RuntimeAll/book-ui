@@ -148,6 +148,34 @@ watch(
   { immediate: true }
 )
 
+// 🔴 PRD-A-017 polish Fix-B：纯文本/代数题本不需配图 → 不显 ⚠待补图 噪音 + 不显自相矛盾的
+//   「opus 判定不适合配图」reason，整个配图区静默（设计稿 design-ref-03 第1题纯文本无配图区）。
+//
+//   分流依据（按字段判，避免误伤真需配图的题）：
+//   ① reason 文案表明「不适合/不需配图」(opus 判定不适合配图 / 未给命令 / 无需配图 / 无图可画) →
+//      这是后端权威「本题不需图」信号。即便 needsFigure 误标 true（实测代数题切/配图失败时后端
+//      会把 needsFigure=true 但 reason 写「opus 判定不适合配图」自相矛盾），也按「不需配图」处理：
+//      不显 ⚠待补图、不显 reason、整区收起。
+//   ② needsFigure=false 且无图（且非进行中）→ 不需配图态，同样收起。
+//   仅「确实需配图但没生成成功」(needsFigure=true 且 reason 非『不适合』语义) 才显 ⚠待补图。
+const REASON_NOT_NEEDED = /不适合配图|未给命令|无需配图|不需配图|无图可画|无需配/
+const figureReasonSaysNotNeeded = computed(
+  () => !!props.figureReason && REASON_NOT_NEEDED.test(props.figureReason)
+)
+const figureNotNeeded = computed(
+  () =>
+    !props.figurePng &&
+    (figureReasonSaysNotNeeded.value || (!props.figureNeedsFigure && !!props.figureReason))
+)
+// 配图区是否整体渲染：有图 / 进行中 / 确需配图但缺（且 reason 非「不适合」语义）才显；
+//   「不需配图（含 reason 自相矛盾态）」与「未尝试」时收起（去噪，设计稿纯文本题无配图区）。
+const showFigureZone = computed(
+  () =>
+    !!props.figurePng ||
+    !!props.figureLoading ||
+    (!!props.figureNeedsFigure && !figureReasonSaysNotNeeded.value)
+)
+
 // ---------------------------------------------------------------------------
 // 内容编辑（傻瓜式）：编辑态把 stem/answer/solution 各显示为 textarea + 实时 MarkdownMath
 // 预览（KaTeX 立等可见）；保存只把「改过的字段」传给宿主（走 edit-item，BE 净化 + 标
@@ -890,7 +918,9 @@ function saveFieldEdit() {
       </div>
 
       <!-- ============ 🔴 PRD-C-100 B6 配图（带图展示 + 图片重生，人在回路） ============ -->
-      <div class="vc-figure-zone">
+      <!-- 🔴 PRD-A-017 polish Fix-B：纯文本/不需配图题整区收起（无 ⚠待补图 噪音、无矛盾 reason），
+           只有有图 / 确需配图但缺 / 进行中 才渲染配图区。 -->
+      <div v-if="showFigureZone" class="vc-figure-zone">
         <!-- 已造出的配图（PNG 无损），点开看大图 -->
         <div
           v-if="figurePng"
@@ -900,8 +930,9 @@ function saveFieldEdit() {
         >
           <img :src="`data:image/png;base64,${figurePng}`" alt="配图" />
         </div>
-        <!-- G4：需配图但没造出来 → ⚠待补图（不静默无图）；needUserDesc 时显眼引导补描述 -->
-        <div v-else-if="figureNeedsFigure" class="vc-figure-warn">
+        <!-- G4：确需配图但没造出来 → ⚠待补图（不静默无图）；needUserDesc 时显眼引导补描述。
+             🔴 Fix-B：reason 自相矛盾（needs=true 但「opus 判定不适合配图」）→ 不显待补图（去噪）。 -->
+        <div v-else-if="figureNeedsFigure && !figureReasonSaysNotNeeded" class="vc-figure-warn">
           <span>⚠ 待补图（本题需配图，暂未生成成功）</span>
           <div v-if="figureNeedUserDesc" class="vc-figure-desc-hint">
             💡 请补一句图形描述（说清要画哪些点 / 角 / 线 / 标注），我再据此重画 →
@@ -962,7 +993,8 @@ function saveFieldEdit() {
           </div>
         </div>
 
-        <p v-if="figureReason" class="vc-figure-reason">{{ figureReason }}</p>
+        <!-- 🔴 Fix-B：reason 仅在配图相关时显（不需配图态已整区收起，这里再兜底排除矛盾文案） -->
+        <p v-if="figureReason && !figureNotNeeded" class="vc-figure-reason">{{ figureReason }}</p>
       </div>
 
       <!-- ============ 🧬 题目 DNA（G13 ③：默认收起 = 图标 chip；点开展开全维，逐维可改） ============ -->

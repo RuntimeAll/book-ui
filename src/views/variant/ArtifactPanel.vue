@@ -190,6 +190,12 @@ const allPersisted = computed(
   () => items.value.length > 0 && items.value.every((i) => i.persisted)
 )
 
+// 🔴 PRD-A-017 polish Fix-A：有没有变式（含增量上屏期占位）。母题就绪但还没出变式时（母题态）=false，
+//   此态画布头只显「变式 母题就绪」干净标题，不显 ⟶N道变式 / 换一批 / 全部入库 / 重生N题
+//   （设计稿 design-ref-02：母题态画布头无变式组控件，「0 道变式」很尴尬）。出变式后（变式态）=true，
+//   恢复合并头全貌（caret + chip + ⟶ N 道变式 + 换一批 + 全部入库）。
+const hasVariants = computed(() => items.value.length > 0 || pendingCount.value > 0)
+
 // 🔴 PRD-A-017 空态高保真：纯空态 = 无题卡、无占位、非发送中、母题未就绪。
 //   此态下 ① 画布头去掉「换一批 / 全部入库 / 重生」按钮（设计稿空态画布头只剩「变式」标题）；
 //   ② 画布体渲染设计稿 hero 三叠卡 + 4 步 stepper + recipe-note 引导（restyle.html 空态右栏）。
@@ -350,8 +356,13 @@ function regenAll() {
          动作，留本组件（事件归属不变）。母题未就绪（无 anchorChip）→ 不显 caret/chip/flow，退回原标题。 -->
     <header class="canvas-head" :class="{ 'is-vhead': hasMother }">
       <div class="head-line">
-        <!-- 合并头模式：母题就绪 -->
-        <template v-if="hasMother">
+        <!-- 🔴 PRD-A-017 polish Fix-A：合并头分流——
+             ① 变式态（母题就绪 + 已出变式）：完整合并头 = caret 母题卡 + chip + ⟶ N 道变式（+ 右侧变式组动作）。
+             ② 母题态（母题就绪 + 还没出变式）：只显「变式」标题 + 「母题就绪」青徽章（设计稿 design-ref-02），
+                保留 caret + chip 让母题卡可折叠，但去掉「⟶ 0 道变式」尴尬文案与变式组动作（下方按钮区隐藏）。
+             ③ 兜底（母题未就绪）：原「变式题组 · N 道」标题。 -->
+        <!-- ① 变式态：完整合并头 -->
+        <template v-if="hasMother && hasVariants">
           <button
             type="button"
             class="mc-caret"
@@ -364,11 +375,26 @@ function regenAll() {
           <span class="vh-arrow">⟶</span>
           <span class="vh-flow">举一反三 <b>{{ items.length }}</b> 道变式</span>
         </template>
-        <!-- 兜底：母题未就绪 → 原「变式题组 · N 道」标题 -->
+        <!-- ② 母题态：「变式」标题 + 「母题就绪」徽章（干净，无变式组控件） + 可折叠 caret/chip -->
+        <template v-else-if="hasMother">
+          <h2 class="canvas-title">变式</h2>
+          <span class="ready-badge">母题就绪</span>
+          <button
+            type="button"
+            class="mc-caret mc-caret-sub"
+            :title="motherCollapsed ? '展开母题卡' : '收起母题卡'"
+            @click="toggleMother"
+          >
+            <span class="mc-caret-ic">{{ motherCollapsed ? '▸' : '▾' }}</span> 母题卡
+          </button>
+          <span class="mc-titlechip" :title="anchorChip || ''">{{ anchorChip }}</span>
+        </template>
+        <!-- ③ 兜底：母题未就绪 → 原「变式题组 · N 道」标题 -->
         <h2 v-else class="canvas-title">变式<template v-if="items.length">题组 · {{ items.length }} 道</template></h2>
         <span class="head-spacer" />
-        <!-- 🔴 PRD-A-017 空态：画布头只剩「变式」标题，不显「换一批 / 全部入库 / 重生」（设计稿空态画布头干净） -->
-        <template v-if="!isPureEmpty">
+        <!-- 🔴 PRD-A-017 Fix-A：变式组动作（重生 / 换一批 / 全部入库）仅「变式态」(hasVariants) 显；
+             空态 / 母题态都收起（设计稿母题态、空态画布头都无变式组控件）。 -->
+        <template v-if="hasVariants && !isPureEmpty">
           <!-- PRD-C-015 批5：待重生集合非空 → 「重生 N 题」按钮（D-merge8 一键重出全集合） -->
           <el-button
             v-if="regenPendingIndexes.length > 0"
@@ -572,6 +598,22 @@ function regenAll() {
   font-size: 20px;
   font-weight: 700;
   color: var(--ink);
+}
+
+/* 🔴 PRD-A-017 polish Fix-A：母题态「母题就绪」徽章（restyle.html .canvas-head .ct，青 pill） */
+.ready-badge {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--teal-700);
+  background: var(--teal-50);
+  border: 1px solid var(--teal-line);
+  border-radius: 6px;
+  padding: 1px 8px;
+}
+/* 母题态的 caret 次级化（标题在前，caret 仅为折叠母题卡的辅助入口） */
+.mc-caret-sub {
+  margin-left: 4px;
 }
 
 /* 🔴 PRD-A-017 批2b 合并头元素（restyle.html .vhead / .mc-caret / .mc-titlechip / .vh-arrow / .vh-flow） */

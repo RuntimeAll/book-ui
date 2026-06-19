@@ -235,6 +235,21 @@ const figureList = computed<string[]>(() => {
   if (Array.isArray(list) && list.length) return list.map((f) => f.pngBase64).filter(Boolean)
   return props.figurePng ? [props.figurePng] : []
 })
+
+// 🔴 PRD-A-017 polish Fix-B：母题为纯文本/不需切图 → 不显「⚠待补图 / 不适合切图」噪音。
+//   分流：① reason 文案表明「不适合/不需切图」(opus 判定不适合配图 / 未给命令 / 无需配图 …) →
+//   后端权威「本题不需图」信号，即便 needsFigure 误标 true 也按「不需图」收起告警；② needsFigure=false
+//   且无图 → 不需切图态。仅「确需切图但失败」(needsFigure=true 且 reason 非『不适合』语义，如本机
+//   doclayout_yolo 缺模块的真失败) 才显 ⚠待补图。
+const REASON_NOT_NEEDED = /不适合配图|未给命令|无需配图|不需配图|无图可画|无需配/
+const figureReasonSaysNotNeeded = computed(
+  () => !!props.figureReason && REASON_NOT_NEEDED.test(props.figureReason)
+)
+const figureNotNeeded = computed(
+  () =>
+    figureList.value.length === 0 &&
+    (figureReasonSaysNotNeeded.value || (!props.figureNeedsFigure && !!props.figureReason))
+)
 </script>
 
 <template>
@@ -323,8 +338,8 @@ const figureList = computed<string[]>(() => {
             <span class="mc-figure-tag">图形{{ figureList.length > 1 ? ` ${i + 1}` : '' }}</span>
           </div>
         </template>
-        <!-- G4：需配图但没切出来 → ⚠待补图 -->
-        <div v-else-if="figureNeedsFigure" class="mc-figure-warn">⚠ 待补图</div>
+        <!-- G4：确需配图但没切出来 → ⚠待补图。🔴 Fix-B：reason 表「不适合切图」时去噪不显。 -->
+        <div v-else-if="figureNeedsFigure && !figureReasonSaysNotNeeded" class="mc-figure-warn">⚠ 待补图</div>
         <!-- 切图 / 重切按钮（loading 期转圈） -->
         <el-button
           text
@@ -336,7 +351,8 @@ const figureList = computed<string[]>(() => {
         >
           {{ figureList.length ? '重新切图' : '切图形' }}
         </el-button>
-        <p v-if="figureReason" class="mc-figure-reason">{{ figureReason }}</p>
+        <!-- 🔴 Fix-B：不需切图态不显 reason（避免「母题切图失败」对纯文本母题的误报噪音） -->
+        <p v-if="figureReason && !figureNotNeeded" class="mc-figure-reason">{{ figureReason }}</p>
       </div>
 
       <div class="mc-main">
