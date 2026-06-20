@@ -29,13 +29,18 @@ import {
 import FreeTagList from '@/components/business/FreeTagList/index.vue'
 import SketchPad from '@/components/business/SketchPad/index.vue'
 import DetailSidebar from './components/DetailSidebar.vue'
+import FontSizeSwitch from '@/components/business/FontSizeSwitch/index.vue'
 import QuestionContent from '@/components/business/QuestionContent/index.vue'
 // PRD-A-015 — 结构化网格块统一渲染（题干 blockJson 非空时优先用它，否则回落 QuestionContent）
 import QuestionBlockRender from '@/components/business/QuestionBlockRender/index.vue'
 import { parseBlockDoc } from '@/utils/blockSchema'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
+import { useFontScale } from '@/composables/useFontScale'
 import { useUserStore } from '@/store/user'
 import { getCurrentUser } from '@/api/user'
+
+// 题面展示字号（小/中/大）—— 与变式编辑器共用同一状态，注入 --md-font-size 级联给 MarkdownMath
+const { cssVars: fontVars } = useFontScale()
 
 // ── 路由 ────────────────────────────────────────────────────
 const route = useRoute()
@@ -314,7 +319,7 @@ watch(questionId, async () => {
 </script>
 
 <template>
-  <div class="detail-page">
+  <div class="detail-page" :style="fontVars">
     <!-- 顶部导航栏 -->
     <div class="detail-topbar">
       <el-button link @click="goBack" class="back-btn">
@@ -322,6 +327,8 @@ watch(questionId, async () => {
         <span>返回题库</span>
       </el-button>
       <span class="topbar-title">题目详情</span>
+      <span class="topbar-spacer" />
+      <FontSizeSwitch />
     </div>
 
     <div v-if="loading" class="detail-loading">
@@ -586,6 +593,9 @@ watch(questionId, async () => {
   font-weight: 600;
   color: #1d2129;
 }
+.topbar-spacer {
+  flex: 1;
+}
 
 .detail-loading,
 .detail-empty {
@@ -708,11 +718,10 @@ watch(questionId, async () => {
   display: block;
 }
 
+/* 字号由 MarkdownMath 的 --md-font-size 驱动（随字号档位缩放）；markdown 自带换行，去掉 pre-wrap */
 .stem-text {
-  font-size: 15px;
   line-height: 1.7;
   color: #1d2129;
-  white-space: pre-wrap;
 }
 
 .stem-placeholder {
@@ -824,8 +833,8 @@ watch(questionId, async () => {
   height: auto;
 }
 
+/* 相似题文本也走统一字号变量（与主题面一致缩放） */
 .similar-text {
-  font-size: 13px;
   color: #4e5969;
 }
 

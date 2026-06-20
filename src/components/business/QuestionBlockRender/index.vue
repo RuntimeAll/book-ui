@@ -45,9 +45,14 @@ function imgSrc(url: string): string {
   return props.proxy ? proxyImage(url) : url
 }
 
-/** 图片块行内样式：width 占容器宽百分比 + 左中右对齐（块级 margin） */
+/**
+ * 图片块行内样式：width 占容器宽百分比 + 左中右对齐（块级 margin）。
+ * 🔴 PRD-A-018：缺失/非法 width 的兜底从 100→40。原 100 = 缺 width 时整图铺满容器（最易喧宾夺主），
+ *    40 与入库默认（variant_support.DEFAULT_IMAGE_WIDTH_PCT）对齐，缺值时也是「默认即可看不过大」。
+ *    显式存了 width 的（含老题 width=60）照原值渲染，不动。
+ */
 function imageStyle(b: Extract<Block, { type: 'image' }>) {
-  const w = Math.min(100, Math.max(1, Number(b.width) || 100))
+  const w = Math.min(100, Math.max(1, Number(b.width) || 40))
   const style: Record<string, string> = { width: `${w}%`, display: 'block' }
   if (b.align === 'center') {
     style.marginLeft = 'auto'

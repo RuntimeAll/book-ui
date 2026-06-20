@@ -11,6 +11,8 @@ import App from './App.vue'
 import router from './router'
 import { safeHtml } from '@/directives/safeHtml'
 import './style.css'
+// PRD-A-017 举一反三换皮设计 token（作用域 .variant-page，不污染其它页）
+import '@/views/variant/variant-theme.css'
 
 const app = createApp(App)
 

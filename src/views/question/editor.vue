@@ -21,7 +21,7 @@ import { ArrowLeft, Plus, Delete, Picture, List, Document } from '@element-plus/
 import Sortable from 'sortablejs'
 import {
   createQuestion,
-  updateQuestion,
+  updateBlock,
   getQuestionDetail,
   type QuestionDetail,
 } from '@/api/question/index'
@@ -125,7 +125,9 @@ function addTextBlock() {
 }
 
 function addImageBlock() {
-  const block: ImageBlock = { type: 'image', url: '', width: 60, align: 'center' }
+  // PRD-A-018：新增图片块默认宽度 40%（与入库默认 variant_support.DEFAULT_IMAGE_WIDTH_PCT 对齐），
+  // 默认即「可看不过大」，老师按需再微调。
+  const block: ImageBlock = { type: 'image', url: '', width: 40, align: 'center' }
   doc.value.rows.push({ cells: [block] })
 }
 
@@ -233,7 +235,8 @@ function addOptionText(opt: OptionBlock) {
   opt.content.push({ type: 'text', md: '' } as TextBlock)
 }
 function addOptionImage(opt: OptionBlock) {
-  opt.content.push({ type: 'image', url: '', width: 60, align: 'center' } as ImageBlock)
+  // PRD-A-018：选项内图片默认宽度同样 40%（与上 addImageBlock / 入库默认对齐）。
+  opt.content.push({ type: 'image', url: '', width: 40, align: 'center' } as ImageBlock)
 }
 function removeOptionContent(opt: OptionBlock, idx: number) {
   opt.content.splice(idx, 1)
@@ -439,7 +442,7 @@ async function handleSave() {
   saving.value = true
   try {
     if (isEditMode.value) {
-      const res = await updateQuestion({
+      const res = await updateBlock({
         questionId: questionId.value!,
         blockJson,
         questionType: questionType.value,

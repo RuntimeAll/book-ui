@@ -21,8 +21,8 @@ const config: Config = {
     // SVG attrs
     'd', 'fill', 'stroke', 'stroke-width', 'transform', 'viewBox', 'width', 'height',
     'x', 'y', 'cx', 'cy', 'r', 'x1', 'x2', 'y1', 'y2', 'points',
-    // 🔴 KaTeX 根号(√)的 surd SVG 靠 preserveAspectRatio="xMinYMin slice" 撑高;
-    // 漏掉它 DOMPurify 会滤掉 → 根号 svg 拉伸塌成 0 高不可见 (PRD-A-015 §12 坑①, C 线实测)
+    // KaTeX 拉伸式符号(根号/大括号/箭头)的 SVG 靠 preserveAspectRatio="xMinYMin slice" 撑形,
+    // 缺它会被默认 meet 压扁成 0 高 → 根号 √ 不可见(2026-06-16 修; 亦见 PRD-A-015 §12 坑①)。
     'preserveAspectRatio',
     // mjx / a11y attrs
     'jax', 'aria-hidden', 'aria-label', 'role',

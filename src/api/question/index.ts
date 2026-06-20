@@ -113,13 +113,11 @@ export interface QuestionDetail extends QuestionItem {
   // blockJson 已上移至基类 QuestionItem（page/list/select 三端均回填），此处不重复声明。
 
   // ── PRD-A-015 批1「题目属性编辑页」— select/{id} 已返全部属性维度字段（皆可选，BE 端可能为 null） ──
-  // dim3Skill / auxTags 是 JSON 字符串（FE 自行 JSON.parse）；motherQuestionId 雪花用 string。
+  // 🔴 C-100 B-converge 方案B：dim3Skill / auxTags 随 BE V905 DROP 列剥除（属性编辑页 C 线预期降级）。
   dim1KpId?: string | null            // AI 维度1：知识点 id
   dim2Qtype?: number | null           // AI 维度2：题型
-  dim3Skill?: string | null           // AI 维度3：思维方法（JSON 字符串 → 数组）
   dim4Difficulty?: number | null      // AI 维度4：难度
   dim5Structure?: string | null       // AI 维度5：结构指纹
-  auxTags?: string | null             // 辅标签（JSON 字符串 → 对象 key:value）
   labelConfidence?: number | null     // 打标置信度
   labeledBy?: string | null           // 打标者
   labeledAt?: number | string | null  // 打标时间（时间戳/字符串）
@@ -152,8 +150,12 @@ export interface CreateQuestionPayload {
   examPaperName?: string
 }
 
-/** POST /teacher/question/update 入参（UpdateQuestionBo，权威源 = blockJson） */
-export interface UpdateQuestionPayload {
+/**
+ * POST /teacher/question/update-block 入参（UpdateBlockBo，权威源 = blockJson）。
+ * 🔴 C-100 B-converge：A-015 原端点 /teacher/question/update 与 C-015 覆盖原行撞名，
+ * 维护者拍板 A 改名 → /teacher/question/update-block。
+ */
+export interface UpdateBlockPayload {
   questionId: string            // 雪花 string
   blockJson: string             // 必填：结构化内容权威源
   questionType?: number
@@ -217,6 +219,81 @@ export const questionPage = (
     params,
     config,
   )
+
+// ---------------------------------------------------------------------------
+// 🔴 PRD-C-017 B3 — 创建带完整 DNA 的题（母题入库）。
+// 端点 POST /teacher/question/create（misikt envelope，走 /api → :8090，code===1 判成功）。
+// 字段事实源 = book-server CreateQuestionBo.java（camelCase）。
+//   - 必填：questionType（1选择/4填空/5解答）+ stem（题面富文本）。
+//   - 服务端强制 createBy/createUser/status/id（别传）；hardPointCount BE 算 size（别传）。
+//   - 雪花 id 字段全 string（dim1KpId / secondaryKpIds / anchorId）——禁 number 截尾。
+//     secondaryKpIds BE 是 List<Long>，传字符串数组，Jackson 数字字符串自动转 Long。
+// ---------------------------------------------------------------------------
+
+/** 创建带 DNA 的题入参（CreateQuestionBo 子集，按 B3 母题入库用到的字段） */
+export interface CreateQuestionWithDnaBo {
+  /** 题型 1选择/4填空/5解答（必填） */
+  questionType: number
+  /** 题面富文本（必填） */
+  stem: string
+  /** 答案富文本 */
+  answer?: string
+  /** 解析富文本 */
+  analyze?: string
+  /** 难度 1-4 星（biz_question.difficult） */
+  difficult?: number
+  /** 章节/知识点编码（biz_question.subject_id；母题入库填确认章 id 或主考点 id） */
+  subjectId?: string
+  /** 题干整图 URL（母题原图，cropped 归 C-016） */
+  stemImg?: string
+  // ----- 5 维度打标（复用 V16 列） -----
+  /** ①主考点 id → dim1_kp_id（雪花 string） */
+  dim1KpId?: string
+  /** ②题型 → dim2_qtype */
+  dim2Qtype?: number
+  /** ④难度 → dim4_difficulty */
+  dim4Difficulty?: number
+  /** ⑤结构指纹 → dim5_structure */
+  dim5Structure?: string
+  /** 打标状态机：1=AI已标 */
+  labelStatus?: number
+  /** AI 自评置信度 0-1 */
+  labelConfidence?: number
+  /** 打标者（=opus 模型名） */
+  labeledBy?: string
+  // ----- DNA 全维 / 挂接表 -----
+  /** 副考点 id 列表（≤3，雪花 string）→ biz_question_knowledge(is_primary=0) */
+  secondaryKpIds?: string[]
+  /** 标签列表（3~6）→ biz_free_tag + biz_question_free_tag */
+  tags?: string[]
+  /** 解法骨架（【】标最难步）→ biz_question_ai.solution_skeleton */
+  skeleton?: string
+  /** 场景 → biz_question_ai.scenario */
+  scene?: string
+  /** 考察类型（闭集 10）→ biz_question_ai.assessment_type */
+  examType?: string
+  /** 难点/突破点列表 → biz_question_ai.breakthrough_points（hardPointCount BE 算 size，别传） */
+  hardPoints?: string[]
+  /** 锚定 subject 节点 → biz_question_ai.anchor_id */
+  anchorId?: string
+  /** 锚定待人审 → biz_question_ai.need_anchor_review */
+  needAnchorReview?: boolean
+  /** 抽取/生成依据 → biz_question_ai.reasoning */
+  reasoning?: string
+}
+
+/** 创建返回（QuestionDetailVo；至少含落库 id，雪花 string） */
+export interface CreateQuestionResult extends QuestionDetail {
+  id: string
+}
+
+/**
+ * 创建带完整 DNA 的题（母题入库，PRD-C-017 §1⑧ / G12）。
+ * 成功（misikt code===1）→ resolve 解包后的 QuestionDetailVo（含落库 id）；
+ * 失败 → reject（toast 由 http 拦截器已弹），调用方兜底。
+ */
+export const createQuestionWithDna = (bo: CreateQuestionWithDnaBo) =>
+  request.post<CreateQuestionResult, CreateQuestionResult>('/teacher/question/create', bo)
 
 /**
  * 拉试题栏角标数量
@@ -417,11 +494,20 @@ export const createQuestion = (payload: CreateQuestionPayload) =>
 
 /**
  * PRD-A-015 — 结构化编辑题目（权威源 = blockJson）。
- * POST /teacher/question/update（UpdateQuestionBo）。
+ * 🔴 C-100 B-converge 改名：POST /teacher/question/update-block（UpdateBlockBo）。
  * 返回更新后的 QuestionDetail（含回读的 blockJson + 外置文本 + knowledges + freeTags）。
  */
-export const updateQuestion = (payload: UpdateQuestionPayload) =>
-  request.post<QuestionDetail, QuestionDetail>('/teacher/question/update', payload)
+export const updateBlock = (payload: UpdateBlockPayload) =>
+  request.post<QuestionDetail, QuestionDetail>('/teacher/question/update-block', payload)
+
+/**
+ * PRD-C-100 BC3 — 清掉某题的结构化排版（删 biz_question_block 行）。
+ * POST /teacher/question/delete-block?questionId={id}。
+ * 用途：举一反三里手动排版过的变式被「重生」（题面已变）→ 旧布局对不上 → 确认重生前清脏 block，
+ * 让详情/卷库回落纯文本渲染。block 不存在幂等成功。
+ */
+export const deleteQuestionBlock = (questionId: string) =>
+  request.post<void, void>(`/teacher/question/delete-block?questionId=${encodeURIComponent(questionId)}`)
 
 // ── PRD-A-015 批1「题目属性编辑页」— 属性回写端点 ────────────────────────────
 // POST /teacher/question/update-attrs（全字段可选，BE 只回写传了的非 null 列，不碰 blockJson/题干）。
@@ -433,10 +519,9 @@ export interface UpdateAttrsPayload {
   difficult?: number
   dim1KpId?: string
   dim2Qtype?: number
-  dim3Skill?: string[]
+  // 🔴 C-100 B-converge 方案B：dim3Skill / auxTags 随 BE V905 DROP 列剥除（属性编辑页 C 线预期降级）。
   dim4Difficulty?: number
   dim5Structure?: string
-  auxTags?: Record<string, unknown>
   labelStatus?: number
   labelConfidence?: number
   labeledBy?: string
@@ -466,6 +551,19 @@ export const updateQuestionAttrs = (payload: UpdateAttrsPayload) =>
 export const questionListByIds = (ids: string[]) =>
   request.get<QuestionDetail[], QuestionDetail[]>('/teacher/question/list', {
     params: { ids: ids.join(',') },
+  })
+
+/**
+ * PRD-C-014 T3 — 按主知识点取候选自由标签池（DNA 标签维多选弹层的候选来源）。
+ * GET /teacher/question/tagsByKp?kpId={当前主考点}&limit=50
+ *   - 走 /api → :8090 misikt envelope（request 拦截器已解包，拿到 response 内层）。
+ *   - kpId = 当前题主考点知识点 id；limit 默认 50。
+ *   - 端点开发中（B4 批次按此契约写）：BE 返候选标签名数组（按复用度/相关度排序）。
+ *     宽松解包：返 string[] 或 {name}[] 都吃；解析不出回空数组（前端仅作候选提示，可手输补充）。
+ */
+export const tagsByKp = (kpId: string, limit = 50) =>
+  request.get<unknown, unknown>('/teacher/question/tagsByKp', {
+    params: { kpId, limit },
   })
 
 /**

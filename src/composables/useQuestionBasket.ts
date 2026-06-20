@@ -160,11 +160,27 @@ async function syncFromServer() {
 }
 
 // ── actions ──────────────────────────────────────────────────
-async function add(q: QuestionItem): Promise<void> {
+/**
+ * 加入试题栏。
+ * @param opts.silent 抑制默认「已加入试题栏」toast（PRD-C-014 T2：举一反三透明入库要自定义
+ *   文案「已收录并加入试题篮」/「已加入试题篮」，由调用方自行 toast；篮 API 失败需调用方感知
+ *   → silent 模式下 await BE add 并在失败时 throw，调用方据此「篮不计数 + 报错气泡」）。
+ */
+async function add(q: QuestionItem, opts?: { silent?: boolean }): Promise<void> {
   if (_togglingIds.has(q.id)) return
   if (_basketIds.value.has(q.id)) return
   _togglingIds.add(q.id)
   try {
+    if (opts?.silent) {
+      // 透明入库（T2）：先 await BE add，成功才本地计数 + 由调用方自定义 toast；失败 throw 回调用方。
+      await apiAddBasket(q.id)
+      const newSet = new Set(_basketIds.value)
+      newSet.add(q.id)
+      _basketIds.value = newSet
+      _cache.set(q.id, q)
+      syncToStorage()
+      return
+    }
     const newSet = new Set(_basketIds.value)
     newSet.add(q.id)
     _basketIds.value = newSet
@@ -248,6 +264,25 @@ async function remove(id: string): Promise<void> {
   }
 }
 
+/**
+ * 重排试题栏顺序（PRD-A-017 批2e 拖拽重排）。
+ *   _items 按 _basketIds（Set）的插入序渲染 → 拖拽后传入「拖后全量 id 序列」，按它重建 Set
+ *   并落 LS（顺序持久），渲染序随之更新。纯本地动作（不耗 token、无 BE 顺序契约），不通知后端。
+ *   入参须是当前篮内 id 的一个排列；非法（含未知 id / 缺 id）则忽略，避免拖坏数据。
+ */
+function reorder(orderedIds: string[]): void {
+  const cur = _basketIds.value
+  // 校验：长度一致 + 集合等价（每个 id 恰出现一次且都在篮内），否则放弃（让 Vue 按原序重渲）
+  if (orderedIds.length !== cur.size) return
+  const seen = new Set<string>()
+  for (const id of orderedIds) {
+    if (!cur.has(id) || seen.has(id)) return
+    seen.add(id)
+  }
+  _basketIds.value = new Set(orderedIds)
+  syncToStorage()
+}
+
 async function clear(): Promise<void> {
   _basketIds.value = new Set()
   _cache.clear()
@@ -301,12 +336,14 @@ export interface UseQuestionBasket {
   basketIds: Readonly<Ref<Set<string>>>
   count: ComputedRef<number>
   items: ComputedRef<QuestionItem[]>
-  add: (q: QuestionItem) => Promise<void>
+  add: (q: QuestionItem, opts?: { silent?: boolean }) => Promise<void>
   /** 批量加入（过滤已在篮 + 单条汇总 toast），返回实际新增数 */
   addMany: (questions: QuestionItem[]) => Promise<number>
   /** 批量移除（只移在篮内 + 单条汇总 toast），返回实际移除数 */
   removeMany: (ids: string[]) => Promise<number>
   remove: (id: string) => Promise<void>
+  /** 拖拽重排：传拖后全量 id 序列，按它重建顺序并落 LS（纯本地，不通知后端） */
+  reorder: (orderedIds: string[]) => void
   clear: () => Promise<void>
   togglingIds: Set<string>
   isLoading: (id: string) => boolean
@@ -336,6 +373,7 @@ export function useQuestionBasket(): UseQuestionBasket {
     addMany,
     removeMany,
     remove,
+    reorder,
     clear,
     togglingIds: _togglingIds,
     isLoading,

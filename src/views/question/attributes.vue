@@ -47,11 +47,7 @@ const canEdit = computed(() => {
 })
 
 // ── 受控词表 ────────────────────────────────────────────────────────────────
-// dim3 数学思想方法（数据建模/99-AI相关/08 METHOD 维权威 8 项），multiple + allow-create 允许补充。
-const METHOD_OPTIONS = [
-  '数形结合', '分类讨论', '化归转化', '方程与函数',
-  '数学建模', '特殊与一般', '待定系数', '数学归纳',
-]
+// 🔴 C-100 B-converge 方案B：dim3（思维方法）随 BE V905 DROP 列剥除，METHOD_OPTIONS 一并删（属性编辑页 C 线预期降级）。
 const LABEL_STATUS_OPTIONS = [
   { label: '未标', value: 0 },
   { label: 'AI 已标', value: 1 },
@@ -74,13 +70,12 @@ const ANNOTATE_STATUS_OPTIONS = [
 ]
 
 // ── 可编辑表单（高级字段全集）────────────────────────────────────────────────
+// 🔴 C-100 B-converge 方案B：dim3Skill / auxTags 随 BE V905 DROP 列剥除（属性编辑页 C 线预期降级）。
 interface AdvForm {
   dim1KpId: string
   dim2Qtype: number | null
-  dim3Skill: string[]
   dim4Difficulty: number | null
   dim5Structure: string
-  auxTagsJson: string // 辅标签以 JSON 文本编辑（保存时解析）
   labelStatus: number | null
   baseScore: number | null
   sourceType: number | null
@@ -91,35 +86,14 @@ interface AdvForm {
 }
 function blankForm(): AdvForm {
   return {
-    dim1KpId: '', dim2Qtype: null, dim3Skill: [], dim4Difficulty: null,
-    dim5Structure: '', auxTagsJson: '', labelStatus: null,
+    dim1KpId: '', dim2Qtype: null, dim4Difficulty: null,
+    dim5Structure: '', labelStatus: null,
     baseScore: null, sourceType: null, regionCode: '',
     variantRelation: '', motherQuestionId: '', annotateStatus: null,
   }
 }
 const form = ref<AdvForm>(blankForm())
 const original = ref<AdvForm>(blankForm())
-
-// dim3Skill：DB 存 JSON 字符串 → 数组
-function parseSkill(raw: string | null | undefined): string[] {
-  if (!raw) return []
-  try {
-    const p = JSON.parse(raw)
-    return Array.isArray(p) ? p.map((x) => String(x)) : []
-  } catch {
-    return []
-  }
-}
-// auxTags：DB 存 JSON 字符串 → 美化文本（便于编辑）
-function prettyAux(raw: string | null | undefined): string {
-  if (!raw) return ''
-  try {
-    const p = JSON.parse(raw)
-    return JSON.stringify(p, null, 2)
-  } catch {
-    return String(raw)
-  }
-}
 
 // 打标时间格式化（只读）
 const DASH = '—'
@@ -147,10 +121,8 @@ async function loadDetail() {
       const f: AdvForm = {
         dim1KpId: res.dim1KpId != null ? String(res.dim1KpId) : '',
         dim2Qtype: res.dim2Qtype ?? null,
-        dim3Skill: parseSkill(res.dim3Skill),
         dim4Difficulty: res.dim4Difficulty ?? null,
         dim5Structure: res.dim5Structure != null ? String(res.dim5Structure) : '',
-        auxTagsJson: prettyAux(res.auxTags),
         labelStatus: res.labelStatus ?? null,
         baseScore: res.baseScore ?? null,
         sourceType: res.sourceType ?? null,
@@ -203,34 +175,7 @@ async function handleSave() {
   setIf('motherQuestionId', f.motherQuestionId, o.motherQuestionId)
   setIf('annotateStatus', f.annotateStatus, o.annotateStatus)
 
-  // dim3Skill：数组比对
-  if (JSON.stringify(f.dim3Skill) !== JSON.stringify(o.dim3Skill)) {
-    payload.dim3Skill = f.dim3Skill
-    changed = true
-  }
-
-  // auxTags：JSON 文本解析（非法则拦下）
-  if (f.auxTagsJson !== o.auxTagsJson) {
-    const txt = f.auxTagsJson.trim()
-    if (txt === '') {
-      payload.auxTags = {}
-      changed = true
-    } else {
-      try {
-        const obj = JSON.parse(txt)
-        if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
-          payload.auxTags = obj as Record<string, unknown>
-          changed = true
-        } else {
-          ElMessage.error('辅标签需为 JSON 对象（形如 {"错因":"计算失误"}）')
-          return
-        }
-      } catch {
-        ElMessage.error('辅标签 JSON 格式不正确，请检查')
-        return
-      }
-    }
-  }
+  // 🔴 C-100 B-converge 方案B：dim3Skill / auxTags 随 BE V905 DROP 列剥除（属性编辑页 C 线预期降级）。
 
   if (!changed) {
     ElMessage.info('没有改动需要保存')
@@ -247,10 +192,8 @@ async function handleSave() {
       const nf: AdvForm = {
         dim1KpId: res.dim1KpId != null ? String(res.dim1KpId) : '',
         dim2Qtype: res.dim2Qtype ?? null,
-        dim3Skill: parseSkill(res.dim3Skill),
         dim4Difficulty: res.dim4Difficulty ?? null,
         dim5Structure: res.dim5Structure != null ? String(res.dim5Structure) : '',
-        auxTagsJson: prettyAux(res.auxTags),
         labelStatus: res.labelStatus ?? null,
         baseScore: res.baseScore ?? null,
         sourceType: res.sourceType ?? null,
@@ -350,23 +293,7 @@ watch(questionId, async () => {
               style="width: 160px"
             />
           </div>
-          <div class="field-row">
-            <span class="field-label">思维方法 (dim3)</span>
-            <div class="field-control">
-              <el-select
-                v-model="form.dim3Skill"
-                :disabled="!canEdit"
-                multiple
-                filterable
-                allow-create
-                default-first-option
-                placeholder="选择/输入数学思想方法"
-                style="width: 100%; max-width: 420px"
-              >
-                <el-option v-for="m in METHOD_OPTIONS" :key="m" :label="m" :value="m" />
-              </el-select>
-            </div>
-          </div>
+          <!-- 🔴 C-100 B-converge 方案B：思维方法 (dim3) 随 BE V905 DROP 列剥除（属性编辑页 C 线预期降级） -->
           <div class="field-row">
             <span class="field-label">难度 (dim4)</span>
             <el-input-number
@@ -387,19 +314,7 @@ watch(questionId, async () => {
               style="width: 100%; max-width: 420px"
             />
           </div>
-          <div class="field-row field-row-top">
-            <span class="field-label">辅标签</span>
-            <div class="field-control">
-              <el-input
-                v-model="form.auxTagsJson"
-                :disabled="!canEdit"
-                type="textarea"
-                :rows="3"
-                placeholder='JSON 对象，形如 {"错因":"计算失误","情境":"现实生活"}'
-                style="width: 100%; max-width: 420px"
-              />
-            </div>
-          </div>
+          <!-- 🔴 C-100 B-converge 方案B：辅标签 (aux_tags) 随 BE V905 DROP 列剥除（属性编辑页 C 线预期降级） -->
           <div class="field-row">
             <span class="field-label">标注状态</span>
             <el-select

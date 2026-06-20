@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import MarkdownIt from 'markdown-it'
 import katexPlugin from '@traptitech/markdown-it-katex'
 import 'katex/dist/katex.min.css'
+import { normalizeMath } from '@/utils/mathNormalize'
 
 // ---------------------------------------------------------------------------
 // PRD-C-009 — 富文本渲染：Markdown（## 标题 / **粗体** / 列表 / --- 分隔）+ LaTeX 数学公式
@@ -18,16 +19,9 @@ const props = defineProps<{ content: string }>()
 const md = new MarkdownIt({ breaks: true, linkify: true, html: false })
 md.use(katexPlugin, { throwOnError: false, errorColor: '#cf1322' })
 
-// LLM 产出脏格式归一化（兜底已入库的历史数据；新产出 BE 解析边界已净化）：
-//   \( x \) / \[ x \] → $x$ / $$x$$（markdown-it 会把 \( 的反斜杠当转义吃掉，katex 插件只认 $）
-//   字面 \n（反斜杠+n 两个字符，非换行）→ 真换行；后跟小写字母的不动（\neq \nabla 等 LaTeX 命令）
-function normalizeMath(src: string): string {
-  return src
-    .replace(/\\\[\s*([\s\S]+?)\s*\\\]/g, (_, expr: string) => `$$${expr}$$`)
-    .replace(/\\\(\s*([\s\S]+?)\s*\\\)/g, (_, expr: string) => `$${expr}$`)
-    .replace(/\\n(?![a-z])/g, '\n')
-}
-
+// 🔴 净化口径已收敛到 SSOT util `@/utils/mathNormalize`（A1/P2，2026-06-18）：
+//   聊天页(本组件) 与 题库/卷库/PDF(richtext.renderRichText) 共用同一函数，避免两面口径漂移；
+//   并与 toolkit BE `_sanitize_rich_text` 同口径（$...$ 外裸 \quad 等间距命令 → 空格，段内交 KaTeX）。
 const rendered = computed(() => md.render(normalizeMath(props.content || '')))
 </script>
 
@@ -38,7 +32,9 @@ const rendered = computed(() => md.render(normalizeMath(props.content || '')))
 
 <style scoped>
 .md-math {
-  font-size: 14px;
+  /* 字号走 --md-font-size（useFontScale 注入），未设变量处回落 14px（聊天气泡等不受影响）。
+     标题/code/katex 等用 em 相对此基准，整体随档位等比缩放。 */
+  font-size: var(--md-font-size, 14px);
   line-height: 1.7;
   color: #1d2129;
   word-break: break-word;
@@ -51,13 +47,13 @@ const rendered = computed(() => md.render(normalizeMath(props.content || '')))
   line-height: 1.4;
 }
 .md-math :deep(h1) {
-  font-size: 17px;
+  font-size: 1.21em;
 }
 .md-math :deep(h2) {
-  font-size: 16px;
+  font-size: 1.14em;
 }
 .md-math :deep(h3) {
-  font-size: 15px;
+  font-size: 1.07em;
   color: #4080ff;
 }
 .md-math :deep(p) {
@@ -84,7 +80,7 @@ const rendered = computed(() => md.render(normalizeMath(props.content || '')))
   background: #f0f2f5;
   border-radius: 4px;
   padding: 1px 5px;
-  font-size: 13px;
+  font-size: 0.93em;
 }
 .md-math :deep(.katex) {
   font-size: 1.04em;

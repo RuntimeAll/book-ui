@@ -88,7 +88,9 @@ const imgStyle = computed(() => {
 <style scoped>
 /* ── 富文本区 ── */
 .qc-richtext {
-  font-size: 14px;
+  /* 字号走 --md-font-size（useFontScale 注入，与变式编辑器 MarkdownMath 同源），
+     未设变量处回落 14px（聊天/其它处不受影响）。随「小/中/大」档位等比缩放。 */
+  font-size: var(--md-font-size, 14px);
   line-height: 1.6;
   color: var(--el-text-color-primary, #1d2129);
   word-break: break-word;
