@@ -143,12 +143,23 @@ const currentRail = ref<RailItem | null>(null)
 const lastRailStages = ref<VariantStage[]>([])
 // PRD-C-011：右栏卡片栅数据源 = artifact 快照帧（snapshot 全量，整量替换）
 const artifact = ref<VariantArtifact | null>(null)
-// 🔴 PRD-A-018 G10-5：状态条展示用阶段——当前轮有帧用当前轮；否则（编辑轮空 rail）题组在场且
-//   不在新发送中 → 回落上一轮 rail，不显「待机」。fresh 新会话（无题组）仍空 → 由 starting 兜启动中。
+// 🔴 PRD-A-018 G10-5：题组在场时的「出题完成」合成 rail——恢复会话/编辑轮拿不到上一轮 rail 时，
+//   用它兜底，避免状态条显「待机·0/2」（进度条像被结束）。配图节点无 figure 帧 + 核心 done → 自动跳过done。
+const SETTLED_RAIL: VariantStage[] = [
+  { key: 'generate', title: '生成变式', status: 'done', detail: '已生成' },
+  { key: 'gene_gate', title: '考点一致比对', status: 'done', detail: '逐道与母题对照考点' },
+  { key: 'verify', title: '程序验算', status: 'await', detail: '可选 · 待老师自选验算' },
+  { key: 'persist', title: '题组就绪', status: 'done', detail: '题组就绪 · 可换数字 / 换场景 / 重生这道 / 入库' },
+]
+// 🔴 PRD-A-018 G10-5：状态条展示用阶段——当前轮有帧用当前轮；新发送中留空（starting 兜「启动中」）；
+//   否则题组在场时：优先回落上一轮 rail，无则用「出题完成」合成 rail，绝不显「待机」（进度条像被结束）。
 const railStages = computed<VariantStage[]>(() => {
   const cur = currentRail.value?.stages ?? []
   if (cur.length) return cur
-  if (!sending.value && (artifact.value?.items?.length ?? 0) > 0) return lastRailStages.value
+  if (sending.value) return cur
+  if ((artifact.value?.items?.length ?? 0) > 0) {
+    return lastRailStages.value.length ? lastRailStages.value : SETTLED_RAIL
+  }
   return cur
 })
 
