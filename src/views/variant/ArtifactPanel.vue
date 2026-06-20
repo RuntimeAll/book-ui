@@ -19,6 +19,8 @@ import VariantCard from './VariantCard.vue'
 // 🔴 PRD-C-100 B6：单卡配图态（按题 index 1-based）。宿主 variantFigures 透传，缺省 = 未配图。
 interface VariantFigureState {
   png: string | null
+  /** 🔴 PRD-A-018 bug#2：已入库配图的持久 OSS url（恢复会话/切 tab 时回填，无 base64 时回退显示） */
+  ossUrl?: string | null
   loading: boolean
   needs: boolean
   reason: string | null
@@ -556,6 +558,7 @@ function regenAll() {
             :basketing="basketingIndex === it.index"
             :regenerating="!!(regeneratingIndexes && regeneratingIndexes.includes(it.index))"
             :figure-png="variantFigures?.[it.index]?.png ?? null"
+            :figure-oss-url="variantFigures?.[it.index]?.ossUrl ?? null"
             :figure-loading="!!variantFigures?.[it.index]?.loading"
             :figure-needs-figure="!!variantFigures?.[it.index]?.needs"
             :figure-reason="variantFigures?.[it.index]?.reason ?? null"

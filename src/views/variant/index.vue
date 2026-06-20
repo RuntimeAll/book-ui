@@ -1907,6 +1907,21 @@ async function restoreSession(id: string) {
     }
     if (art) {
       artifact.value = art
+      // 🔴 PRD-A-018 bug#2（2026-06-20）：从 artifact 的 figure_url 重建变式配图显示态——配图原仅存
+      //   FE 内存 base64（variantFigures[idx].png），切 tab/恢复会话 clearCanvas 后清空且从不重建，
+      //   致已入库变式配图全消失（状态条也回落「无需配图」）。已入库的图 BE 透传了持久 url，这里回填
+      //   variantFigures[idx].ossUrl，VariantCard 无 base64 时回退显 ossUrl → 切 tab 不再丢图。
+      for (const it of art.items) {
+        if (it.figureUrl) {
+          variantFigures[it.index] = {
+            png: null,
+            loading: false,
+            needs: false,
+            reason: null,
+            ossUrl: it.figureUrl,
+          }
+        }
+      }
       // 🔴 PRD-A-018 A-22：恢复历史会话后重建母题 FE 态——否则已入库母题显「未入库」（可重复入库）、
       //   锚定章退化成 id/代码、「手动排版」入口失效。从 artifact 母题卡回填：
       //   ① 年级册/章人话名（chip 显「七年级上 / 第二章」而非代码 / 未定）；

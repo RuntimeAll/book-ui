@@ -67,6 +67,11 @@ const props = defineProps<{
   // ----- 🔴 PRD-C-100 B6 带图展示 + 图片重生（宿主调 compose_variant 后回填）-----
   /** 本变式配图 PNG base64（无损；data:image/png;base64,... 渲染） */
   figurePng?: string | null
+  /**
+   * 🔴 PRD-A-018 bug#2：配图持久 OSS url（已入库变式的图，恢复会话/切 tab 时回填）。无 base64 但有
+   *   ossUrl 时，配图区回退用 <img :src="ossUrl"> 显示 → 切 tab 不再丢图。
+   */
+  figureOssUrl?: string | null
   /** 配图进行中 → 按钮 loading + 占位 */
   figureLoading?: boolean
   /** 需配图但没造出来（G4）→ 「⚠待补图」徽章 */
@@ -185,14 +190,20 @@ const figureReasonIsInfra = computed(
 )
 const figureNotNeeded = computed(
   () =>
-    !props.figurePng &&
+    !hasFigure.value &&
     (figureReasonSaysNotNeeded.value || (!props.figureNeedsFigure && !!props.figureReason))
 )
 // 配图区是否整体渲染：有图 / 进行中 / 确需配图但缺（且 reason 非「不适合」语义、非 infra 异常）才显；
 //   「不需配图（含 reason 自相矛盾态）」「infra 异常」与「未尝试」时收起（去噪，设计稿纯文本题无配图区）。
+// 🔴 PRD-A-018 bug#2：配图显示源——优先 base64（现场造的无损图），否则回退已入库持久 ossUrl
+//   （恢复会话/切 tab 时只有 ossUrl）。两者皆无 → 无图。hasFigure 统一「有没有图」判据。
+const figureSrc = computed<string | null>(() =>
+  props.figurePng ? `data:image/png;base64,${props.figurePng}` : props.figureOssUrl || null
+)
+const hasFigure = computed(() => !!figureSrc.value)
 const showFigureZone = computed(
   () =>
-    !!props.figurePng ||
+    hasFigure.value ||
     !!props.figureLoading ||
     (!!props.figureNeedsFigure && !figureReasonSaysNotNeeded.value && !figureReasonIsInfra.value)
 )
@@ -1023,14 +1034,14 @@ function saveFieldEdit() {
       <!-- 🔴 PRD-A-017 polish Fix-B：纯文本/不需配图题整区收起（无 ⚠待补图 噪音、无矛盾 reason），
            只有有图 / 确需配图但缺 / 进行中 才渲染配图区。 -->
       <div v-if="showFigureZone" class="vc-figure-zone">
-        <!-- 已造出的配图（PNG 无损），点开看大图 -->
+        <!-- 已造出的配图（base64 无损）或已入库的持久图（ossUrl），点开看大图 -->
         <div
-          v-if="figurePng"
+          v-if="hasFigure"
           class="vc-figure"
           title="变式配图 · 点开看大图"
-          @click="emit('preview', `data:image/png;base64,${figurePng}`)"
+          @click="figureSrc && emit('preview', figureSrc)"
         >
-          <img :src="`data:image/png;base64,${figurePng}`" alt="配图" />
+          <img :src="figureSrc!" alt="配图" referrerpolicy="no-referrer" />
         </div>
         <!-- G4：确需配图但没造出来 → ⚠待补图（不静默无图）；needUserDesc 时显眼引导补描述。
              🔴 Fix-B：reason 自相矛盾（needs=true 但「opus 判定不适合配图」）→ 不显待补图（去噪）。 -->
@@ -1058,11 +1069,11 @@ function saveFieldEdit() {
             :disabled="sending || figureLoading"
             @click="emit('compose-figure', { index: item.index })"
           >
-            {{ figurePng ? '🖼 重新配图' : '🖼 配图' }}
+            {{ hasFigure ? '🖼 重新配图' : '🖼 配图' }}
           </el-button>
           <!-- 图片重生：图歪了 → 输入修正提示词，再造（带 correctionPrompt） -->
           <el-button
-            v-if="figurePng"
+            v-if="hasFigure"
             text
             size="small"
             :disabled="sending || figureLoading"

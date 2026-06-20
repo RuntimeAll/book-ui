@@ -317,6 +317,11 @@ export interface VariantArtifactItem {
   gene: string | null
   persisted: boolean
   /**
+   * 🔴 PRD-A-018 bug#2：本变式配图的持久 OSS url（BE cell.figure_url）。入库时 setVariantFigureUrl
+   *   回写、artifact 透传。配图原仅存 FE 内存 base64（切 tab/恢复会话即丢）→ 据此恢复显示。缺 → null。
+   */
+  figureUrl: string | null
+  /**
    * 题组编辑器（FE 端编辑）：BE edit-item 后置位 tier='manual'（验算待重跑的中性态）。
    * VariantCard 据此渲染中性「手动编辑」徽章 + 显示「重新验算」按钮（reverify 后变真实 tier）。
    * 注：BE 字段白名单已挡 manual_edited/from_edit 不外漏入库，故 FE 仅消费 tier='manual'。
@@ -854,6 +859,9 @@ function pickArtifact(msg: ToolkitChatMessage): VariantArtifact | null {
       tier,
       gene: typeof o.gene === 'string' && o.gene ? o.gene : null,
       persisted: o.persisted === true,
+      // 🔴 PRD-A-018 bug#2（2026-06-20）：变式配图持久 url（BE cell.figure_url 透传）。配图本只活在
+      //   FE 内存 base64，切 tab/恢复会话即丢；据此在恢复时重建配图显示。缺/非串 → null。
+      figureUrl: typeof o.figure_url === 'string' && o.figure_url ? o.figure_url : null,
       // PRD-C-014 T2：DNA 维度（兼容嵌套 o.dna 或散在 item 顶层的散键）
       dna: pickDna(o),
       // 手动编辑标记：显式 manual_edited / manualEdited，或内容编辑兜底 tier==='manual'
