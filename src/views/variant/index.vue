@@ -138,8 +138,19 @@ const thinking = ref(false) // LLM token 流期的「思考中」动效
 const thinkingStream = ref(false)
 // 当前轮 rail 锚点（onStage 只更新它；新一轮 send 换新锚点，旧轮 rail 冻结留存）
 const currentRail = ref<RailItem | null>(null)
+// 🔴 PRD-A-018 G10-5：最后一轮有内容的 rail 快照（sticky）。编辑/结构化指令轮不发阶段帧 →
+//   currentRail 空，但题组在场时不该显「待机·0/2」（进度条像被结束）→ 回落显示它。
+const lastRailStages = ref<VariantStage[]>([])
 // PRD-C-011：右栏卡片栅数据源 = artifact 快照帧（snapshot 全量，整量替换）
 const artifact = ref<VariantArtifact | null>(null)
+// 🔴 PRD-A-018 G10-5：状态条展示用阶段——当前轮有帧用当前轮；否则（编辑轮空 rail）题组在场且
+//   不在新发送中 → 回落上一轮 rail，不显「待机」。fresh 新会话（无题组）仍空 → 由 starting 兜启动中。
+const railStages = computed<VariantStage[]>(() => {
+  const cur = currentRail.value?.stages ?? []
+  if (cur.length) return cur
+  if (!sending.value && (artifact.value?.items?.length ?? 0) > 0) return lastRailStages.value
+  return cur
+})
 
 // 🔴 PRD-C-100 B6·成本相关 UI（轻量）：今日 AI 额度用尽的友好横幅。
 //   SSE error 帧 reason==='budget_exceeded'（或 content 含「额度/budget」关键词）→ 置位 + 横幅外显。
@@ -939,6 +950,9 @@ function dispatch(
         const idx = rail.stages.findIndex((s) => s.key === stage.key)
         if (idx >= 0) rail.stages[idx] = stage
         else rail.stages.push(stage)
+        // 🔴 PRD-A-018 G10-5：记下「最后一轮有内容的 rail」快照——编辑/结构化指令轮不发阶段帧时
+        //   回落显示它，避免进度条被收成「待机·0/2」（题组明明在场）。
+        lastRailStages.value = rail.stages.map((s) => ({ ...s }))
         scrollToBottom()
       },
       // 🔴 PRD-C-100 B6：思考流式 → 本轮可折叠思考块（增量拼接、流式期展开滚动）。
@@ -1536,9 +1550,27 @@ async function runRegen(indexes?: number[]) {
   const regenStems = (artifact.value?.items ?? [])
     .filter((it) => targets.includes(it.index))
     .map((it) => it.stem)
+  // 🔴 PRD-A-018 G10-3：记下重生前有配图的 target——重生改了题面，旧图作废(防串台)后，
+  //   带图变式不该图静默消失。重生后给它标「待补图」(needs)，卡显「⚠待补图·重新配图」按钮，
+  //   老师一眼知道图要重配（不 auto 重配=不偷烧 token；配图入 graph 治本在 A-020）。
+  const regenHadFigure = new Set(
+    (artifact.value?.items ?? [])
+      .filter((it) => targets.includes(it.index) && variantFigures[it.index]?.png)
+      .map((it) => it.index)
+  )
   try {
     const res = await regenVariant(threadId.value, indexes)
-    if (res.artifact) artifact.value = res.artifact
+    if (res.artifact) {
+      // runRegen 走结构化端点直设 artifact、不经 SSE onArtifact → 须显式作废旧图(与 SSE 路径一致防串台)
+      invalidateStaleFigures(res.artifact)
+      artifact.value = res.artifact
+      // 重生前有图、现作废了 → 标待补图(不静默消失)
+      for (const idx of regenHadFigure) {
+        if (!variantFigures[idx]?.png) {
+          variantFigures[idx] = { png: null, loading: false, needs: true, reason: null, ossUrl: null }
+        }
+      }
+    }
     // 🔴 A-3：清掉被重生题的旧验算结果（新题 stem 不同，旧结果不该再展示）
     for (const s of regenStems) clearVerifyResultByStem(s)
     if (res.failed.length) {
@@ -2064,7 +2096,7 @@ onBeforeUnmount(() => {
       <div v-if="!restoring" class="idle-rail-wrap">
         <!-- 🔴 PRD-A-018 C3(A-24)：点开始→首帧的过渡窗口，sending=true 但 currentRail.stages 仍空，
              传 :starting 让状态条显「启动中」而非「待机」（消除「系统在跑却显待机」瞬态矛盾）。 -->
-        <PhasedStatusRail :stages="currentRail?.stages ?? []" :starting="sending" />
+        <PhasedStatusRail :stages="railStages" :starting="sending" />
       </div>
 
       <div ref="streamRef" class="chat-stream">
