@@ -23,6 +23,7 @@
     "jspdf": "^4.2.1",
     "katex": "^0.17.0",
     "markdown-it": "^14.2.0",
+    "mathjax": "3.2.2",
     "pinia": "^3.0.1",
     "sortablejs": "^1.15.7",
     "vue": "^3.5.34",

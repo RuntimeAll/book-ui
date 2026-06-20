@@ -26,12 +26,19 @@
           ignoreHtmlClass: 'tex2jax_ignore',
           processHtmlClass: 'tex2jax_process'
         },
+        // 自托管显式字体路径(同源)：async 脚本 base 探测兜底，确保 woff-v2 字体从本站加载。
+        chtml: {
+          fontURL: '/mathjax/es5/output/chtml/fonts/woff-v2'
+        },
         startup: {
           typeset: false
         }
       };
     </script>
-    <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" async></script>
+    <!-- 🔴 自托管 MathJax(同源)：jsdelivr CDN 在国内 prod(http://jpjia.cn) 不稳/被墙 →
+         window.MathJax 注入不进来 → 公式裸显示 LaTeX 源码。改用 public/mathjax/es5(精简:
+         tex-mml-chtml + tex扩展 + chtml字体, 跳过 svg/sre 共~1.9MB)随 dist 部署同源 serve。 -->
+    <script src="/mathjax/es5/tex-mml-chtml.js" async></script>
   </head>
   <body>
     <div id="app"></div>
