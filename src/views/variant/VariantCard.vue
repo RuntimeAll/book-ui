@@ -132,6 +132,8 @@ const emit = defineEmits<{
   (e: 'compose-figure', payload: { index: number; correctionPrompt?: string }): void
   /** 🔴 PRD-C-100 B6：点开看大图（含切图 / 配图的 data URL） */
   (e: 'preview', url: string): void
+  /** 🔴 PRD-A-018：方向待确认徽章——老师确认方向没问题 → 宿主清该题 directionReview（消徽章，不再一直待确认） */
+  (e: 'confirm-direction', index: number): void
   /** 🔴 PRD-C-100 BC3：已入库变式「手动排版」（宿主标印记 + 跳 A-015 网格编辑器 round-trip blockJson） */
   (e: 'manual-layout', index: number): void
 }>()
@@ -1040,10 +1042,12 @@ function saveFieldEdit() {
           </div>
         </div>
 
-        <!-- 🔴 方向待确认：造图成功但含方向元素（旋转/箭头/镜像/平移）→ 徽章 + 引导补说明 -->
+        <!-- 🔴 方向待确认：造图成功但含方向元素（旋转/箭头/镜像/平移）→ 徽章 + 两路出口（确认 / 补说明） -->
         <div v-if="figurePng && figureDirectionReview" class="vc-figure-direction">
-          ⚠ 方向待确认（含旋转 / 箭头 / 镜像 / 平移）：请确认方向是否正确，如不对
-          <button type="button" class="vc-fig-desc-cta" @click="figFixOpen = true">补一句说明</button>
+          ⚠ 方向待确认（含旋转 / 箭头 / 镜像 / 平移）：请确认方向是否正确——
+          <button type="button" class="vc-fig-desc-cta" @click="emit('confirm-direction', item.index)">方向没问题</button>
+          ，或
+          <button type="button" class="vc-fig-desc-cta" @click="figFixOpen = true">补一句说明重画</button>
         </div>
 
         <div class="vc-figure-actions">

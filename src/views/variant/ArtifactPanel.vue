@@ -119,6 +119,8 @@ const emit = defineEmits<{
   (e: 'regen-all'): void
   /** 🔴 PRD-C-100 B6：单卡配图 / 图片重生（宿主调 composeVariantFigure） */
   (e: 'compose-figure', payload: { index: number; correctionPrompt?: string }): void
+  /** 🔴 PRD-A-018：方向待确认——老师确认方向没问题 → 宿主清该题 directionReview */
+  (e: 'confirm-direction', index: number): void
   /** 🔴 PRD-C-100 B6：点开看大图（含切图 / 配图 data URL；宿主弹大图遮罩） */
   (e: 'preview', url: string): void
   /** 🔴 PRD-C-100 BC3：已入库变式「手动排版」（宿主标印记 + 跳 A-015 网格编辑器） */
@@ -570,6 +572,7 @@ function regenAll() {
             @undo-regen="(i: number) => emit('undo-regen', i)"
             @edit-models="(p) => emit('edit-models', p)"
             @compose-figure="(p) => emit('compose-figure', p)"
+            @confirm-direction="(i: number) => emit('confirm-direction', i)"
             @preview="(u: string) => emit('preview', u)"
             @manual-layout="(i: number) => emit('manual-layout', i)"
           />

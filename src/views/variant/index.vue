@@ -518,6 +518,15 @@ async function onComposeFigureFromUser(payload: { index: number; correctionPromp
   if (!(await confirmTokenSpend('配图会调用 AI 生成图形、消耗 token。'))) return
   await onComposeVariantFigure(payload)
 }
+
+/**
+ * 🔴 PRD-A-018：方向待确认——老师点「方向没问题」→ 清该题 directionReview，消徽章。
+ *   方向徽章原只有「补一句说明重画」一条出口，方向本就对时无法消除→一直待确认。这里给确认出口。
+ */
+function onConfirmDirection(index: number) {
+  const st = variantFigures[index]
+  if (st) st.directionReview = false
+}
 // 题组编辑器：正在重新验算的题 index（1-based），驱动该卡 loading 态
 const reverifyingIndex = ref<number | null>(null)
 // 🔴 BUG-09 手动验算：正在「验算」的题 index（1-based）+ 验算结果表（按 index 持有 verify-one 回填）。
@@ -814,7 +823,10 @@ function settleStages() {
   const rail = currentRail.value
   if (!rail) return
   rail.stages = rail.stages.map((s) =>
-    s.status === 'running'
+    // 🔴 PRD-A-018：figure-mother / figure-v* 是宿主独立 POST（母题切图/变式造图）驱动的异步配图灯，
+    //   生命周期不绑 SSE 流——crop/compose 常在 SSE 流收口后才完成。SSE 流结束不该把它们误判
+    //   「已中断」→ 否则母题切图/配图灯 done→异常(已中断)→done 闪烁（状态条乱跳）。只收 SSE 驱动的阶段灯。
+    s.status === 'running' && !s.key.startsWith('figure-')
       ? { ...s, status: 'warn' as const, detail: s.detail ? `${s.detail}·已中断` : '已中断' }
       : s
   )
@@ -2307,6 +2319,7 @@ onBeforeUnmount(() => {
       @edit-models="onEditModels"
       @regen-all="onRegenAll"
       @compose-figure="onComposeFigureFromUser"
+      @confirm-direction="onConfirmDirection"
       @preview="(u: string) => (previewUrl = u)"
       @manual-layout="onManualLayout"
     >
