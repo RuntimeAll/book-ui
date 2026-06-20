@@ -792,10 +792,29 @@ function touchSession(firstShownText?: string) {
 // 会话 / 发送
 // ---------------------------------------------------------------------------
 
+// crypto.randomUUID 仅在安全上下文(HTTPS / localhost)可用；prod 走 HTTP(jpjia.cn)
+// 时该 API 不存在，会抛 TypeError 把整个页面打白。thread_id 非安全敏感值，
+// 非安全上下文回退 getRandomValues / Math.random 生成 RFC4122 v4。
+function genUUID(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    let r: number
+    if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+      r = crypto.getRandomValues(new Uint8Array(1))[0] % 16
+    } else {
+      r = (Math.random() * 16) | 0
+    }
+    const v = c === 'x' ? r : (r & 0x3) | 0x8
+    return v.toString(16)
+  })
+}
+
 // 会话级 thread_id：同会话所有 send 复用 → agent 记住当前题组。
 // 刷新不再换新 —— onMounted 恢复上次活跃会话（用户反馈③）。ref 是为了
 // 会话列表里 is-active 高亮能跟着切换走（模板里要响应式）。
-const threadId = ref<string>(crypto.randomUUID())
+const threadId = ref<string>(genUUID())
 let handle: VariantStreamHandle | null = null
 // 「换一批」= 重发初始出题 utterance（PRD 开放问题方案 b：不动 agent 路由）
 let firstComposeMessage: string | null = null
@@ -1844,7 +1863,7 @@ function clearCanvas() {
 /** 新会话（原「新母题」）：换新 thread；首条消息发出时才登记进会话列表 */
 function resetSession() {
   clearCanvas()
-  threadId.value = crypto.randomUUID()
+  threadId.value = genUUID()
   try {
     localStorage.setItem(ACTIVE_KEY, '')
   } catch {
@@ -1945,7 +1964,7 @@ async function restoreSession(id: string) {
   } catch (e) {
     console.warn('[variant] 历史会话恢复失败（举一反三服务 :8093 未启动？）:', e)
     ElMessage.warning('历史会话暂时拉取不到，已为你开一个新会话。稍后可重试，或联系管理员。')
-    threadId.value = crypto.randomUUID()
+    threadId.value = genUUID()
   } finally {
     restoring.value = false
   }
