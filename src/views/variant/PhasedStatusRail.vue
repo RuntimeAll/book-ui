@@ -23,9 +23,11 @@ import type { VariantStage } from '@/api/variant'
 // 🔴 PRD-A-018 C3(A-24)：starting = 已点「开始举一反三」/ 已发起一轮，但首帧（generate）还没到达的
 //   过渡窗口。此态下若 stages 仍空，状态条显「启动中」而非「待机」——避免「系统在跑（sending=true、
 //   母题卡还在）却显待机」的瞬态矛盾。宿主传 :starting="sending"。
+// 🔴 PRD-A-018 bug#2（2026-06-20）：motherHasImg = 母题确有原图（motherImg 非空）。母题切图节点据此
+//   在无切图帧时判「待切（有图必切）」还是「无需切图（纯文本）」，杜绝几何带图母题被误显「无需切图·done」。
 const props = withDefaults(
-  defineProps<{ stages: VariantStage[]; starting?: boolean }>(),
-  { starting: false }
+  defineProps<{ stages: VariantStage[]; starting?: boolean; motherHasImg?: boolean }>(),
+  { starting: false, motherHasImg: false }
 )
 
 type NodeState = 'todo' | 'run' | 'done' | 'err' | 'human'
@@ -107,12 +109,22 @@ const dingNodes = computed<PsNode[]>(() => {
         : (cls?.detail ?? '识别题面、判年级·章、锚定考点'),
   }
   // ② 母题切图（figure）：后端按帧渲染——running→done（带图）/ done（纯文本「无需切图」）。
-  //   🔴 无 figure 帧（旧数据/异常）→ 按「不适用·done」兜底，不恒挂「待完成」卡住整条。
-  const n2: PsNode = {
-    label: '母题切图',
-    state: fig ? nodeStateFromStatus(fig.status, 'done') : 'done',
-    desc: fig?.detail ?? '无需切图 · 纯文本',
-  }
+  //   🔴 PRD-A-018 bug#2（2026-06-20）：无 figure-mother 帧时**不能一律预先 done**——上传后读图阶段
+  //     (classify 还在跑、母题切图根本没轮到) 旧逻辑直接 done「无需切图·纯文本」= 「上传即done」假完成，
+  //     连几何带图母题也被误判纯文本。收窄兜底：
+  //       · 有 fig 帧 → 用其真值；
+  //       · 无 fig 帧但**已到母题就绪 gate**(review 有帧) → 此时若仍无切图帧 = 确为纯文本/无图可切 → done；
+  //       · 无 fig 帧且**尚未到母题就绪**(读图/定题进行中) → todo（待切图，不预先 done）。
+  const n2: PsNode = fig
+    ? { label: '母题切图', state: nodeStateFromStatus(fig.status, 'done'), desc: fig.detail ?? '母题切图' }
+    : props.motherHasImg
+      ? // 母题确有原图 → 必走切图，无帧 = 还没轮到/正在切（绝不显「无需切图」）
+        review
+        ? { label: '母题切图', state: 'run', desc: '切出母题图形…' }
+        : { label: '母题切图', state: 'todo', desc: '待读图后切出母题图形' }
+      : review
+        ? { label: '母题切图', state: 'done', desc: '无需切图 · 纯文本' }
+        : { label: '母题切图', state: 'todo', desc: '待读图后判断是否需要切图' }
   // ③ 确认母题（review）：await→需人工（真正等老师操作的 gate）/ done→已完成（点了「开始举一反三」）。
   //   🔴 数据源从 knobs 改成 review；无 review 帧时按 todo（母题就绪前还没到确认 gate）。
   const n3: PsNode = {

@@ -1874,9 +1874,11 @@ async function restoreSession(id: string) {
     let humanIdx = 0
     for (const m of msgs) {
       const text = String(m.content || '').trim()
-      if (!text) continue
       if (m.type === 'human') {
-        // 优先用注册表；缺失则从文本抠出内联 URL（向后兼容旧会话）
+        // 🔴 PRD-A-018 bug#1（2026-06-20）：human 分支**先于** humanIdx++ 不能被「空文本 continue」截断——
+        //   纯图人类消息（文本为图链/或注册表带图）若先 `if(!text) continue` 跳过，会①漏 humanIdx++ 致后续
+        //   人类气泡读错注册表下标（图错位）、②整条纯图气泡（含图）被丢 → 恢复后空白，老师以为「点了没反应」。
+        //   故：human 一律先取图 + 推进 humanIdx，再判要不要出气泡（文本空但有图照常出）。
         const fromReg = msgImgs[humanIdx]
         const imgs =
           Array.isArray(fromReg) && fromReg.length
@@ -1890,6 +1892,7 @@ async function restoreSession(id: string) {
         }
         // 展示文本剥掉内联 URL（图改由气泡缩略图承载）
         const shownText = text.replace(URL_IN_TEXT_RE_G, '').replace(/\s+/g, ' ').trim()
+        if (!shownText && !imgs.length) continue // 真·空消息（无文字也无图）才跳过
         stream.value.push({
           type: 'bubble',
           role: 'user',
@@ -1897,6 +1900,7 @@ async function restoreSession(id: string) {
           images: imgs.length ? imgs : undefined,
         })
       } else if (m.type === 'ai') {
+        if (!text) continue // AI 空内容帧跳过
         stream.value.push({ type: 'bubble', role: 'ai', kind: 'normal', text })
       }
       // tool/custom 帧不回放（stage 思路条是过程态，历史会话无需重演）
@@ -2081,7 +2085,17 @@ onBeforeUnmount(() => {
               :class="{ 'is-active': s.id === threadId }"
               @click="s.id !== threadId && !sending && restoreSession(s.id)"
             >
-              <span class="session-title">{{ s.title }}</span>
+              <!-- 🔴 PRD-A-018 bug#1（2026-06-20）：纯图（无输入文字）会话原来标题落空→渲染成空白行，
+                   老师以为「不能点」。① 有母题图则显缩略图（视觉锚，明确可点）；② 标题永不空白
+                   （兜底「图片举一反三」），整行可点不变。 -->
+              <img
+                v-if="s.img"
+                :src="s.img"
+                class="session-thumb"
+                referrerpolicy="no-referrer"
+                alt=""
+              />
+              <span class="session-title">{{ s.title || '图片举一反三' }}</span>
               <span class="session-time">{{ sessionTime(s.at) }}</span>
               <el-button
                 text
@@ -2107,7 +2121,7 @@ onBeforeUnmount(() => {
       <div v-if="!restoring" class="idle-rail-wrap">
         <!-- 🔴 PRD-A-018 C3(A-24)：点开始→首帧的过渡窗口，sending=true 但 currentRail.stages 仍空，
              传 :starting 让状态条显「启动中」而非「待机」（消除「系统在跑却显待机」瞬态矛盾）。 -->
-        <PhasedStatusRail :stages="railStages" :starting="sending" />
+        <PhasedStatusRail :stages="railStages" :starting="sending" :mother-has-img="!!motherImg" />
       </div>
 
       <div ref="streamRef" class="chat-stream">
@@ -3010,6 +3024,15 @@ onBeforeUnmount(() => {
 .session-item.is-active {
   background: var(--violet-50); /* 当前会话 */
   cursor: default;
+}
+.session-thumb {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  object-fit: cover;
+  border-radius: 5px;
+  border: 1px solid var(--line);
+  background: var(--bg-soft);
 }
 .session-title {
   flex: 1;
