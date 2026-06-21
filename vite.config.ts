@@ -83,6 +83,10 @@ export default defineConfig({
   // element-vendor 暂不切：element-plus 已由 unplugin-vue-components AutoImport 按需 tree-shake，
   // 强切 vendor chunk 可能反而引入重复或破坏按需导入链，实测后再细调（见 manual.md design 决策）。
   build: {
+    // 🔴 2026-06-21：vite 默认压缩器(esbuild/oxc)会破坏 KaTeX lexer → `\circ` 被错切成 `\c`
+    //   → 所有 `^\circ`(度数)在 prod 崩(dev 不压缩故正常=「本地正常线上挂」)。换 terser(公认最稳)修。
+    //   验证：terser 构建后 prod 母题题面 ∠/⊥/° 全渲染、katex_err=0。
+    minify: 'terser',
     chunkSizeWarningLimit: 800,
     rollupOptions: {
       output: {
