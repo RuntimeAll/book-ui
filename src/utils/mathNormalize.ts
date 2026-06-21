@@ -19,6 +19,25 @@ const MATH_SPLIT_RE = /(\$\$[\s\S]+?\$\$|\$[^\n$]+?\$)/g
 // 裸间距命令：\quad \qquad（后接非字母边界，防误伤 \quadword）+ \, \; \! \:
 const BARE_SPACING_RE = /\\(?:qquad|quad)(?![a-zA-Z])|\\[,;!:]/g
 
+// 🔴 2026-06-21（PRD-A-018 用户终审）：LLM 常把无参几何符号命令**粘住**点标签，如把
+//   $\angle BOD$ 写成 $\angleBOD$。KaTeX 把 `\angleBOD` 当一个未定义控制序列 → 整个 $...$ 段
+//   报错、errorColor 红字裸显示源码（连同段内合法的 \frac12 一起变红）。这些命令后紧跟大写
+//   字母必是标签（无合法 `\angleX` 命令），插一个空格即修复且语义不变（\angle BOD = ∠BOD）。
+//   只在 $...$ **内**做（段外不碰）。仅限无参符号命令，不含 \vec/\overrightarrow（带参，补空格会渲染错）。
+const GLUED_GEOM_RE = /\\(angle|triangle|parallel|nparallel|perp|cong|simeq|odot)(?=[A-Z])/g
+// 数学段内裸 ° → ^\circ（KaTeX 数学模式不认裸 °，会报错）。如 90° → 90^\circ。
+const BARE_DEGREE_RE = /°/g
+
+/** 修 $...$ **内**的常见 LLM LaTeX 脏写：粘连几何命令补空格、裸 ° → ^\circ。段外不碰。 */
+export function fixGluedInsideMath(src: string): string {
+  const parts = src.split(MATH_SPLIT_RE)
+  for (let i = 1; i < parts.length; i += 2) {
+    // 奇数下标 = 数学段（含 $ 定界符）
+    parts[i] = parts[i].replace(GLUED_GEOM_RE, '\\$1 ').replace(BARE_DEGREE_RE, '^\\circ ')
+  }
+  return parts.join('')
+}
+
 /** 把 $...$ 外的裸 LaTeX 间距命令替成普通空格；$...$ 内原样。与 BE _strip_bare_spacing_outside_math 同口径。 */
 export function stripBareSpacingOutsideMath(src: string): string {
   const parts = src.split(MATH_SPLIT_RE)
@@ -31,7 +50,7 @@ export function stripBareSpacingOutsideMath(src: string): string {
 
 /**
  * 富文本 LaTeX 归一化（SSOT）。MarkdownMath.vue 与 richtext.ts 共用。
- * 注意：只处理 $...$ 外的裸命令；$...$ 内一律原样交 KaTeX，绝不改坏既有 $...$ 渲染。
+ * 注意：段外只处理裸间距命令；段内只修「LLM 脏写」(粘连几何命令、裸 °)，其余原样交 KaTeX。
  */
 export function normalizeMath(src: string): string {
   if (!src) return ''
@@ -39,5 +58,5 @@ export function normalizeMath(src: string): string {
     .replace(/\\\[\s*([\s\S]+?)\s*\\\]/g, (_, expr: string) => `$$${expr}$$`)
     .replace(/\\\(\s*([\s\S]+?)\s*\\\)/g, (_, expr: string) => `$${expr}$`)
     .replace(/\\n(?![a-z])/g, '\n')
-  return stripBareSpacingOutsideMath(s)
+  return fixGluedInsideMath(stripBareSpacingOutsideMath(s))
 }
