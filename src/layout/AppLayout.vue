@@ -98,6 +98,10 @@ const showQuestionBasket = computed(() => {
   return route.path.startsWith('/question/')
     || route.path.startsWith('/papers/')
     || route.path === '/workspace'
+    // 🔴 PRD-A-021 S1：举一反三页（/ai-variant）单题「加入试题篮」走同一 useQuestionBasket
+    //   singleton，但全局试题栏 FAB/抽屉原白名单未含此路由 → 加进篮看不到篮子。补进白名单，
+    //   复用题库/卷库同款全局组件（共享组件铁则），不重造。
+    || route.path === '/ai-variant'
 })
 
 // PRD-001 — 旧绿色试卷篮 FAB/dialog(818 行)已下线，功能迁入 /papers/basket 三栏工作台。
