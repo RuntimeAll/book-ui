@@ -1961,6 +1961,14 @@ async function restoreSession(id: string) {
     }
     const meta = sessions.value.find((s) => s.id === id)
     if (meta?.img && !motherImg.value) motherImg.value = meta.img
+    // 🔴 2026-06-21（用户终审「配图刷新也消失」）：母题切图（右栏「图形」）按需切、不随会话持久化，
+    //   恢复时若不重切则母题卡回来了但「图形」区空白。这里补一次自动切图（与 maybeAutoFirstFigures
+    //   的母题切图分支同条件/同去重）。变式配图已由上方 figure_url 回填 ossUrl，不在此重造。
+    //   纯文本母题（无图形区）crop 自返 needs_figure，无害。
+    if (!autoCropMotherDone && motherImg.value && !motherFigurePng.value && !motherFigureLoading.value) {
+      autoCropMotherDone = true
+      void onCropMotherFigure()
+    }
   } catch (e) {
     console.warn('[variant] 历史会话恢复失败（举一反三服务 :8093 未启动？）:', e)
     ElMessage.warning('历史会话暂时拉取不到，已为你开一个新会话。稍后可重试，或联系管理员。')
