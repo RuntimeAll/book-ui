@@ -335,6 +335,13 @@ export interface VariantArtifactItem {
    */
   figureUrl: string | null
   /**
+   * 🔴 PRD-A-021 R2b·U1：本变式配图的生成态 PNG base64（BE cell.figure_base64）。FE 造图认账后
+   *   经 set-figure-url(figure_base64) 立即回写 state → 落 checkpoint → 刷新/恢复会话从 state 取回
+   *   （治「生成态配图只在 FE 内存、刷新即丢」）。未入库（无 figure_url）时它是恢复配图的唯一来源。
+   *   入库后 BE 把 base64 转上 OSS 拿 figureUrl，恢复优先用 figureUrl。缺/旧后端 → null。
+   */
+  figureBase64: string | null
+  /**
    * 题组编辑器（FE 端编辑）：BE edit-item 后置位 tier='manual'（验算待重跑的中性态）。
    * VariantCard 据此渲染中性「手动编辑」徽章 + 显示「重新验算」按钮（reverify 后变真实 tier）。
    * 注：BE 字段白名单已挡 manual_edited/from_edit 不外漏入库，故 FE 仅消费 tier='manual'。
@@ -875,6 +882,10 @@ function pickArtifact(msg: ToolkitChatMessage): VariantArtifact | null {
       // 🔴 PRD-A-018 bug#2（2026-06-20）：变式配图持久 url（BE cell.figure_url 透传）。配图本只活在
       //   FE 内存 base64，切 tab/恢复会话即丢；据此在恢复时重建配图显示。缺/非串 → null。
       figureUrl: typeof o.figure_url === 'string' && o.figure_url ? o.figure_url : null,
+      // 🔴 PRD-A-021 R2b·U1：变式配图生成态 base64（BE cell.figure_base64 透传）。FE 造图认账后
+      //   立即回写 state，刷新/恢复时优先 figureUrl(已入库 OSS)，否则用它直接渲染。缺/非串 → null。
+      figureBase64:
+        typeof o.figure_base64 === 'string' && o.figure_base64 ? o.figure_base64 : null,
       // PRD-C-014 T2：DNA 维度（兼容嵌套 o.dna 或散在 item 顶层的散键）
       dna: pickDna(o),
       // 手动编辑标记：显式 manual_edited / manualEdited，或内容编辑兜底 tier==='manual'
@@ -1795,22 +1806,32 @@ function readableDetail(d: unknown): string {
 }
 
 /**
- * PRD-C-100 BC2 — 把变式配图的 OSS https url 回写进 toolkit state.items[index].figure_url。
+ * PRD-C-100 BC2 + PRD-A-021 R2b·U1 — 把变式配图回写进 toolkit state.items[index]（零 LLM）。
  *
- * 用途：变式造图（composeVariantFigure）产 PNG base64 只在 FE 展示；老师认账入库前，FE 先把
- * base64 经 uploadMotherImage 传 OSS 拿 https url，再调本端点回写 state。入库时 BE
- * build_create_bo 据 figure_url 产 A-015 image 块 → 卷库/详情/PDF 走结构化渲染。
- * figureUrl 传空 = 撤掉配图。index = 1-based（与 persist-one 同口径）。
+ * 两类配图态（可单独或一并回写，落 checkpoint 持久化）：
+ *   · figureUrl（入库态 OSS https url）：FE 入库前把 base64 经 uploadMotherImage 传 OSS 拿 url 回写 →
+ *     入库时 BE build_create_bo 据它产 A-015 image 块（卷库/详情/PDF 走结构化渲染）。仅收 https。
+ *   · figureBase64（生成态 PNG base64）：🔴 R2b·U1 —— composeVariantFigure 产的 base64，老师认账后
+ *     **立即**回写 state（不等入库）→ 刷新/恢复会话从 state 取回，治「生成态配图只活 FE 内存、刷新即丢」。
+ *
+ * 🔴 撤图语义（与 BE 对齐）：figureUrl 传空/null = 清掉 OSS url；figureBase64 **显式传空串** = 清掉 base64；
+ *    figureBase64 缺省（undefined，不传该形参）= 不碰 base64（向后兼容旧调用，与 BC2 字节级一致）。
+ *    🔴 注意 figureUrl 始终被处理（空即清）——只回写 base64 时须把当前已有 ossUrl 一并回传，避免误清。
+ * index = 1-based（与 persist-one 同口径）。
  */
 export async function setVariantFigureUrl(
   threadId: string,
   index: number,
-  figureUrl: string | null
+  figureUrl: string | null,
+  figureBase64?: string | null
 ): Promise<void> {
+  // figureBase64 缺省（undefined）→ 不带该键，BE 不碰 base64（向后兼容）；显式 null/'' → 带空串清。
+  const body: Record<string, unknown> = { thread_id: threadId, index, figure_url: figureUrl }
+  if (figureBase64 !== undefined) body.figure_base64 = figureBase64 ?? ''
   const res = await fetch('/agent/variant/set-figure-url', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ thread_id: threadId, index, figure_url: figureUrl }),
+    body: JSON.stringify(body),
   })
   if (!res.ok) {
     const detail = await res

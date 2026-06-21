@@ -402,6 +402,26 @@ async function flushFigureToOss(index: number): Promise<void> {
   await setVariantFigureUrl(threadId.value, index, url)
 }
 
+/**
+ * 🔴 PRD-A-021 R2b·U1：变式配图生成并老师认账（图渲出来那一刻）后，把生成态 base64 立即回写
+ *   toolkit state（落 checkpoint）→ 刷新/恢复会话从 state 取回，治「生成态配图只在 FE 内存、刷新即丢」。
+ *   - 不等入库：与 flushFigureToOss（入库时转 OSS）正交，这里只回写 base64，不传 OSS。
+ *   - 保护既有 ossUrl：setVariantFigureUrl 的 figure_url 形参始终被 BE 处理（空即清），故把当前已有
+ *     ossUrl 一并回传，避免「只回写 base64」误清掉已入库变式的 figure_url（A-018 红线）。
+ *   - 撤图（base64 传空串）由 BE 显式清；这里非空才回写。失败不报错（仅控台告警，配图照常本地展示）。
+ */
+async function persistFigureBase64(index: number, base64: string): Promise<void> {
+  if (!threadId.value || !base64) return
+  const st = variantFigures[index]
+  const keepUrl = st?.ossUrl || null // 不动既有 OSS url（A-018：已入库变式图刷新不丢）
+  try {
+    await setVariantFigureUrl(threadId.value, index, keepUrl, base64)
+  } catch (e) {
+    // 持久化失败不阻断本地展示（图仍在内存 base64）；仅记日志，老师无感
+    console.warn('[variant] 配图生成态持久化失败（不影响本地展示）:', e)
+  }
+}
+
 /** 母题切图（crop_mother）：从母题原图切出图形区。重切=再调一次。 */
 async function onCropMotherFigure() {
   if (motherFigureLoading.value || !motherImg.value) return
@@ -485,14 +505,21 @@ async function onComposeVariantFigure(payload: { index: number; correctionPrompt
     // 🔴 PRD-C-100 P7：成功（有 png）才覆盖图；失败（needs_figure/无 png）只更原因，保留上一版好图，
     //   不让一次失败的重造把已有好图清成 ⚠待补图（UX 退步）。
     if (res.pngBase64) {
+      const changed = st.png !== res.pngBase64
       st.png = res.pngBase64
       st.needs = false
       st.needUserDesc = false // 成功出图 → 不再催补描述
       // 🔴 方向待确认：成功出图但含方向元素 → 标徽章（图照常展示，引导确认方向）。
       st.directionReview = res.directionReview
+      // 🔴 PRD-A-021 R2b·U1：图变了（重新配图/图片重生产出新图）→ 旧 OSS url 已失配，作废它，
+      //   让入库时 flushFigureToOss 重新上传新图（否则 flush 会复用旧 url 把旧图当新图入库）。
+      if (changed) st.ossUrl = null
       // 成功时存住本版命令（供下次图片重生作增量基准）；BE 没回命令则保留上一版 commands。
       const cmds = normalizeCommands(res.commands)
       if (cmds.length) st.commands = cmds
+      // 🔴 PRD-A-021 R2b·U1：配图生成并渲出（老师认账即此刻）→ 立即把 base64 回写 state 持久化，
+      //   刷新/恢复会话从 state 取回（不再只活 FE 内存）。不阻塞 UI（fire-and-forget，内部已容错）。
+      void persistFigureBase64(payload.index, res.pngBase64)
       // 单元1：成功 → 灯 done
       upsertFigureStage(stageKey, 'done', `第 ${payload.index} 题`)
     } else {
@@ -2019,6 +2046,10 @@ async function restoreSession(id: string) {
       //   FE 内存 base64（variantFigures[idx].png），切 tab/恢复会话 clearCanvas 后清空且从不重建，
       //   致已入库变式配图全消失（状态条也回落「无需配图」）。已入库的图 BE 透传了持久 url，这里回填
       //   variantFigures[idx].ossUrl，VariantCard 无 base64 时回退显 ossUrl → 切 tab 不再丢图。
+      // 🔴 PRD-A-021 R2b·U1：恢复时配图渲染优先级 = figureUrl(已入库 OSS) > figureBase64(生成态) > 重切兜底。
+      //   - 已入库变式（有 figureUrl）：回填 ossUrl、png 留空 → 走 OSS url 渲染（A-018 路径，不动）。
+      //   - 未入库但已造图认账（仅 figureBase64）：回填 png → 直接 data:image 渲染，刷新不再丢生成态图。
+      //   - 两者皆无：本组无配图（纯文本/未造）→ 不建态（变式不重造，避免恢复时烧 token）。
       for (const it of art.items) {
         if (it.figureUrl) {
           variantFigures[it.index] = {
@@ -2027,6 +2058,14 @@ async function restoreSession(id: string) {
             needs: false,
             reason: null,
             ossUrl: it.figureUrl,
+          }
+        } else if (it.figureBase64) {
+          variantFigures[it.index] = {
+            png: it.figureBase64,
+            loading: false,
+            needs: false,
+            reason: null,
+            ossUrl: null,
           }
         }
       }
