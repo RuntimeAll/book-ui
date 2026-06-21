@@ -35,8 +35,8 @@ import type {
   VariantStreamHandle,
 } from '@/api/variant'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
-import { createQuestionWithDna, deleteQuestionBlock } from '@/api/question/index'
-import type { CreateQuestionWithDnaBo, QuestionItem } from '@/api/question/index'
+import { createQuestionWithDna, deleteQuestionBlock, lazyTree } from '@/api/question/index'
+import type { CreateQuestionWithDnaBo, QuestionItem, SubjectNode } from '@/api/question/index'
 import MarkdownMath from '@/components/MarkdownMath.vue'
 import PhasedStatusRail from './PhasedStatusRail.vue'
 import ArtifactPanel from './ArtifactPanel.vue'
@@ -696,6 +696,57 @@ function onImageDrop(e: DragEvent) {
 onMounted(() => document.addEventListener('paste', onPaste))
 
 // ---------------------------------------------------------------------------
+// 🔴 PRD-A-021 B5 — 对话开启前「可选」预设年级/章（省 LLM 钱 + 少一步确认 + 更准）。
+//   空态左栏 composer 上方放两级级联（年级册 → 章），数据源复用既有 lazyTree(0)
+//   （/teacher/question/lazyTree 整树，顶层=年级册 level1、children=章 level2，字段 id/title/children）——
+//   与 GradeChapterConfirmDialog / KpTreeDialog 同一棵 biz_subject 树，禁重造接口。
+//   可选：不选不挡流程；首轮发起时若选了，把 preset_grade_book(年级册人话名) + preset_chapter_id
+//   （章 id，老师只选到年级册时回退年级册 id）塞进 agent_config.configurable（见 send()）。
+//   没选 → 不塞这两键，维持现有 classify 路径（核心红线：不选时行为与现状完全一致）。
+// ---------------------------------------------------------------------------
+const presetTree = ref<SubjectNode[]>([])
+const presetTreeLoading = ref(false)
+const presetGradeBookId = ref('') // 选中的年级册（level1）id，可空
+const presetChapterId = ref('') // 选中的章（level2）id，可空（只选年级册也行）
+
+// 年级册下拉选项（lazyTree 顶层）
+const presetGradeBooks = computed(() => presetTree.value)
+// 当前年级册下的章（level2 children）
+const presetChapters = computed<SubjectNode[]>(() => {
+  const gb = presetTree.value.find((n) => String(n.id) === presetGradeBookId.value)
+  return gb?.children ?? []
+})
+const presetGradeBookName = computed(
+  () => presetGradeBooks.value.find((n) => String(n.id) === presetGradeBookId.value)?.title ?? ''
+)
+
+/** 懒加载年级册/章树（仅空态首次需要时拉一次；失败不打扰，选择器自然空着、不挡发送）。 */
+async function loadPresetTree() {
+  if (presetTree.value.length || presetTreeLoading.value) return
+  presetTreeLoading.value = true
+  try {
+    const result = await lazyTree(0)
+    if (Array.isArray(result)) presetTree.value = result
+    else if (result && typeof result === 'object') presetTree.value = [result as unknown as SubjectNode]
+  } catch (e) {
+    // 🔴 A-21：技术详情进 console，老师侧静默（预设是可选增强，拉不到不影响主流程）
+    console.error('[variant] 预设年级/章树加载失败：', e)
+  } finally {
+    presetTreeLoading.value = false
+  }
+}
+
+// 换年级册 → 清掉旧章选择（避免章 id 挂错册）
+function onPresetGradeBookChange() {
+  presetChapterId.value = ''
+}
+
+// 空态出现时拉一次树（对话开始后选择器不再显示，无需提前拉）
+onMounted(() => {
+  if (stream.value.length === 0) void loadPresetTree()
+})
+
+// ---------------------------------------------------------------------------
 // 会话注册表（用户反馈③④ 2026-06-11）：BE checkpointer（sqlite）一直按 thread_id
 // 持久着全部对话 —— 缺的只是 FE 这边「记住 thread_id + 取回」。注册表落 localStorage
 //（id/标题/时间/母题图），刷新恢复上次会话；历史会话可切换/删除（删的只是本地索引，
@@ -949,6 +1000,9 @@ function dispatch(
 ) {
   if (sending.value) return
   handle?.abort()
+  // 🔴 PRD-A-021 B5：本轮是否「对话开启前的首轮」——预设年级/章只在首轮 classify 时有意义（后续轮
+  //   走编辑指令、agent 已锚定）。空态选择器对话开始后即隐藏，故以「push 前 stream 为空」判首轮。
+  const isFirstTurn = stream.value.length === 0
   // PRD-C-100 B6：新一轮请求清掉上轮的额度横幅（让老师重试时不残留旧提示）
   budgetExceeded.value = false
   budgetMessage.value = ''
@@ -983,6 +1037,13 @@ function dispatch(
       startVariants: confirmCtx?.startVariants,
       // 🔴 思考过程开关：开 → BE 路由 aigeek + 开 extended-thinking，reasoning 流式外显（付费）。
       thinkingStream: thinkingStream.value,
+      // 🔴 PRD-A-021 B5：仅首轮 + 老师选了才透传预设年级/章（任一非空即生效）；没选则两键皆 undefined →
+      //   streamVariant 不塞进 agent_config，维持现有 classify 路径（核心红线：不选时行为与现状完全一致）。
+      //   章 id 优先（更精确，4/7/完整位 toolkit 自解）；只选到年级册时回退年级册 id 作 preset_chapter_id。
+      presetGradeBook: isFirstTurn ? presetGradeBookName.value || undefined : undefined,
+      presetChapterId: isFirstTurn
+        ? presetChapterId.value || presetGradeBookId.value || undefined
+        : undefined,
     },
     {
       onToken: (delta) => {
@@ -2301,6 +2362,49 @@ onBeforeUnmount(() => {
              逻辑零改：paste（document 级监听）/ URL 贴图 / 文件上传 / 发送 / 思考开关 五条链路全部保留，
              仅 URL 输入框默认收起、点「🔗 链接」内联展开（showUrlInput，纯 UI 开合）。 -->
         <div class="composer-box" @drop.prevent="onImageDrop" @dragover.prevent>
+          <!-- 🔴 PRD-A-021 B5：对话开启前「可选」预设年级/章（省 LLM 钱 + 少一步确认 + 更准）。
+               仅空态显示（对话开始即隐藏，锚定已由首轮定）；不选不挡流程，选了首轮透传 agent_config。
+               数据源复用 lazyTree（同 biz_subject 树），样式跟空态控件一致、克制。 -->
+          <div v-if="stream.length === 0" class="preset-scope">
+            <span class="preset-hint">可选：先限定年级 / 章节，更准更省</span>
+            <div class="preset-selects">
+              <el-select
+                v-model="presetGradeBookId"
+                size="small"
+                filterable
+                clearable
+                placeholder="年级册（不选也行）"
+                class="preset-select"
+                :loading="presetTreeLoading"
+                :disabled="sending"
+                @change="onPresetGradeBookChange"
+              >
+                <el-option
+                  v-for="gb in presetGradeBooks"
+                  :key="gb.id"
+                  :label="gb.title"
+                  :value="String(gb.id)"
+                />
+              </el-select>
+              <el-select
+                v-model="presetChapterId"
+                size="small"
+                filterable
+                clearable
+                placeholder="章节（可不选）"
+                class="preset-select"
+                :disabled="sending || !presetGradeBookId"
+                no-data-text="该年级册下无章节"
+              >
+                <el-option
+                  v-for="ch in presetChapters"
+                  :key="ch.id"
+                  :label="ch.title"
+                  :value="String(ch.id)"
+                />
+              </el-select>
+            </div>
+          </div>
           <!-- P10：待发附件缩略图（可删除），置于主输入上方一行 -->
           <div v-if="pendingImages.length" class="pending-imgs">
             <div v-for="(u, k) in pendingImages" :key="k" class="pending-thumb">
@@ -2987,6 +3091,32 @@ onBeforeUnmount(() => {
   padding: 12px;
   border-top: 1px solid var(--line-soft);
   background: linear-gradient(0deg, var(--bg-soft), transparent);
+}
+
+/* 🔴 PRD-A-021 B5：空态预设年级/章选择器（青紫数学理性，克制·不抢主输入）。 */
+.preset-scope {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-bottom: 8px;
+  margin-bottom: 2px;
+  border-bottom: 1px dashed var(--line-soft);
+}
+.preset-hint {
+  font-size: 12px;
+  color: var(--faint);
+  flex: 0 0 auto;
+}
+.preset-selects {
+  display: flex;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.preset-select {
+  flex: 1 1 0;
+  min-width: 0;
 }
 /* 🔴 PRD-A-017 统一 composer 框（对齐 restyle.html .cbox） */
 .composer-box {

@@ -57,6 +57,19 @@ export interface VariantRequest {
    * 🔴 graceful：开了但成交站不支持/不可用 failover → 参数被忽略、无 reasoning 帧、思考块不显示，绝不报错。
    */
   thinkingStream?: boolean
+  /**
+   * 🔴 PRD-A-021 B5·对话开启前的预设年级册（人话名，如「八年级下册」）：老师在空态选择器里选了 →
+   * 经 agent_config(config.configurable.preset_grade_book) 回传 toolkit（R2a 契约）。toolkit 据它跳过
+   * classify-grade LLM + 不弹「确定范围」弹窗，以老师选择为准（省 LLM 钱 + 少一步确认 + 更准）。
+   * 空/省略（老师没选）→ 不塞此键，维持现有 classify 路径，行为与现状完全一致（可选增强红线）。
+   */
+  presetGradeBook?: string
+  /**
+   * 🔴 PRD-A-021 B5·对话开启前的预设章/叶子 id（biz_subject id：4 位=年级册 / 7 位=章 / 完整=叶子）：
+   * 老师在空态选择器里选了章 → 经 agent_config(config.configurable.preset_chapter_id) 回传 toolkit（R2a 契约）。
+   * 与 presetGradeBook 任一非空即生效、两者可单独传。空/省略 → 不塞此键，维持现有路径。
+   */
+  presetChapterId?: string
 }
 
 /** toolkit ChatMessage（只取前端用得到的字段，其余宽松忽略） */
@@ -1056,6 +1069,10 @@ export function streamVariant(
   // 🔴 思考过程开关：进 config.configurable.thinking_stream → toolkit _ainvoke_text 据它路由 aigeek
   //   + 开 extended-thinking + 挂 on_reasoning 外显（关时不传，BE 维持默认便宜路径）。
   if (payload.thinkingStream) agentConfig.thinking_stream = true
+  // 🔴 PRD-A-021 B5：对话开启前老师预设的年级/章（R2a 契约）→ 进 config.configurable，toolkit 据它跳过
+  //   classify-grade LLM + 不弹「确定范围」弹窗。任一非空即透传；老师没选则不塞键 → 维持现有 classify 路径。
+  if (payload.presetGradeBook) agentConfig.preset_grade_book = payload.presetGradeBook
+  if (payload.presetChapterId) agentConfig.preset_chapter_id = payload.presetChapterId
   if (Object.keys(agentConfig).length) body.agent_config = agentConfig
 
   fetchEventSource('/agent/variant/stream', {
