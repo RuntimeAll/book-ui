@@ -19,21 +19,25 @@ const MATH_SPLIT_RE = /(\$\$[\s\S]+?\$\$|\$[^\n$]+?\$)/g
 // 裸间距命令：\quad \qquad（后接非字母边界，防误伤 \quadword）+ \, \; \! \:
 const BARE_SPACING_RE = /\\(?:qquad|quad)(?![a-zA-Z])|\\[,;!:]/g
 
-// 🔴 2026-06-21（PRD-A-018 用户终审）：LLM 常把无参几何符号命令**粘住**点标签，如把
-//   $\angle BOD$ 写成 $\angleBOD$。KaTeX 把 `\angleBOD` 当一个未定义控制序列 → 整个 $...$ 段
-//   报错、errorColor 红字裸显示源码（连同段内合法的 \frac12 一起变红）。这些命令后紧跟大写
-//   字母必是标签（无合法 `\angleX` 命令），插一个空格即修复且语义不变（\angle BOD = ∠BOD）。
-//   只在 $...$ **内**做（段外不碰）。仅限无参符号命令，不含 \vec/\overrightarrow（带参，补空格会渲染错）。
+// 🔴 2026-06-21（PRD-A-018 用户终审，数据库挖真值定位）：LLM 产 $...$ 时**闭合 $ 前留空格**，
+//   如 `$\angle 1 = 44^\circ $`。@traptitech/markdown-it-katex 的行内规则要求闭合 $ 前**不能是
+//   空白**（防误匹配 `$5 ... $10$` 货币）→ 整个 $...$ 不被识别为公式、裸显示源码（含 $）。这是
+//   本次公式裸显示的**真根因**（衣架题无尾空格故正常，EO 题有尾空格故挂）。修 = trim 掉 $...$ 内首尾空白。
+// 兼带防御：① 无参几何符号命令粘住大写标签（$\angleBOD$→$\angle BOD$，理论可能虽本次数据未出现）；
+//   ② 数学段内裸 ° → ^\circ（KaTeX 数学模式不认裸 °）。
 const GLUED_GEOM_RE = /\\(angle|triangle|parallel|nparallel|perp|cong|simeq|odot)(?=[A-Z])/g
-// 数学段内裸 ° → ^\circ（KaTeX 数学模式不认裸 °，会报错）。如 90° → 90^\circ。
 const BARE_DEGREE_RE = /°/g
 
-/** 修 $...$ **内**的常见 LLM LaTeX 脏写：粘连几何命令补空格、裸 ° → ^\circ。段外不碰。 */
+/** 修 $...$ **内**的常见 LLM LaTeX 脏写：trim 首尾空白(真根因)、粘连几何命令补空格、裸 ° → ^\circ。段外不碰。 */
 export function fixGluedInsideMath(src: string): string {
   const parts = src.split(MATH_SPLIT_RE)
   for (let i = 1; i < parts.length; i += 2) {
-    // 奇数下标 = 数学段（含 $ 定界符）
-    parts[i] = parts[i].replace(GLUED_GEOM_RE, '\\$1 ').replace(BARE_DEGREE_RE, '^\\circ ')
+    const seg = parts[i] // 奇数下标 = 数学段（含 $ 定界符）
+    const dd = seg.startsWith('$$')
+    const inner = dd ? seg.slice(2, -2) : seg.slice(1, -1)
+    // 先补空格/转°，最后 trim（°→^\circ 会带尾空格，trim 收尾防再次顶到闭合 $）
+    const fixed = inner.replace(GLUED_GEOM_RE, '\\$1 ').replace(BARE_DEGREE_RE, '^\\circ ').trim()
+    parts[i] = fixed ? (dd ? `$$${fixed}$$` : `$${fixed}$`) : seg
   }
   return parts.join('')
 }
