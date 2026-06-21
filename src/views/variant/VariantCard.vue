@@ -254,6 +254,10 @@ const JUDGE_OPTIONS = ['对', '错'] as const
 // 🔴 PRD-A-021 R1：本卡写动作的「忙」判据 = busy（宿主并集）优先，缺省回退 sending。
 const isBusy = computed(() => props.busy ?? props.sending)
 
+// 🔴 PRD-A-021 B11：已入库态（持久化态）判定 = item.persisted 且有 questionId（A-015 编辑器载入需 questionId）。
+//   已入库 → 移除「编辑」、改用「手动排版」（互斥切换）；未入库（草稿生成态）→ 维持「编辑」。
+const isPersistedItem = computed(() => props.item.persisted && !!props.item.questionId)
+
 // 题组刷新（保存/重排/验算后宿主整量替换 item）→ 若仍在编辑态且不是本卡触发，退出编辑避免脏改
 watch(
   () => props.item.seq,
@@ -264,6 +268,9 @@ watch(
 
 function startEdit() {
   if (isBusy.value || props.reverifying) return
+  // 🔴 PRD-A-021 B11：已入库题不走草稿期 textarea 编辑（改内容应经 A-015 网格编辑器「手动排版」）。
+  //   模板已隐藏「编辑」按钮，这里再兜底拦一道（防恢复会话/旧帧等非常规路径误触发编辑态）。
+  if (isPersistedItem.value) return
   draft.stem = props.item.stem || ''
   draft.answer = props.item.answer || ''
   draft.solution = props.item.solution || ''
@@ -1469,7 +1476,12 @@ function saveFieldEdit() {
         >
           ↩ 撤销重生
         </button>
+        <!-- 🔴 PRD-A-021 B11：已入库（持久化态，有 questionId）→ 移除「编辑」，改用「手动排版」；
+             未入库（草稿生成态）→ 维持「编辑」（傻瓜式改题面/答案/解析）。两者互斥切换，对齐母题卡
+             「入库后只亮手动排版」的形态。理由：已落库题改内容应走题库统一编辑链（A-015 网格编辑器
+             round-trip blockJson），不再用草稿期的 textarea 编辑（会绕过题库富文本/版面持久化）。 -->
         <button
+          v-if="!isPersistedItem"
           type="button"
           class="knob-btn is-edit"
           :disabled="isBusy || reverifying"
@@ -1477,12 +1489,14 @@ function saveFieldEdit() {
         >
           编辑
         </button>
-        <!-- 🔴 PRD-C-100 BC3：手动排版（跳 A-015 网格编辑器，仅已入库题；未入库置灰提示先入库） -->
+        <!-- 🔴 PRD-C-100 BC3 / PRD-A-021 B11：手动排版（跳 A-015 网格编辑器）—— 仅已入库题显示，
+             与「编辑」互斥（入库后编辑入口换成它）。 -->
         <button
+          v-else
           type="button"
           class="knob-btn is-layout"
-          :disabled="isBusy || regenerating || !item.persisted || !item.questionId"
-          :title="!item.persisted || !item.questionId ? '请先「收录入库」再手动排版' : '打开网格编辑器手动排版（拖拉拽布局）'"
+          :disabled="isBusy || regenerating"
+          title="打开网格编辑器手动排版（拖拉拽布局）"
           @click="onManualLayout"
         >
           🎨 手动排版
