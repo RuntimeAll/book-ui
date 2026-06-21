@@ -582,6 +582,27 @@ const currentRailEmpty = computed(
 )
 
 // ---------------------------------------------------------------------------
+// 🔴 PRD-A-021 R1 收口：忙态单一事实源（busy）。
+//   sending = 聊天/出题 SSE 流在跑（generate / 解析 / 换一批 / 答疑 / 母题确认续聊）。
+//   但「重生 / 验算 / 入库 / 加篮 / 重验」走结构化 BE 端点、不置 sending、与 SSE 并发。
+//   后端已加 per-thread 并发锁（同 thread 另一轮在跑 → 立即回 {"type":"processing"} 早退），
+//   FE 据此把会触发后端写操作的【组级动作按钮】在任一在途态期间禁掉，避免老师在「出题/解析/
+//   重生/验算」进行中再点「换一批 / 全部入库 / 重生 N 题 / 全部验算」撞锁早退（白点一次 + 警告）。
+//   单题按钮（编辑/配图/单题重生/入库/加篮…）各自带 per-index loading 锁 + sending 守，已覆盖，
+//   这里只统一组级跨切动作的「全局忙」信号。busy 不替代 sending（sending 仍驱动生成骨架），是并集。
+const busy = computed(
+  () =>
+    sending.value ||
+    regeneratingIndexes.value.length > 0 ||
+    reverifyingIndex.value !== null ||
+    verifyingIndex.value !== null ||
+    persistingIndex.value !== null ||
+    basketingIndex.value !== null ||
+    motherPersisting.value ||
+    motherFigureLoading.value
+)
+
+// ---------------------------------------------------------------------------
 // 母题图：剪贴板粘贴上传（BE /teacher/variant/upload-image → 公读 OSS URL）
 // ---------------------------------------------------------------------------
 const uploading = ref(false)
@@ -1037,6 +1058,13 @@ function dispatch(
         scrollToBottom()
         // 下一节点若继续跑会再来 token → 重新进思考态
         thinking.value = true
+      },
+      // 🔴 PRD-A-021 R1b S0：并发锁早退帧 —— 同一会话另一轮正在出题/解析，后端立即回此帧 + [DONE]。
+      //   本轮没真跑（不渲染产出/不动思路条），仅提示老师「出题中，请稍候」；忙态由 sending 统管，
+      //   紧跟的 [DONE]→onClose 会把本轮 sending 收掉，真正在跑的那轮维持自己的忙态（按钮持续禁用）。
+      onProcessing: () => {
+        thinking.value = false
+        ElMessage.warning('出题中，请稍候')
       },
       onServerError: (m) => {
         thinking.value = false
@@ -2389,6 +2417,7 @@ onBeforeUnmount(() => {
       class="variant-artifact"
       :artifact="displayArtifact"
       :sending="sending"
+      :busy="busy"
       :can-regenerate="!!firstComposeMessage || !!motherImg"
       :reverifying-index="reverifyingIndex"
       :verifying-index="verifyingIndex"
@@ -2438,6 +2467,7 @@ onBeforeUnmount(() => {
           :has-variants="!!artifact?.items.length"
           :regenerating="regeneratingIndexes.length > 0"
           :sending="sending"
+          :busy="busy"
           :figure-png="motherFigurePng"
           :figures="motherFigures"
           :figure-loading="motherFigureLoading"

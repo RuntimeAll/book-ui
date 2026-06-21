@@ -951,8 +951,21 @@ export interface VariantErrorEvent {
   type: 'error'
   content: string
 }
+/**
+ * 🔴 PRD-A-021 R1b S0：per-thread 并发锁早退帧。同一会话(thread)正在出题/解析时，新请求会
+ * 立即收到 `{"type":"processing"}` 紧跟 `[DONE]` 早退（不排队等几十秒）。FE 据此提示老师「出题中，
+ * 请稍候」并维持忙态禁用按钮，待真正进行中的那轮 [DONE] 后恢复。content 可选（后端原样兜底文案）。
+ */
+export interface VariantProcessingEvent {
+  type: 'processing'
+  content?: string
+}
 
-export type VariantEvent = VariantTokenEvent | VariantMessageEvent | VariantErrorEvent
+export type VariantEvent =
+  | VariantTokenEvent
+  | VariantMessageEvent
+  | VariantErrorEvent
+  | VariantProcessingEvent
 
 /** streamVariant 回调集 */
 export interface VariantStreamHandlers {
@@ -979,6 +992,11 @@ export interface VariantStreamHandlers {
    * 不传则静默丢弃。
    */
   onReject?: (payload: VariantReject) => void
+  /**
+   * 🔴 PRD-A-021 R1b S0：并发锁早退帧（`{"type":"processing"}`）→ 后端忙（同 thread 另一轮正在跑）。
+   * FE 提示「出题中，请稍候」，本轮不渲染任何产出（紧跟 [DONE] 早退）。不传则静默丢弃（向后兼容）。
+   */
+  onProcessing?: (msg?: string) => void
   /** 服务端 error 帧 */
   onServerError?: (msg: string) => void
   /** 连接异常 / 非 SSE 响应 / 不可达。fatal 后流终止 */
@@ -1118,6 +1136,11 @@ export function streamVariant(
         }
         case 'error':
           handlers.onServerError?.(parsed.content || '服务处理出错')
+          break
+        // 🔴 PRD-A-021 R1b S0：并发锁早退帧 —— 后端忙（同 thread 另一轮正在跑），紧跟 [DONE]。
+        //   不进消息气泡 / 不进思路条，仅通知宿主弹「出题中，请稍候」并维持忙态。
+        case 'processing':
+          handlers.onProcessing?.(parsed.content)
           break
       }
     },

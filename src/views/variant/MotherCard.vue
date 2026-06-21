@@ -69,6 +69,12 @@ const props = defineProps<{
   regenerating: boolean
   /** 发送中：禁交互 */
   sending: boolean
+  /**
+   * 🔴 PRD-A-021 R1：全局忙态（出题/解析/重生/验算/入库任一在途，宿主算的并集）。
+   *   用于禁用会触发后端写的母题级按钮（开始举一反三 / 重生 / 母题入库 / 切图形），避免与正在跑的
+   *   那轮并发撞后端 per-thread 锁。缺省回退 sending（旧宿主未传则维持原行为）。
+   */
+  busy?: boolean
   // ----- 🔴 PRD-C-100 B6 带图展示：母题切图（宿主调 crop_mother 后回填）-----
   /**
    * 🔴 PRD-C-100 bug-002 单元3：母题多图（toolkit 升方案 a，全部成功切图按检出顺序）。
@@ -121,6 +127,9 @@ const emit = defineEmits<{
 
 // 折叠态：🔴 PRD-A-017 批2b 起改由父级合并头 caret 控（props.collapsed）。缺省展开。
 const collapsed = computed(() => props.collapsed ?? false)
+
+// 🔴 PRD-A-021 R1：母题级写按钮的「忙」判据 = busy（宿主并集）优先，缺省回退 sending。
+const isBusy = computed(() => props.busy ?? props.sending)
 
 // 🔴 布局收窄（治「解析/答案超长把下方变式区+操作按钮挤没」）：
 //   解法骨架 / 答案 / 解析三块文本默认「限高折叠」（detailExpanded=false → 各块 max-height +
@@ -177,7 +186,7 @@ const analysisText = computed(() => props.motherCard?.analysis || '')
 //   → 显示主按钮，老师点了才生成变式；已有变式则不再显示（避免重复触发）。
 const showStartBtn = computed(() => props.hasVariants === false && hasCard.value)
 function onStart() {
-  if (props.sending) return
+  if (isBusy.value) return
   emit('start-variants')
 }
 
@@ -187,7 +196,7 @@ const hasHardestMark = computed(() => /【[^】]+】/.test(skeletonHtml.value))
 
 // 🔴 B3.6 重生可点：母题脏 + 已有变式 + 非发送中 + 非重生中
 const canRegen = computed(
-  () => props.motherDirty && props.hasVariants && !props.sending && !props.regenerating
+  () => props.motherDirty && props.hasVariants && !isBusy.value && !props.regenerating
 )
 // 🔴 入库 dirty 闸：母题脏（守恒维改了未重生）→ 禁入库，避免拿旧基准落库
 const persistBlockedByDirty = computed(() => props.motherDirty)
@@ -327,7 +336,7 @@ const hasFigureCol = computed(
         class="mc-start"
         type="primary"
         :loading="sending"
-        :disabled="sending"
+        :disabled="isBusy"
         @click="onStart"
       >
         {{ sending ? '生成中…' : '▶ 开始举一反三' }}
@@ -351,7 +360,7 @@ const hasFigureCol = computed(
         class="mc-persist"
         :type="persisted ? 'success' : 'primary'"
         :loading="persisting"
-        :disabled="sending || persisted || persistBlockedByDirty"
+        :disabled="isBusy || persisted || persistBlockedByDirty"
         :title="persistBlockedByDirty ? '母题考点已改，请先点「重生下游变式」再入库' : ''"
         @click="emit('persist-mother')"
       >
@@ -400,7 +409,7 @@ const hasFigureCol = computed(
           size="small"
           class="mc-figure-btn"
           :loading="figureLoading"
-          :disabled="sending || figureLoading"
+          :disabled="isBusy || figureLoading"
           @click="emit('crop-figure')"
         >
           {{ figureList.length ? '重新切图' : '切图形' }}

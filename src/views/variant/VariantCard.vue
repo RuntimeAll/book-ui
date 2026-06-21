@@ -41,6 +41,12 @@ const props = defineProps<{
   /** 发送中禁用所有快捷键 */
   sending: boolean
   /**
+   * 🔴 PRD-A-021 R1：全局忙态（出题/解析/重生/验算/入库任一在途，宿主算的并集 sending∪结构化）。
+   *   本卡的写动作按钮（编辑/配图/重生/撤销重生/手动排版/DNA改/入库/加篮）统一用它禁用——避免在
+   *   兄弟卡或聊天流正在跑时本卡再触发并发写撞后端 per-thread 锁。缺省回退 sending（旧宿主不传则原行为）。
+   */
+  busy?: boolean
+  /**
    * PRD-C-013 P2b：本组仍在增量上屏（artifact.partial===true）。仅在此期间，
    * item.tier 为 null 才解读为「验算中」过渡态；恢复/定稿帧无此标记 → 走只说好兜底。
    */
@@ -151,6 +157,7 @@ const figCorrection = ref('')
 
 /** 按修正提示词重新生成配图（图歪了→重生 / 补描述→重画） */
 function onRegenFigure() {
+  if (isBusy.value || props.figureLoading) return
   const prompt = figCorrection.value.trim()
   if (!prompt) return
   emit('compose-figure', { index: props.item.index, correctionPrompt: prompt })
@@ -244,6 +251,9 @@ const editKind = computed<EditKind>(() => {
 const CHOICE_LETTERS = ['A', 'B', 'C', 'D'] as const
 const JUDGE_OPTIONS = ['对', '错'] as const
 
+// 🔴 PRD-A-021 R1：本卡写动作的「忙」判据 = busy（宿主并集）优先，缺省回退 sending。
+const isBusy = computed(() => props.busy ?? props.sending)
+
 // 题组刷新（保存/重排/验算后宿主整量替换 item）→ 若仍在编辑态且不是本卡触发，退出编辑避免脏改
 watch(
   () => props.item.seq,
@@ -253,7 +263,7 @@ watch(
 )
 
 function startEdit() {
-  if (props.sending || props.reverifying) return
+  if (isBusy.value || props.reverifying) return
   draft.stem = props.item.stem || ''
   draft.answer = props.item.answer || ''
   draft.solution = props.item.solution || ''
@@ -493,7 +503,7 @@ const difficultyStars = computed(() => {
 })
 
 function knob(text: string) {
-  if (props.sending) return
+  if (isBusy.value) return
   emit('utterance', text)
 }
 
@@ -519,17 +529,17 @@ function classBadge(field: DnaField): { cls: RegenClass; label: string; hint: st
 
 // 🔴 PRD-C-017 B5：「重生这道」始终可点（不再限 dirty）—— 按当前改好的字段重出本题。
 function onRegen() {
-  if (props.sending || props.regenerating) return
+  if (isBusy.value || props.regenerating) return
   emit('regen', props.item.index)
 }
 function onUndoRegen() {
-  if (props.sending || props.regenerating || !props.item.canUndoRegen) return
+  if (isBusy.value || props.regenerating || !props.item.canUndoRegen) return
   emit('undo-regen', props.item.index)
 }
 
 // 🔴 PRD-C-100 BC3：手动排版（仅已入库题；宿主标印记 + 跳 A-015 网格编辑器 round-trip blockJson）。
 function onManualLayout() {
-  if (props.sending || props.regenerating) return
+  if (isBusy.value || props.regenerating) return
   emit('manual-layout', props.item.index)
 }
 
@@ -556,7 +566,7 @@ const kpDialogMode = computed<'single' | 'multi'>(() =>
   kpDialog.value === 'secondary' ? 'multi' : 'single'
 )
 function openKpDialog(which: 'main' | 'secondary') {
-  if (props.sending) return
+  if (isBusy.value) return
   kpDialog.value = which
 }
 function onPickMainKp(value: { id: string; name: string }) {
@@ -580,7 +590,7 @@ function onPickExamType(v: string) {
 
 // ---- T3：难度点星覆盖（1-4，老师覆盖优先级最高）----
 function onPickDifficulty(n: number) {
-  if (props.sending) return
+  if (isBusy.value) return
   if (n < 1 || n > 4) return
   if (Math.round(props.item.difficulty) === n) return
   emit('edit-dna', { index: props.item.index, field: 'difficulty', value: n })
@@ -594,7 +604,7 @@ const tagDraft = ref<string[]>([]) // 当前编辑中的标签集合（含已选
 const tagInput = ref('') // 手输补充框
 
 async function openTagPopover() {
-  if (props.sending) return
+  if (isBusy.value) return
   tagDraft.value = [...dna.value.tags]
   tagPopover.value = true
   // 候选按当前主考点 id 取（无 id → 跳过，仅手输）
@@ -654,7 +664,7 @@ const modelPopover = ref(false)
 const modelDraft = ref<Array<{ id: string; name: string }>>([])
 const modelInput = ref('')
 function openModelPopover() {
-  if (props.sending) return
+  if (isBusy.value) return
   modelDraft.value = props.item.dna.models.map((m) => ({ ...m }))
   modelPopover.value = true
 }
@@ -685,7 +695,7 @@ function saveModels() {
 const editingField = ref<null | 'scene' | 'skeleton'>(null)
 const fieldDraft = ref('')
 function openFieldEdit(field: 'scene' | 'skeleton') {
-  if (props.sending || props.reverifying) return
+  if (isBusy.value || props.reverifying) return
   editingField.value = field
   fieldDraft.value =
     field === 'scene' ? props.item.dna.scene || '' : props.item.dna.skeleton || ''
@@ -757,7 +767,7 @@ function saveFieldEdit() {
         <button
           type="button"
           class="verify-do-btn"
-          :disabled="sending"
+          :disabled="isBusy"
           title="调用 AI 验算本题（点击即触发，消耗 token）"
           @click="emit('verify-one', item.index)"
         >
@@ -1066,7 +1076,7 @@ function saveFieldEdit() {
             text
             size="small"
             :loading="figureLoading"
-            :disabled="sending || figureLoading"
+            :disabled="isBusy || figureLoading"
             @click="emit('compose-figure', { index: item.index })"
           >
             {{ hasFigure ? '🖼 重新配图' : '🖼 配图' }}
@@ -1076,7 +1086,7 @@ function saveFieldEdit() {
             v-if="hasFigure"
             text
             size="small"
-            :disabled="sending || figureLoading"
+            :disabled="isBusy || figureLoading"
             @click="figFixOpen = !figFixOpen"
           >
             图歪了？重新生成
@@ -1100,7 +1110,7 @@ function saveFieldEdit() {
             <button
               type="button"
               class="vc-fig-regen"
-              :disabled="figureLoading || !figCorrection.trim()"
+              :disabled="isBusy || figureLoading || !figCorrection.trim()"
               @click="onRegenFigure"
             >
               按提示重新生成
@@ -1137,7 +1147,7 @@ function saveFieldEdit() {
               <span class="rc-badge" :class="`rc-${classBadge('main_kp').cls}`" :title="classBadge('main_kp').hint">{{ classBadge('main_kp').label }}</span>
             </span>
             <span class="dna-v">
-              <button type="button" class="kp-pill" :disabled="sending" @click="openKpDialog('main')">
+              <button type="button" class="kp-pill" :disabled="isBusy" @click="openKpDialog('main')">
                 {{ dna.mainKp || '未标 · 点选' }}<span class="pill-edit">✎</span>
               </button>
               <span v-if="dimDirty('main_kp')" class="dim-dirty">待重生⏳</span>
@@ -1152,7 +1162,7 @@ function saveFieldEdit() {
               <template v-if="dna.secondaryKps.length">
                 <span v-for="kp in dna.secondaryKps" :key="kp" class="kp-pill sec"><InlineMath :content="kp" /></span>
               </template>
-              <button type="button" class="dna-min-btn" :disabled="sending" @click="openKpDialog('secondary')">
+              <button type="button" class="dna-min-btn" :disabled="isBusy" @click="openKpDialog('secondary')">
                 {{ dna.secondaryKps.length ? '改' : '＋ 选副考点' }}
               </button>
             </span>
@@ -1168,7 +1178,7 @@ function saveFieldEdit() {
                 size="small"
                 placeholder="选题型"
                 class="dna-select"
-                :disabled="sending"
+                :disabled="isBusy"
                 @change="onPickQtype"
               >
                 <el-option v-for="q in qtypeOptions" :key="q" :label="q" :value="q" />
@@ -1187,7 +1197,7 @@ function saveFieldEdit() {
                 size="small"
                 placeholder="选考察类型"
                 class="dna-select"
-                :disabled="sending"
+                :disabled="isBusy"
                 @change="onPickExamType"
               >
                 <el-option v-for="t in examTypeOptions" :key="t" :label="t" :value="t" />
@@ -1224,7 +1234,7 @@ function saveFieldEdit() {
               <template v-if="editingField !== 'scene'">
                 <span class="dna-text"><InlineMath :content="dna.scene || '未标'" /></span>
                 <span v-if="dimDirty('scene')" class="dim-dirty">待重生⏳</span>
-                <button type="button" class="dna-min-btn" :disabled="sending || reverifying" @click="openFieldEdit('scene')">
+                <button type="button" class="dna-min-btn" :disabled="isBusy || reverifying" @click="openFieldEdit('scene')">
                   改
                 </button>
               </template>
@@ -1254,7 +1264,7 @@ function saveFieldEdit() {
               <template v-if="editingField !== 'skeleton'">
                 <span class="dna-text skel"><MarkdownMath :content="dna.skeleton || '未标'" /></span>
                 <span v-if="dimDirty('skeleton')" class="dim-dirty">待重生⏳</span>
-                <button type="button" class="dna-min-btn" :disabled="sending || reverifying" @click="openFieldEdit('skeleton')">
+                <button type="button" class="dna-min-btn" :disabled="isBusy || reverifying" @click="openFieldEdit('skeleton')">
                   改
                 </button>
               </template>
@@ -1286,7 +1296,7 @@ function saveFieldEdit() {
               <span v-if="dimDirty('models')" class="dim-dirty">待重生⏳</span>
               <el-popover :visible="modelPopover" placement="bottom-start" :width="300" trigger="manual">
                 <template #reference>
-                  <button type="button" class="dna-min-btn" :disabled="sending" @click="openModelPopover">
+                  <button type="button" class="dna-min-btn" :disabled="isBusy" @click="openModelPopover">
                     {{ dna.models.length ? '改模型' : '＋ 加模型' }}
                   </button>
                 </template>
@@ -1345,7 +1355,7 @@ function saveFieldEdit() {
                 trigger="manual"
               >
                 <template #reference>
-                  <button type="button" class="dna-min-btn" :disabled="sending" @click="openTagPopover">
+                  <button type="button" class="dna-min-btn" :disabled="isBusy" @click="openTagPopover">
                     {{ dna.tags.length ? '改标签' : '＋ 加标签' }}
                   </button>
                 </template>
@@ -1418,7 +1428,7 @@ function saveFieldEdit() {
           type="button"
           class="bank-btn is-persist"
           :class="{ 'is-done': item.persisted }"
-          :disabled="item.persisted || persisting || basketing || sending || isDirty"
+          :disabled="item.persisted || persisting || basketing || isBusy || isDirty"
           :title="isDirty ? '改了还没重生，先点「重生」或「撤销重生」' : ''"
           @click="!item.persisted && !isDirty && emit('persist-one', item.index)"
         >
@@ -1430,7 +1440,7 @@ function saveFieldEdit() {
         <button
           type="button"
           class="bank-btn is-basket"
-          :disabled="basketing || persisting || sending || isDirty"
+          :disabled="basketing || persisting || isBusy || isDirty"
           :title="isDirty ? '改了还没重生，先点「重生」或「撤销重生」' : ''"
           @click="!isDirty && emit('add-to-basket', item.index)"
         >
@@ -1444,7 +1454,7 @@ function saveFieldEdit() {
         <button
           type="button"
           class="knob-btn is-regen"
-          :disabled="sending || regenerating"
+          :disabled="isBusy || regenerating"
           @click="onRegen"
         >
           {{ regenerating ? '重生中…' : '🔄 重生这道' }}
@@ -1454,7 +1464,7 @@ function saveFieldEdit() {
           v-if="item.canUndoRegen"
           type="button"
           class="knob-btn is-undo"
-          :disabled="sending || regenerating"
+          :disabled="isBusy || regenerating"
           @click="onUndoRegen"
         >
           ↩ 撤销重生
@@ -1462,7 +1472,7 @@ function saveFieldEdit() {
         <button
           type="button"
           class="knob-btn is-edit"
-          :disabled="sending || reverifying"
+          :disabled="isBusy || reverifying"
           @click="startEdit"
         >
           编辑
@@ -1471,7 +1481,7 @@ function saveFieldEdit() {
         <button
           type="button"
           class="knob-btn is-layout"
-          :disabled="sending || regenerating || !item.persisted || !item.questionId"
+          :disabled="isBusy || regenerating || !item.persisted || !item.questionId"
           :title="!item.persisted || !item.questionId ? '请先「收录入库」再手动排版' : '打开网格编辑器手动排版（拖拉拽布局）'"
           @click="onManualLayout"
         >
@@ -1481,7 +1491,7 @@ function saveFieldEdit() {
           v-if="isManual"
           type="button"
           class="knob-btn is-reverify"
-          :disabled="sending || reverifying"
+          :disabled="isBusy || reverifying"
           @click="emit('reverify', item.index)"
         >
           {{ reverifying ? '验算中…' : '重新验算' }}
@@ -1489,7 +1499,7 @@ function saveFieldEdit() {
         <button
           type="button"
           class="knob-btn"
-          :disabled="sending"
+          :disabled="isBusy"
           @click="knob(`第${item.index}题换个数字重出`)"
         >
           换数字
@@ -1497,7 +1507,7 @@ function saveFieldEdit() {
         <button
           type="button"
           class="knob-btn"
-          :disabled="sending"
+          :disabled="isBusy"
           @click="knob(`第${item.index}题换个场景重出`)"
         >
           换场景
@@ -1505,7 +1515,7 @@ function saveFieldEdit() {
         <button
           type="button"
           class="knob-btn"
-          :disabled="sending"
+          :disabled="isBusy"
           @click="knob(`第${item.index}题为什么这么解？`)"
         >
           答疑

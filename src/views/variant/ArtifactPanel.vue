@@ -34,6 +34,12 @@ const props = defineProps<{
   artifact: VariantArtifact | null
   /** 发送中：禁用画布级按钮 + 无快照时显示骨架卡 */
   sending: boolean
+  /**
+   * 🔴 PRD-A-021 R1：全局忙态（sending ∪ 重生/验算/入库/加篮/重验等任一结构化在途）。
+   *   仅用于禁用【组级跨切动作按钮】（换一批 / 全部入库 / 重生 N 题 / 全部验算），避免出题/解析/
+   *   重生进行中再触发并发写撞后端 per-thread 锁。不驱动骨架（骨架仍看 sending）。缺省回退 sending。
+   */
+  busy?: boolean
   /** 是否已有初始出题 utterance（决定「换一批」可用性） */
   canRegenerate: boolean
   /** 正在重新验算的题 index（1-based）；该卡显示 loading 态 */
@@ -253,6 +259,11 @@ const hasDirty = computed(
 // 本组仍在增量上屏期 → 传给 VariantCard，使其把「无 tier」解读为验算中过渡态
 const checking = computed(() => props.artifact?.partial === true)
 
+// 🔴 PRD-A-021 R1：组级跨切动作的「忙」判据 = busy（宿主算的并集）优先，缺省回退 sending。
+//   换一批 / 全部入库 / 重生 N 题 / 全部验算这四个会触发后端写、且彼此/与单题动作并发会撞 per-thread
+//   锁的组级按钮统一用它禁用；单题按钮仍各自带 per-index 锁，不受此影响。
+const isBusy = computed(() => props.busy ?? props.sending)
+
 // 🔴 BUG-09：待验算题（verify_status==='pending' 且无手动验算结果）→ 「全部验算」按钮可点。
 const pendingVerifyIndexes = computed<number[]>(() =>
   items.value
@@ -264,7 +275,7 @@ const hasVerifying = computed(
   () => props.verifyingIndex !== null && props.verifyingIndex !== undefined
 )
 function verifyAll() {
-  if (props.sending || pendingVerifyIndexes.value.length === 0) return
+  if (isBusy.value || pendingVerifyIndexes.value.length === 0) return
   emit('verify-all')
 }
 
@@ -382,7 +393,7 @@ onBeforeUnmount(() => {
 })
 
 function persistAll() {
-  if (props.sending || items.value.length === 0 || allPersisted.value) return
+  if (isBusy.value || items.value.length === 0 || allPersisted.value) return
   // PRD-C-015 批5 致命①：有脏题 → 前端拦下（后端 persist_to_bank 也会硬拦）
   if (hasDirty.value) {
     const ns = regenPendingIndexes.value.join('、')
@@ -393,13 +404,13 @@ function persistAll() {
 }
 
 function regenerate() {
-  if (props.sending || !props.canRegenerate) return
+  if (isBusy.value || !props.canRegenerate) return
   emit('regenerate')
 }
 
 /** PRD-C-015 批5：一键重生全待重生集合（D-merge8，indexes 省略 = 全集合） */
 function regenAll() {
-  if (props.sending || regenPendingIndexes.value.length === 0) return
+  if (isBusy.value || regenPendingIndexes.value.length === 0) return
   emit('regen-all')
 }
 </script>
@@ -462,7 +473,7 @@ function regenAll() {
             size="small"
             class="regen-all-btn"
             :loading="!!(regeneratingIndexes && regeneratingIndexes.length)"
-            :disabled="sending"
+            :disabled="isBusy"
             @click="regenAll"
           >
             🔄 重生 {{ regenPendingIndexes.length }} 题
@@ -473,7 +484,7 @@ function regenAll() {
             size="small"
             class="verify-all-btn"
             :loading="hasVerifying"
-            :disabled="sending"
+            :disabled="isBusy"
             title="对所有待验算的变式逐个调用 AI 验算（消耗 token）"
             @click="verifyAll"
           >
@@ -481,7 +492,7 @@ function regenAll() {
           </el-button>
           <el-button
             size="small"
-            :disabled="sending || !canRegenerate"
+            :disabled="isBusy || !canRegenerate"
             @click="regenerate"
           >
             换一批
@@ -489,7 +500,7 @@ function regenAll() {
           <el-button
             size="small"
             class="persist-btn"
-            :disabled="sending || items.length === 0 || allPersisted || hasDirty"
+            :disabled="isBusy || items.length === 0 || allPersisted || hasDirty"
             :title="hasDirty ? '有题改了还没重生，先点「重生」或撤销' : ''"
             @click="persistAll"
           >
@@ -550,6 +561,7 @@ function regenAll() {
             class="card-body"
             :item="it"
             :sending="sending"
+            :busy="isBusy"
             :checking="checking"
             :reverifying="reverifyingIndex === it.index"
             :verifying="verifyingIndex === it.index"
