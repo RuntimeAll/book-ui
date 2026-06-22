@@ -618,6 +618,30 @@ const hasFigureCol = computed(
       @pick="onPickMainKp"
     />
   </section>
+
+  <!-- 🔴 PRD-A-021 R5（用户反馈「占位图放母题卡里·拉长·浮动」）：母题处理中（R1 解题 / R2 打标）——
+       母题卡先以**占位态**出现在这里，显老师上传的原图（拉长 + 浮动悬浮），结构化母题卡 ready
+       即被上面 v-if="hasCard" 接管切走。无原图（旧后端/纯文本）→ 不渲染本占位（退 ArtifactPanel 文案）。 -->
+  <section
+    v-else-if="sending && motherImg"
+    class="mother-card mother-card--placeholder"
+    data-testid="variant-mother-card-placeholder"
+  >
+    <header class="mc-head">
+      <span class="mc-head-label">母题卡</span>
+      <span class="mc-ph-stage"><span class="mc-ph-dot" />正在解题 · 打标分类中…</span>
+    </header>
+    <div class="mc-ph-body">
+      <img
+        :src="motherImg"
+        class="mc-ph-img"
+        referrerpolicy="no-referrer"
+        alt="母题原图（处理中）"
+        @click="emit('preview', motherImg)"
+      />
+      <div class="mc-ph-caption">解题完成后，这里会切到结构化母题（题面 / 答案 / 解析 / DNA）</div>
+    </div>
+  </section>
 </template>
 
 <style scoped>
@@ -630,6 +654,71 @@ const hasFigureCol = computed(
   border-radius: var(--r-sm);
   margin: 0 16px 12px;
   overflow: hidden;
+}
+/* 🔴 PRD-A-021 R5：母题占位态（处理中）——原图放卡内 + 拉长 + 浮动悬浮效果。 */
+.mother-card--placeholder {
+  border-color: var(--violet-700);
+  box-shadow:
+    0 10px 30px rgba(123, 108, 240, 0.16),
+    0 2px 8px rgba(30, 138, 138, 0.08);
+  animation: mc-float 3s ease-in-out infinite;
+}
+@keyframes mc-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-5px);
+  }
+}
+@keyframes mc-ph-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.mc-ph-stage {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--violet-700);
+}
+.mc-ph-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--violet, #7b6cf0);
+  animation: mc-ph-pulse 1.5s infinite ease-in-out;
+}
+.mc-ph-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  /* 拉长：占位区给足高度，原图大图展示 */
+  min-height: 320px;
+  justify-content: center;
+  padding: 18px 14px 22px;
+}
+.mc-ph-img {
+  max-width: 100%;
+  max-height: 460px;
+  border-radius: 8px;
+  border: 1px solid var(--teal-line);
+  object-fit: contain;
+  cursor: zoom-in;
+  background: #fff;
+}
+.mc-ph-caption {
+  font-size: 12px;
+  color: var(--ink-soft, #8aa0a0);
+  text-align: center;
 }
 .mc-head {
   display: flex;

@@ -70,6 +70,12 @@ export interface VariantRequest {
    * 与 presetGradeBook 任一非空即生效、两者可单独传。空/省略 → 不塞此键，维持现有路径。
    */
   presetChapterId?: string
+  /**
+   * 🔴 PRD-A-021 R5·老师亲选的章人话名（如「第5章 一元一次方程」）：经
+   * agent_config(config.configurable.preset_chapter_name) 回传 toolkit → 注入 R1 解题轮/R2 打标轮 prompt
+   * 的「学段约束」，让模型解题/打标都知道老师定的章（之前只注年级册、漏了章）。空/省略 → 不塞此键。
+   */
+  presetChapterName?: string
 }
 
 /** toolkit ChatMessage（只取前端用得到的字段，其余宽松忽略） */
@@ -1084,6 +1090,8 @@ export function streamVariant(
   //   classify-grade LLM + 不弹「确定范围」弹窗。任一非空即透传；老师没选则不塞键 → 维持现有 classify 路径。
   if (payload.presetGradeBook) agentConfig.preset_grade_book = payload.presetGradeBook
   if (payload.presetChapterId) agentConfig.preset_chapter_id = payload.presetChapterId
+  // 🔴 R5：老师亲选章人话名 → 注入 R1/R2 prompt 学段约束（之前漏注章）。
+  if (payload.presetChapterName) agentConfig.preset_chapter_name = payload.presetChapterName
   if (Object.keys(agentConfig).length) body.agent_config = agentConfig
 
   fetchEventSource('/agent/variant/stream', {

@@ -746,6 +746,10 @@ const presetChapters = computed<SubjectNode[]>(() => {
 const presetGradeBookName = computed(
   () => presetGradeBooks.value.find((n) => String(n.id) === presetGradeBookId.value)?.title ?? ''
 )
+// 🔴 R5：老师亲选的章人话名（注入 R1/R2 prompt 学段约束，之前漏注章）。
+const presetChapterName = computed(
+  () => presetChapters.value.find((n) => String(n.id) === presetChapterId.value)?.title ?? ''
+)
 
 /** 懒加载年级册/章树（仅空态首次需要时拉一次；失败不打扰，选择器自然空着、不挡发送）。 */
 async function loadPresetTree() {
@@ -1071,6 +1075,8 @@ function dispatch(
       presetChapterId: isFirstTurn
         ? presetChapterId.value || presetGradeBookId.value || undefined
         : undefined,
+      // 🔴 R5：章人话名注入 R1/R2 prompt 学段约束（之前漏注章）
+      presetChapterName: isFirstTurn ? presetChapterName.value || undefined : undefined,
     },
     {
       onToken: (delta) => {
