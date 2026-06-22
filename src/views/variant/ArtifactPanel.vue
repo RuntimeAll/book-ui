@@ -75,6 +75,11 @@ const props = defineProps<{
   hasPendingUpload?: boolean
   /** 待发图张数（轻提示文案用） */
   pendingUploadCount?: number
+  /**
+   * 🔴 PRD-A-021 R5：母题原图 URL（老师上传的图）。解题/打标阶段（sending 且结构化母题卡还没出）
+   *   右栏画布显这张原图占位 + 「解题中…」字幕——不再干等空白；待结构化母题卡到达（hasMother）即切走。
+   */
+  motherImg?: string
 }>()
 
 const emit = defineEmits<{
@@ -611,9 +616,28 @@ function regenAll() {
       <!-- 🔴 PRD-A-018 A-9：读图/定题阶段（连母题/题数都没定，pendingCount=0）不写死 3 张变式骨架
            （误导「已定 3 道」，且与缺陷2「可能 1 道」打架）。改显「读图定题中…」占位——真正的
            变式骨架在进 generate（partial 帧带 expectedTotal → pendingCount>0）后按真实题数渲染。 -->
-      <div v-else-if="sending" class="define-loading">
-        <span class="dl-dot" />
-        读图定题中…
+      <!-- 🔴 PRD-A-021 R5：解题/打标阶段——母题原图占位（看得见在处理哪张图），结构化母题卡
+           到达（hasMother）即切走。无原图（纯文本/旧后端）→ 退「读图定题中…」轻提示。 -->
+      <div v-else-if="sending && !hasMother" class="define-loading">
+        <template v-if="motherImg">
+          <div class="dl-mother-figure">
+            <img
+              :src="motherImg"
+              class="dl-mother-img"
+              referrerpolicy="no-referrer"
+              alt="母题原图（处理中）"
+            />
+            <span class="dl-mother-tag">母题原图</span>
+          </div>
+          <div class="dl-caption">
+            <span class="dl-dot" />
+            正在解题 · 打标分类中…<span class="dl-sub">完成后切到结构化母题</span>
+          </div>
+        </template>
+        <template v-else>
+          <span class="dl-dot" />
+          读图定题中…
+        </template>
       </div>
 
       <!-- 🔴 PRD-A-017 空态高保真重建（restyle.html 空态右栏）：hero 三叠卡 + 标题副文 +
@@ -701,10 +725,11 @@ function regenAll() {
 /* 🔴 PRD-A-018 A-9：读图/定题阶段占位（替代写死 3 张变式骨架），紫系呼吸点 + 文案 */
 .define-loading {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 40px 20px;
+  gap: 12px;
+  padding: 32px 20px;
   font-size: 12.5px;
   color: var(--violet-700);
 }
@@ -714,6 +739,46 @@ function regenAll() {
   border-radius: 50%;
   background: var(--violet);
   animation: pulse 1.5s infinite ease-in-out;
+}
+/* 🔴 PRD-A-021 R5：母题原图占位（解题/打标阶段）。冷浅底 + 1px 细线 + 紫呼吸字幕，
+   与设计语言一致；结构化母题卡到达即整块切走。 */
+.define-loading .dl-mother-figure {
+  position: relative;
+  max-width: min(86%, 460px);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  padding: 10px;
+  box-shadow: 0 1px 3px rgba(30, 138, 138, 0.06);
+}
+.define-loading .dl-mother-img {
+  display: block;
+  max-width: 100%;
+  max-height: 360px;
+  margin: 0 auto;
+  border-radius: 6px;
+  object-fit: contain;
+}
+.define-loading .dl-mother-tag {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  padding: 1px 8px;
+  font-size: 11px;
+  color: var(--teal);
+  background: rgba(30, 138, 138, 0.08);
+  border-radius: 5px;
+}
+.define-loading .dl-caption {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+.define-loading .dl-caption .dl-sub {
+  margin-left: 4px;
+  font-weight: 400;
+  color: var(--ink-3, #8aa0a0);
 }
 
 .canvas-head {

@@ -1193,6 +1193,30 @@ function dispatch(
   )
 }
 
+/**
+ * 🔴 PRD-A-031 R5：老师手动「中断」当前 SSE 流（生成/解析卡住时止血）。
+ *   - abort 持有的流句柄（handle = streamVariant 返回，内部 ctrl.abort()）→ 停掉在途 SSE 请求。
+ *     ⚠ 注意：streamVariant 内 abort 后 .catch 早退（signal.aborted 即 return），onClose **不会**被回调，
+ *     故复位忙态/思路条不能靠 onClose，必须在此就地走与 onClose 同款的收口路径（不另写竞态分支）。
+ *   - 复位 sending/thinking → 发送按钮恢复、生成骨架（artifact.partial 占位卡随 sending 收掉）收干净。
+ *   - settleStages()：把当前轮还在 running 的思路条改 warn「已中断」（与异常断流同款收口，幂等）。
+ *   - 折叠思考块、清打字机半成品引用（与 onClose 一致），不残留半截态。
+ *   - 仅对 sending（SSE 流）生效；重生/验算/入库等结构化端点各自带 loading、不归此句柄管，故无 sending 时直接早退。
+ */
+function abortStream() {
+  if (!sending.value) return
+  handle?.abort()
+  handle = null
+  // 与 onClose 同款收口（abort 不触发 onClose，这里就地复位，避免另写一套竞态）
+  sending.value = false
+  thinking.value = false
+  typingBubble = null
+  settleStages() // 当前轮 running 思路条 → warn·已中断
+  if (currentRail.value) currentRail.value.reasoningOpen = false
+  ElMessage.info('已中断本次生成')
+  scrollToBottom()
+}
+
 /** 输入框发送（首轮把 OSS URL 拼进文本，agent 端从 human 文本抠 URL） */
 function send() {
   // 🔴 PRD-A-018 A-6：上传未完成即拦发送——否则在途图未并入 pendingImages，message 不带图，
@@ -2530,10 +2554,21 @@ onBeforeUnmount(() => {
               </el-tooltip>
             </div>
 
+            <!-- 🔴 PRD-A-031 R5：中断按钮——SSE 流在跑（sending）时显示，点了 abortStream() 停流 + 复位忙态。
+                 中性橙红描边（DESIGN.md：运行中可见但不抢眼），空闲隐藏；与发送按钮互斥呈现。 -->
             <el-button
+              v-if="sending"
+              class="abort-btn"
+              data-testid="variant-abort-btn"
+              title="中断当前生成/解析"
+              @click="abortStream"
+            >
+              ⏹ 中断
+            </el-button>
+            <el-button
+              v-else
               type="primary"
               class="send-btn"
-              :loading="sending"
               :disabled="
                 uploading || (!input.trim() && !imageUrl.trim() && pendingImages.length === 0)
               "
@@ -2572,6 +2607,7 @@ onBeforeUnmount(() => {
       :anchor-chip="anchorChip"
       :has-pending-upload="pendingImages.length > 0"
       :pending-upload-count="pendingImages.length"
+      :mother-img="motherImg"
       @utterance="sendUtterance"
       @regenerate="regenerate"
       @persist="persistAll"
@@ -3237,6 +3273,23 @@ onBeforeUnmount(() => {
   padding: 0 18px;
   border-radius: 9px;
   font-weight: 600;
+}
+
+/* 🔴 PRD-A-031 R5：中断按钮——中性橙红描边，运行中可见但不抢眼（不与 teal 主操作/紫 AI 抢色）。 */
+.abort-btn {
+  height: 32px;
+  padding: 0 16px;
+  border-radius: 9px;
+  font-weight: 600;
+  color: #c25a2b;
+  border-color: #e0a684;
+  background: #fff7f2;
+}
+.abort-btn:hover,
+.abort-btn:focus {
+  color: #fff;
+  border-color: #c25a2b;
+  background: #c25a2b;
 }
 
 /* 会话列表（popover 内容由本组件模板渲染，scoped 样式可达） */
