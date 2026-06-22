@@ -39,6 +39,9 @@ interface PsNode {
   // 🔴 PRD-A-018 C1(A-10)：可选旁挂节点（如程序验算）——照常渲染自己的态，但不计入
   //   「题组就绪 / 全部完成」判定（allDone），也不让它的 await 把整条状态条挂在「需人工」。
   optional?: boolean
+  // 🔴 R6（2026-06-22）：异步组节点（定题中·富文本化/切图）——与主步骤(解题)并发跑、早做完，
+  //   视觉上标「异步」徽标（可与解题同时 run），不算主顺序步。
+  async?: boolean
 }
 
 const ST_LABEL: Record<NodeState, string> = {
@@ -78,61 +81,36 @@ const CHU_KEYS = ['generate', 'gene_gate', 'verify', 'solution', 'persist', 'ass
 const isChu = computed(() => CHU_KEYS.some((k) => has(k)))
 
 // ── 定题中 节点 ──
-// 🔴 PRD-A-017（新 stage 帧契约，2026-06-19）：定题阶段三节点各读独立 stage key，
-//   不再用 classify+knobs 两 key 硬凑（旧映射致三态自相矛盾，根因见组件顶注释更新）。
-//   n1 读图锚定 ← classify、n2 母题切图 ← figure、n3 确认母题 ← review。
-//   后端发帧契约：
-//     ① classify：running（读图中）→ done（母题就绪，🔴 不再倒退成 await）/ await（仅低置信待确认年级章）。
-//     ② figure：纯文本 → done（detail「无需切图·纯文本」）；带图 → running → done。
-//        🔴 某轮确实没收到 figure 帧（旧数据/异常）→ 按「不适用·done」兜底，不恒挂待完成。
-//     ③ review：进入待确认 → await（detail「待老师确认母题，点开始举一反三」）→ 此节点显需人工；
-//        老师点「开始举一反三」→ review=done → 转 done。（knobs 仍存在但只代表「解析配方」，不驱动本节点）
+// 🔴 PRD-A-023 B1（2026-06-22 拍板·隐藏异步内部步）：定题阶段进度条**只展示 3 个可见节点**——
+//   解题（solve） / 深度解析（label） / 确认母题（review）。富文本化（richtext）、切图（figure-mother）
+//   是异步内部步（与解题并发跑、早做完），后台照跑（toolkit 照发帧），但**进度条不再展示它俩**
+//   （去掉两个可见节点 + 各自的「异步」徽标渲染）。出题中 chuNodes 一行不动。
+//   后端发帧契约（可见节点）：
+//     · solve：running → done（失败 warn）；母题解题主步骤。
+//     · label：running（解题完成后）→ done（失败 warn）；R2 深度解析打标。
+//     · review：await_mother_review 发 await（待老师确认）→ 老师点开始 → done。
+//   注：richtext / figure-mother 帧仍可能到达（后台异步），dingNodes 只是不读它们渲染节点。
 const dingNodes = computed<PsNode[]>(() => {
-  const cls = st('classify')
-  // 🔴 PRD-A-018 C2(A-11)：母题切图节点读宿主 push 的 figure-mother（不再读裸 figure；裸 figure
-  //   是历史混义 key，治标拆开后母题切图灯唯一 key = figure-mother，见 index.vue upsertFigureStage）。
-  const fig = st('figure-mother')
+  const solve = st('solve')
+  const label = st('label')
   const review = st('review')
 
-  // ① 读图锚定（classify）：await→需人工（仅低置信待确认年级章）/ warn→异常 / done→已完成 / running→进行中
+  // ① 解题（solve·主步骤）：running→进行中 / done→已完成 / warn→异常（解题失败硬终止）。
   const n1: PsNode = {
-    label: '读图锚定',
-    state:
-      cls?.status === 'await'
-        ? 'human'
-        : cls?.status === 'warn'
-          ? 'err'
-          : nodeStateFromStatus(cls?.status, 'todo'),
-    desc:
-      cls?.status === 'await' || cls?.status === 'warn'
-        ? (cls?.detail ?? '年级·章拿捏不准，请确认')
-        : (cls?.detail ?? '识别题面、判年级·章、锚定考点'),
+    label: '解题',
+    state: solve?.status === 'warn' ? 'err' : nodeStateFromStatus(solve?.status, 'todo'),
+    desc: solve?.detail ?? '一步步算，求稳准',
   }
-  // ② 母题切图（figure）：后端按帧渲染——running→done（带图）/ done（纯文本「无需切图」）。
-  //   🔴 PRD-A-018 bug#2（2026-06-20）：无 figure-mother 帧时**不能一律预先 done**——上传后读图阶段
-  //     (classify 还在跑、母题切图根本没轮到) 旧逻辑直接 done「无需切图·纯文本」= 「上传即done」假完成，
-  //     连几何带图母题也被误判纯文本。收窄兜底：
-  //       · 有 fig 帧 → 用其真值；
-  //       · 无 fig 帧但**已到母题就绪 gate**(review 有帧) → 此时若仍无切图帧 = 确为纯文本/无图可切 → done；
-  //       · 无 fig 帧且**尚未到母题就绪**(读图/定题进行中) → todo（待切图，不预先 done）。
-  const n2: PsNode = fig
-    ? { label: '母题切图', state: nodeStateFromStatus(fig.status, 'done'), desc: fig.detail ?? '母题切图' }
-    : props.motherHasImg
-      ? // 母题确有原图 → 必走切图，无帧 = 还没轮到/正在切（绝不显「无需切图」）
-        review
-        ? { label: '母题切图', state: 'run', desc: '切出母题图形…' }
-        : { label: '母题切图', state: 'todo', desc: '待读图后切出母题图形' }
-      : review
-        ? { label: '母题切图', state: 'done', desc: '无需切图 · 纯文本' }
-        : { label: '母题切图', state: 'todo', desc: '待读图后判断是否需要切图' }
-  // ③ 确认母题（review）：await→需人工（真正等老师操作的 gate）/ done→已完成（点了「开始举一反三」）。
-  //   🔴 数据源从 knobs 改成 review；无 review 帧时按 todo（母题就绪前还没到确认 gate）。
+  // ② 深度解析（label·主步骤）：解题完成后 running→done（失败 warn）。
+  const n2: PsNode = {
+    label: '深度解析',
+    state: label?.status === 'warn' ? 'err' : nodeStateFromStatus(label?.status, 'todo'),
+    desc: label?.detail ?? '深度解析 + 10 维打标分类',
+  }
+  // ③ 确认母题（review·闸）：await→需人工（等老师点开始）/ done→已完成。
   const n3: PsNode = {
     label: '确认母题',
-    state:
-      review?.status === 'await'
-        ? 'human'
-        : nodeStateFromStatus(review?.status, 'todo'),
+    state: review?.status === 'await' ? 'human' : nodeStateFromStatus(review?.status, 'todo'),
     desc: review?.detail ?? '母题已确认无误？点「开始举一反三」开始生成变式',
   }
   return [n1, n2, n3]
@@ -338,6 +316,7 @@ function toggleCollapse() {
           <div class="ps-main">
             <div class="ps-t">
               {{ n.label }}
+              <span v-if="n.async" class="ps-async">异步</span>
               <span class="ps-st">{{ ST_LABEL[n.state] }}</span>
             </div>
             <div class="ps-desc">{{ n.desc }}</div>
@@ -448,6 +427,17 @@ function toggleCollapse() {
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.02em;
+}
+/* 🔴 R6：异步组徽标（富文本化/切图）——紫系胶囊，提示「与解题并行、早做完」。 */
+.ps-async {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--violet);
+  background: var(--violet-100);
+  border-radius: 4px;
+  padding: 0 5px;
+  letter-spacing: 0.03em;
 }
 .ps-desc {
   font-size: 11px;

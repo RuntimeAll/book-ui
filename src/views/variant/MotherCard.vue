@@ -54,6 +54,12 @@ const props = defineProps<{
   confirmedGradeBookName?: string
   /** 母题原图（守恒锚缩略图，点开看大图） */
   motherImg?: string
+  /**
+   * 🔴 R6 富文本化早帧（2026-06-22 三步编排）：富文本化轮誊抄出的母题题面富文本（LaTeX）。
+   * 非空 → 占位态优先显富文本题面（KaTeX 渲染），替换原图；为空回退原图。结构化母题卡 ready 后由
+   * 上面 v-if="hasCard" 接管。让老师在解题/打标还在跑时就能读到干净题面。
+   */
+  richtextStem?: string
   /** 母题已入库 → 入库按钮置「已入库」 */
   persisted: boolean
   /** 入库进行中 → 按钮 loading */
@@ -381,49 +387,46 @@ const hasFigureCol = computed(
     </header>
 
     <div v-show="!collapsed" class="mc-body">
-      <!-- 🔴 BUG-05b 去原图化：左列不再渲染母题原图缩略（老师看到的是干净富文本题面，
-           不是拍的原图）。仅保留「已转好的」切图（图形区，渲染结果）+ 切图操作。纯文本母题
-           无切图 → 整列不渲染（v-if hasFigureCol），左列消失、富文本主区独占。 -->
-      <div v-if="hasFigureCol" class="mc-thumb-col">
-        <!-- 🔴 PRD-C-100 bug-002 单元3：母题切图多图（PNG 无损），v-for 渲染全部，各自点开看大图 -->
-        <template v-if="figureList.length">
-          <div
-            v-for="(fig, i) in figureList"
-            :key="i"
-            class="mc-figure"
-            :title="`母题图形 ${i + 1}/${figureList.length}（切图）· 点开看大图`"
-            @click="emit('preview', `data:image/png;base64,${fig}`)"
-          >
-            <img :src="`data:image/png;base64,${fig}`" :alt="`母题图形 ${i + 1}`" />
-            <span class="mc-figure-tag">图形{{ figureList.length > 1 ? ` ${i + 1}` : '' }}</span>
-          </div>
-        </template>
-        <!-- G4：确需配图但没切出来 → ⚠待补图。🔴 Fix-B：reason 表「不适合切图」时去噪不显。 -->
-        <div v-else-if="figureNeedsFigure && !figureReasonSaysNotNeeded && !figureReasonIsInfra" class="mc-figure-warn">⚠ 待补图</div>
-        <!-- 切图 / 重切按钮（loading 期转圈）。🔴 验收纠偏：纯文本/不需切图/基建缺失态不显
-             （避免母题图下方挂一个无意义的「切图形」孤儿按钮 + 空框，王老师/张校长挑刺）。
-             仅「已切出图（可重切）」或「确需切图且非 infra/非不适合」才显。 -->
-        <el-button
-          v-if="figureList.length || (figureNeedsFigure && !figureReasonSaysNotNeeded && !figureReasonIsInfra)"
-          text
-          size="small"
-          class="mc-figure-btn"
-          :loading="figureLoading"
-          :disabled="isBusy || figureLoading"
-          @click="emit('crop-figure')"
-        >
-          {{ figureList.length ? '重新切图' : '切图形' }}
-        </el-button>
-        <!-- 🔴 Fix-B：不需切图态不显 reason（避免「母题切图失败」对纯文本母题的误报噪音） -->
-        <p v-if="figureReason && !figureNotNeeded && !figureReasonIsInfra" class="mc-figure-reason">{{ figureReason }}</p>
-      </div>
-
       <div class="mc-main">
         <!-- 🔴 BUG-05b 去原图化：母题题面富文本（已转好，KaTeX 渲染）。老师看到的是干净题面，
-             不是拍的原图。无 stem（兜底路径）→ 不渲染本块。 -->
-        <div v-if="stemText" class="mc-block mc-stem-block">
-          <span class="mc-block-k">母题题面</span>
-          <div class="mc-stem"><MarkdownMath :content="stemText" /></div>
+             不是拍的原图。无 stem（兜底路径）→ 不渲染本块。
+             🔴 PRD-A-023 B2/B3：母题切图内联进富文本题面区（题面下方），不再单独左列「图形」框。 -->
+        <div v-if="stemText || hasFigureCol" class="mc-block mc-stem-block">
+          <span v-if="stemText" class="mc-block-k">母题题面</span>
+          <div v-if="stemText" class="mc-stem"><MarkdownMath :content="stemText" /></div>
+          <!-- 🔴 PRD-A-023 B2/B3：内联切图——题面富文本下方直接显示母题切图（PNG 无损，竖图限宽不压变形）。
+               复用 figureList / figurePng 数据，一就绪即内联（不依赖结构化母题卡其余字段）。 -->
+          <div v-if="hasFigureCol" class="mc-fig-inline">
+            <!-- 多图（PRD-C-100 bug-002 单元3）：v-for 渲染全部，各自点开看大图 -->
+            <template v-if="figureList.length">
+              <div
+                v-for="(fig, i) in figureList"
+                :key="i"
+                class="mc-fig-inline-item"
+                :title="`母题图形 ${i + 1}/${figureList.length}（切图）· 点开看大图`"
+                @click="emit('preview', `data:image/png;base64,${fig}`)"
+              >
+                <img :src="`data:image/png;base64,${fig}`" :alt="`母题图形 ${i + 1}`" />
+                <span v-if="figureList.length > 1" class="mc-fig-inline-tag">图形 {{ i + 1 }}</span>
+              </div>
+            </template>
+            <!-- G4：确需配图但没切出来 → ⚠待补图。🔴 Fix-B：reason 表「不适合切图」时去噪不显。 -->
+            <div v-else-if="figureNeedsFigure && !figureReasonSaysNotNeeded && !figureReasonIsInfra" class="mc-figure-warn">⚠ 待补图</div>
+            <!-- 切图 / 重切按钮入口（挪到题面图旁；纯文本/不需切图/基建缺失态不显）。 -->
+            <el-button
+              v-if="figureList.length || (figureNeedsFigure && !figureReasonSaysNotNeeded && !figureReasonIsInfra)"
+              text
+              size="small"
+              class="mc-figure-btn"
+              :loading="figureLoading"
+              :disabled="isBusy || figureLoading"
+              @click="emit('crop-figure')"
+            >
+              {{ figureList.length ? '重新切图' : '切图形' }}
+            </el-button>
+            <!-- 🔴 Fix-B：不需切图态不显 reason（避免「母题切图失败」对纯文本母题的误报噪音） -->
+            <p v-if="figureReason && !figureNotNeeded && !figureReasonIsInfra" class="mc-figure-reason">{{ figureReason }}</p>
+          </div>
         </div>
         <!-- 🔴 收窄区：解法骨架 / 答案 / 解析三块「可能很长」的富文本默认限高折叠（detailExpanded=false）：
              各块 max-height 限高 + 底部渐隐遮罩，超长不撑爆卡、不挤没下方变式区；
@@ -623,7 +626,7 @@ const hasFigureCol = computed(
        母题卡先以**占位态**出现在这里，显老师上传的原图（拉长 + 浮动悬浮），结构化母题卡 ready
        即被上面 v-if="hasCard" 接管切走。无原图（旧后端/纯文本）→ 不渲染本占位（退 ArtifactPanel 文案）。 -->
   <section
-    v-else-if="sending && motherImg"
+    v-else-if="sending && (richtextStem || motherImg)"
     class="mother-card mother-card--placeholder"
     data-testid="variant-mother-card-placeholder"
   >
@@ -631,14 +634,47 @@ const hasFigureCol = computed(
       <span class="mc-head-label">母题卡</span>
       <span class="mc-ph-stage"><span class="mc-ph-dot" />正在解题 · 打标分类中…</span>
     </header>
-    <div class="mc-ph-body">
+    <!-- 🔴 R6：富文本化题面先到（sui-xiang 只誊抄题面）→ 占位区用富文本题面替换原图（KaTeX 渲染）；
+         未到则回退原图。结构化母题卡 ready 后由上面 v-if="hasCard" 接管。
+         🔴 PRD-A-023 B2/B3：切图一就绪即在占位态内联进去（题面/原图下方），不等结构化母题卡 ready。 -->
+    <div v-if="richtextStem" class="mc-ph-body mc-ph-body--rich">
+      <div class="mc-stem mc-ph-stem"><MarkdownMath :content="richtextStem" /></div>
+      <!-- 占位态内联切图（与上方富文本题面联动：题面 + 内联切图） -->
+      <div v-if="figureList.length" class="mc-fig-inline mc-ph-fig">
+        <div
+          v-for="(fig, i) in figureList"
+          :key="i"
+          class="mc-fig-inline-item"
+          :title="`母题图形 ${i + 1}/${figureList.length}（切图）· 点开看大图`"
+          @click="emit('preview', `data:image/png;base64,${fig}`)"
+        >
+          <img :src="`data:image/png;base64,${fig}`" :alt="`母题图形 ${i + 1}`" />
+          <span v-if="figureList.length > 1" class="mc-fig-inline-tag">图形 {{ i + 1 }}</span>
+        </div>
+      </div>
+      <div class="mc-ph-caption">解题完成后，这里会补上答案 / 解析 / DNA 等结构化信息</div>
+    </div>
+    <div v-else class="mc-ph-body">
       <img
         :src="motherImg"
         class="mc-ph-img"
         referrerpolicy="no-referrer"
         alt="母题原图（处理中）"
-        @click="emit('preview', motherImg)"
+        @click="emit('preview', motherImg || '')"
       />
+      <!-- 占位态（原图还在）内联切图：切图就绪也内联进去 -->
+      <div v-if="figureList.length" class="mc-fig-inline mc-ph-fig">
+        <div
+          v-for="(fig, i) in figureList"
+          :key="i"
+          class="mc-fig-inline-item"
+          :title="`母题图形 ${i + 1}/${figureList.length}（切图）· 点开看大图`"
+          @click="emit('preview', `data:image/png;base64,${fig}`)"
+        >
+          <img :src="`data:image/png;base64,${fig}`" :alt="`母题图形 ${i + 1}`" />
+          <span v-if="figureList.length > 1" class="mc-fig-inline-tag">图形 {{ i + 1 }}</span>
+        </div>
+      </div>
       <div class="mc-ph-caption">解题完成后，这里会切到结构化母题（题面 / 答案 / 解析 / DNA）</div>
     </div>
   </section>
@@ -705,6 +741,15 @@ const hasFigureCol = computed(
   min-height: 320px;
   justify-content: center;
   padding: 18px 14px 22px;
+}
+/* 🔴 R6：富文本题面占位（替换原图）——左对齐、读题节奏，不居中。 */
+.mc-ph-body--rich {
+  align-items: stretch;
+  justify-content: flex-start;
+  min-height: auto;
+}
+.mc-ph-stem {
+  width: 100%;
 }
 .mc-ph-img {
   max-width: 100%;
@@ -789,62 +834,52 @@ const hasFigureCol = computed(
   color: var(--muted);
 }
 
+/* 🔴 PRD-A-023 B2/B3：母题卡主体单列流（切图内联进富文本题面区，不再左右两列）。 */
 .mc-body {
-  display: flex;
-  gap: 12px;
   padding: 12px;
 }
-.mc-thumb-col {
-  flex: 0 0 96px;
-  width: 96px;
+/* 🔴 PRD-A-023 B2/B3：内联切图区（题面富文本下方）——母题图多为竖图，max-width:100% 限宽 +
+   object-fit:contain 不压变形（仓库铁律：禁压缩图片质量）。多图纵向堆叠。 */
+.mc-fig-inline {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
 }
-.mc-thumb {
-  width: 96px;
-  height: 72px;
-  border-radius: var(--r-sm);
-  overflow: hidden;
-  border: 1px solid var(--teal-line);
-  cursor: zoom-in;
-  background: var(--bg-soft);
-}
-.mc-thumb img {
-  width: 100%;
-  height: 100%;
-  /* 🔴 母题图多为竖长条(题干+选项)，cover 会裁成中间一条 sliver(只露某个选项行)；
-     contain = 整图缩进框、可辨认(守恒锚视觉提示，点开看大图)。 */
-  object-fit: contain;
-}
-/* PRD-C-100 B6：母题切图（图形区） */
-.mc-figure {
+.mc-fig-inline-item {
   position: relative;
-  width: 96px;
-  min-height: 50px;
+  max-width: 100%;
   border-radius: var(--r-sm);
   overflow: hidden;
   border: 1px dashed var(--violet);
   cursor: zoom-in;
   background: var(--violet-50);
 }
-.mc-figure img {
-  width: 100%;
-  height: auto;
+.mc-fig-inline-item img {
   display: block;
+  max-width: 100%;
+  /* 竖图限高（点开看大图，内联不被一张竖图撑爆卡）；object-fit:contain 不压变形 */
+  max-height: 420px;
+  height: auto;
+  object-fit: contain;
 }
-.mc-figure-tag {
+.mc-fig-inline-tag {
   position: absolute;
   left: 0;
   bottom: 0;
-  right: 0;
   font-size: 9px;
   color: #fff;
-  text-align: center;
+  padding: 0 6px;
   background: rgba(123, 108, 240, 0.78);
 }
+/* 占位态内联切图：在富文本题面 / 原图下方拉开一点间距 */
+.mc-ph-fig {
+  margin-top: 12px;
+  width: 100%;
+}
 .mc-figure-warn {
-  width: 96px;
+  display: inline-block;
   font-size: 11px;
   color: var(--amber);
   background: var(--amber-50);

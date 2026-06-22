@@ -32,6 +32,7 @@ import type {
   VariantNeedConfirm,
   VariantReasoning,
   VariantReject,
+  VariantRichtextStem,
   VariantStage,
   VariantStreamHandle,
 } from '@/api/variant'
@@ -128,6 +129,9 @@ const showUrlInput = ref(false)
 // PRD-C-013 P10：待发附件缩略图（粘贴上传 / 贴 URL 都进这里）。发送时随用户气泡进流后清空。
 const pendingImages = ref<string[]>([])
 const motherImg = ref('') // 已发出的母题图，顶部小徽章常驻（守恒锚视觉提示）
+// 🔴 R6 富文本化早帧（2026-06-22 三步编排）：富文本化轮誊抄出的母题题面富文本。非空 → 母题卡占位区
+//   显富文本题面（替换原图）；结构化母题卡 ready 后由 hasCard 接管。每新母题轮重置。
+const richtextStem = ref('')
 const previewUrl = ref('') // 点开看大图（el-image-viewer / 简易遮罩）
 const sending = ref(false)
 const thinking = ref(false) // LLM token 流期的「思考中」动效
@@ -1082,6 +1086,13 @@ function dispatch(
   sending.value = true
   thinking.value = true
   typingBubble = null
+  // 🔴 R6：本轮带图（新母题）→ 清上一轮富文本题面，避免旧题面串到新母题占位区。
+  if (images && images.length) richtextStem.value = ''
+  // 🔴 R6（2026-06-22 拍板·切图尽早触发）：母题图一就绪（有母题原图 + 本轮带图、sending 已置）即触发切图，
+  //   归入定题中「异步组」、与解题/富文本化并发、早做完；不再等母题卡 ready（onArtifact）才切。
+  //   切图仍在 FE 执行（onCropMotherFigure 调中转，不挪后端）；maybeAutoFirstFigures(null) 只走母题切图
+  //   分支（传 null 不触发变式造图），内部 autoCropMotherDone 去重，重复调无害。
+  if (images && images.length) maybeAutoFirstFigures(null)
   scrollToBottom()
 
   handle = streamVariant(
@@ -1132,6 +1143,12 @@ function dispatch(
       onReasoning: (payload: VariantReasoning) => {
         rail.reasoning += payload.text
         rail.reasoningOpen = true
+        scrollToBottom()
+      },
+      // 🔴 R6 富文本化早帧（2026-06-22 三步编排）：富文本化轮跑完即到 → 母题卡占位区用富文本题面
+      //   替换原图（解题/打标还在跑时就能读到干净题面）。结构化母题卡 ready 后由 hasCard 接管。
+      onRichtextStem: (payload: VariantRichtextStem) => {
+        richtextStem.value = payload.stem
         scrollToBottom()
       },
       onArtifact: (a: VariantArtifact) => {
@@ -1263,7 +1280,26 @@ function send() {
   const imgs = [...pendingImages.value]
   // 首轮必须有图；后续轮纯指令即可（text 非空）
   if (imgs.length === 0 && !text) return
-  if (sending.value) return
+
+  // 🔴 PRD-A-023 B7：纠错重录（换母题）= 本轮带图 + 已有母题原图（贴错题→母题卡已就绪→再贴正确图）。
+  //   此场景必须先 abort 当前流 + resetMotherState 再发，否则被 `if(sending) return` / dispatch 同名守卫
+  //   静默吞掉（卡死：新图发不出去）、motherImg/autoCropMotherDone 锁死旧错图不更新。
+  const isReplaceMother = imgs.length > 0 && !!motherImg.value
+  if (sending.value) {
+    if (isReplaceMother) {
+      // 换母题且仍在跑 → 先中断当前轮（dispatch 内的 abort 在 sending 守卫之后，到不了；这里先打断）
+      handle?.abort()
+      handle = null
+      sending.value = false
+      thinking.value = false
+      typingBubble = null
+      settleStages() // 当前轮 running 思路条 → warn·已中断
+    } else {
+      return // 非换母题（纯指令/续聊）仍在跑 → 维持原「忙时不重入」语义
+    }
+  }
+  // 换母题：复位母题子集（保留 thread + stream），让 toolkit 走 mother_opus_entry 重起母题轮。
+  if (isReplaceMother) resetMotherState()
 
   // agent 端从 human 文本抠 URL（_extract_image_url），故图 URL 仍内联进 message 文本
   const parts: string[] = []
@@ -1272,7 +1308,8 @@ function send() {
   const message = parts.join('\n')
 
   if (imgs.length) {
-    // 首图作母题：顶部小徽章常驻（守恒锚）；「换一批」重发这条初始出题 utterance
+    // 首图作母题：顶部小徽章常驻（守恒锚）；「换一批」重发这条初始出题 utterance。
+    //   🔴 B7：换母题时 motherImg 已被 resetMotherState 清空 → 这里用新图回填（不再被旧错图锁死）。
     if (!motherImg.value) motherImg.value = imgs[0]
     firstComposeMessage = message
   }
@@ -2008,6 +2045,7 @@ function clearCanvas() {
   currentRail.value = null
   artifact.value = null
   motherImg.value = ''
+  richtextStem.value = '' // 🔴 R6：新会话清富文本题面
   imageUrl.value = ''
   pendingImages.value = []
   previewUrl.value = ''
@@ -2039,6 +2077,42 @@ function clearCanvas() {
   autoComposedIndexes.clear()
   // 🔴 PRD-A-018 A-3：验算结果随会话重置（切会话/新会话从零开始，旧徽章不串到新会话）
   clearAllVerifyResults()
+}
+
+/**
+ * 🔴 PRD-A-023 B7（2026-06-22）：纠错重录——同会话内「换母题」（贴错题→母题卡已就绪→再贴正确图）。
+ *   复位 clearCanvas 的「母题子集」（母题原图 / 切图 guard / 切图态 / 富文本题面 / artifact /
+ *   母题确认·入库态 / 自动造图集合等），但**保留 threadId + stream**（同 thread，让 toolkit
+ *   route_entry 走 mother_opus_entry 重起母题轮；对话气泡 / 思路条历史不清，老师能看到「给错了，这个才是」）。
+ *   与 clearCanvas 的差异：不清 stream / 不动 threadId / 不复位 sending（调用方负责 abort）。
+ */
+function resetMotherState() {
+  artifact.value = null
+  motherImg.value = ''
+  richtextStem.value = ''
+  // 母题确认 / 入库态复位（新母题从头来）
+  needConfirmPayload.value = null
+  confirmDialogVisible.value = false
+  confirmSubmitting.value = false
+  confirmedChapterName.value = ''
+  confirmedGradeBookName.value = ''
+  motherPersisting.value = false
+  motherPersisted.value = false
+  motherQuestionId.value = ''
+  // 母题切图态复位（新母题需重切）
+  motherFigures.value = []
+  motherFigureLoading.value = false
+  motherFigureNeeds.value = false
+  motherFigureReason.value = null
+  motherFigureOssUrl.value = null
+  // 变式配图缓存 + 切图/造图 guard 复位（新母题 → 旧图全作废、重新切/造）
+  for (const k of Object.keys(variantFigures)) delete variantFigures[Number(k)]
+  for (const k of Object.keys(figureStemAtIndex)) delete figureStemAtIndex[Number(k)]
+  autoCropMotherDone = false
+  autoComposedIndexes.clear()
+  // 验算结果复位（旧母题的变式徽章不串到新母题）
+  clearAllVerifyResults()
+  // firstComposeMessage 由 send() 用新图重置；此处不动 stream / currentRail / threadId。
 }
 
 /** 新会话（原「新母题」）：换新 thread；首条消息发出时才登记进会话列表 */
@@ -2680,6 +2754,7 @@ onBeforeUnmount(() => {
           :confirmed-chapter-name="confirmedChapterName"
           :confirmed-grade-book-name="confirmedGradeBookName"
           :mother-img="motherImg"
+          :richtext-stem="richtextStem"
           :persisted="motherPersisted"
           :persisting="motherPersisting"
           :mother-dirty="!!artifact?.header.motherDirty"

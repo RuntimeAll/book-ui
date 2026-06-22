@@ -529,20 +529,17 @@ function regenAll() {
       </div>
     </header>
 
-    <!-- PRD-C-017 B3·AC7 收窄移位：母题紧凑卡插槽——位于「变式题组」标题区下方
-         （原 C-015 全宽横条 MotherBar 收成本卡，宿主 index.vue 注入 MotherCard）。
-         🔴 布局闸（治「解析超长挤没下方变式区/操作按钮」）：插槽包一层 .mother-slot，
-            给母题卡区域设上限高（视口比例）+ overflow:auto —— 母题卡再长也只在本区内滚，
-            绝不撑爆把下方 .canvas-body（变式题组）顶出视口。操作按钮在 .canvas-head
-            （flex-shrink:0，在本插槽之上）天然常驻可见，不受影响。 -->
-    <!-- 🔴 PRD-A-017 批2b：母题卡折叠态由合并头 caret 控（作用域插槽暴露 collapsed → 宿主 MotherCard）。
-         折叠时整槽隐藏（只剩合并头），展开时显示完整母题卡。sticky 由合并头 .canvas-head 承载（常驻顶）。 -->
-    <div v-show="!motherCollapsed" class="mother-slot">
-      <slot name="mother-card" :collapsed="motherCollapsed" />
-    </div>
-
     <!-- 卡片列 -->
     <div ref="listEl" class="canvas-body">
+      <!-- 🔴 PRD-A-023 B5（2026-06-22 拍板·母题卡悬浮在变式之上）：母题卡区移进 .canvas-body 滚动容器内、
+           作为首个 sticky 子项 → 悬浮吸顶于变式区之上，变式在其下方滚动（不被推走 / 不被遮死，
+           母题卡可折叠）。原作「flex 同级」改「同滚动流内 sticky overlay」。
+           折叠态由合并头 caret 控（作用域插槽暴露 collapsed）；折叠时整槽隐藏只剩吸顶头。
+           布局闸（治「解析超长」）保留：本槽 max-height 视口比例 + overflow:auto，母题卡再长只在本区内滚。 -->
+      <div v-show="!motherCollapsed" class="mother-slot">
+        <slot name="mother-card" :collapsed="motherCollapsed" />
+      </div>
+
       <template v-if="items.length > 0 || pendingCount > 0">
         <!-- P2b：按 seq 原位 merge，剔除题（_dropped）走 is-dropping 退场过渡后由计时移除 -->
         <!-- 题组编辑器：每卡包一层拖拽行（data-card-seq = drop 后读新序的键 + .drag-handle 拖手柄） -->
@@ -894,13 +891,22 @@ function regenAll() {
   padding: 2px 10px;
 }
 
-/* 🔴 母题卡插槽容器：限高 + 内滚，防母题卡（解析超长时）把下方变式区/操作按钮挤出视口。
-   max-height 取视口的合理比例（母题卡顶多占视口约 38%），超出部分本区内滚动；
-   flex-shrink:0 保证它先按内容/上限占位，剩余高度全留给下方 .canvas-body 滚动区。 */
+/* 🔴 PRD-A-023 B5：母题卡悬浮在变式之上——母题卡插槽移进 .canvas-body 滚动流内，
+   position:sticky + top:0 → 吸顶悬浮于变式区之上，变式在其下方滚动（不被推走）。
+   z-index 压在变式卡之上 + 自带不透明底（MotherCard 卡身 var(--paper)），变式滚过时不透视。
+   保留限高内滚（治解析超长）：母题卡再长也只在本槽内滚、不撑爆把变式顶出视口。
+   折叠态由父级 v-show 整槽隐藏（吸顶头另在 .canvas-head 常驻）。 */
 .mother-slot {
+  position: sticky;
+  top: 0;
+  z-index: 4;
   flex-shrink: 0;
   max-height: 38vh;
   overflow-y: auto;
+  /* 悬浮层底色 + 轻投影，与下方滚动的变式拉开层次（青紫设计语言：紫向阴影呼应 AI 区） */
+  background: var(--bg-soft);
+  box-shadow: 0 6px 14px -8px rgba(123, 108, 240, 0.28);
+  margin-bottom: 2px;
 }
 
 .canvas-body {

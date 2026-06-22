@@ -5,7 +5,7 @@
 // 血缘展示（母题关系等）暂不做（QuestionCard 列表本就不展示血缘，无需额外隐藏）。
 import { ref, reactive, onMounted, computed, watch, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Search, Document, Plus } from '@element-plus/icons-vue'
+import { Search, Document } from '@element-plus/icons-vue'
 import {
   lazyTree,
   questionPage,
@@ -23,7 +23,6 @@ import ContentWrap from '@/components/ContentWrap/index.vue'
 import SearchWrap from '@/components/SearchWrap/index.vue'
 import QuestionCard from '@/components/business/QuestionCard/index.vue'
 import SketchPad from '@/components/business/SketchPad/index.vue'
-import FontSizeSwitch from '@/components/business/FontSizeSwitch/index.vue'
 import { useFontScale } from '@/composables/useFontScale'
 
 // ── 路由 ────────────────────────────────────────────────────
@@ -236,11 +235,6 @@ function handleFavDrawerSuccess(_folderId: string | undefined) {
   }
 }
 
-// PRD-A-015 — 录题入口（G1）：从「我的题库」可点进单题网格编辑器。
-function handleCreate() {
-  router.push('/question/editor')
-}
-
 function handleEdit(q: QuestionItem) {
   router.push(`/question/editor/${q.id}`)
 }
@@ -384,11 +378,6 @@ onMounted(async () => {
               共 {{ total }} 题
             </el-tag>
           </div>
-          <FontSizeSwitch />
-          <!-- PRD-A-015 — 录题入口（G1）：新建题 -->
-          <el-button type="primary" :icon="Plus" class="create-btn" @click="handleCreate">
-            新建题
-          </el-button>
         </div>
 
         <div v-loading="listLoading" class="question-list">
@@ -548,12 +537,6 @@ onMounted(async () => {
   font-size: 14px;
   font-weight: 600;
   color: #1d2129;
-}
-
-/* PRD-A-015 录题入口（青主色） */
-.create-btn {
-  background: #1e8a8a;
-  border-color: #1e8a8a;
 }
 
 .question-list {

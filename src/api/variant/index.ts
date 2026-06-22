@@ -178,6 +178,26 @@ function pickStage(msg: ToolkitChatMessage): VariantStage | null {
 }
 
 // ---------------------------------------------------------------------------
+// 🔴 R6 富文本化早帧（2026-06-22 三步编排第①步）— richtextStem custom 帧。
+// BE 富文本化轮（sui-xiang·只誊抄题面）跑完即发 custom_data.richtextStem = {stem}，
+// 让 FE 母题卡占位区尽早把原图替换成富文本题面（KaTeX 渲染）；解题/打标还在跑时就能读到干净题面。
+// 结构不符 → null（向后兼容旧 toolkit，无该帧静默）。
+// ---------------------------------------------------------------------------
+/** 富文本化早帧载荷（誊抄出的母题题面富文本） */
+export interface VariantRichtextStem {
+  stem: string
+}
+
+/** 从 custom 消息抠出 richtextStem.stem（仿 pickStage；结构不符 / 空串返 null） */
+function pickRichtextStem(msg: ToolkitChatMessage): VariantRichtextStem | null {
+  const raw = msg.custom_data?.richtextStem
+  if (!raw || typeof raw !== 'object') return null
+  const s = (raw as Record<string, unknown>).stem
+  if (typeof s !== 'string' || !s.trim()) return null
+  return { stem: s }
+}
+
+// ---------------------------------------------------------------------------
 // PRD-C-011 Bucket3 — artifact 快照帧（右栏卡片栅的唯一数据源，FE 不 parse markdown 拼卡片）。
 // BE 发射点 = assemble 收尾 + persist_to_bank 成功后（persisted 逐题置位）；
 // 帧落在 type=custom 消息的 custom_data.artifact 上，snapshot 全量语义（FE 整量替换）。
@@ -1010,6 +1030,11 @@ export interface VariantStreamHandlers {
    * 增量追加。不传则静默丢弃（向后兼容；现状 opus 经 aigeek 不吐 reasoning，多数会话该帧不出现）。
    */
   onReasoning?: (payload: VariantReasoning) => void
+  /**
+   * 🔴 R6 富文本化早帧（type=custom 且 custom_data.richtextStem）→ 母题卡占位区用富文本题面替换原图。
+   * 不传则静默丢弃（向后兼容旧 toolkit）。
+   */
+  onRichtextStem?: (payload: VariantRichtextStem) => void
   /** artifact 快照帧（type=custom 且 custom_data.artifact）→ 右栏卡片栅。不传则静默丢弃，向后兼容 */
   onArtifact?: (artifact: VariantArtifact) => void
   /**
@@ -1137,6 +1162,12 @@ export function streamVariant(
             const reasoning = pickReasoning(msg)
             if (reasoning) {
               handlers.onReasoning?.(reasoning)
+              break
+            }
+            // 🔴 R6 富文本化早帧 → 母题卡占位区用富文本题面替换原图（先于 stage 判，独立通道）
+            const richtextStem = pickRichtextStem(msg)
+            if (richtextStem) {
+              handlers.onRichtextStem?.(richtextStem)
               break
             }
             const stage = pickStage(msg)
