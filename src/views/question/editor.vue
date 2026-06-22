@@ -64,6 +64,23 @@ const isOwner = computed(() => {
   return String(detailOwnerId.value) === String(uid)
 })
 
+// ── 排版精简模式（PRD-A-022 批3 R-B，D6+D7）─────────────────────────────────────
+// 对「举一反三 AI 生成的题」编辑态走「排版精简模式」：题面内容只读、隐藏新增块/富文本/选项内容编辑，
+// 只留排版调整（行列布局 / 图片宽度对齐 / 文字字号 / 预览 / 保存）。
+// 🔴 判据（D7 作用域）= 题数据自带 import_source === '举一反三'（最可靠，任何入口进来都对，不依赖路由传参）。
+//   route query ?layout=1 / ?from=variant 作为兜底叠加（任一命中即精简），但当前跳转入口（variant 手动排版）
+//   不传参，故主判据是 importSource。母题(原题图)与变式(数值变式)在库里 import_source 同为「举一反三」，皆命中。
+const AI_VARIANT_IMPORT_SOURCE = '举一反三'
+const detailImportSource = ref<string | null>(null)
+const layoutOnlyMode = computed(() => {
+  if (!isEditMode.value) return false // 新建态永远全功能
+  if (detailImportSource.value === AI_VARIANT_IMPORT_SOURCE) return true
+  // 兜底：route query 显式声明（?layout=1 或 ?from=variant），当前入口未用，留作扩展
+  const q = route.query
+  if (q.layout === '1' || q.from === 'variant') return true
+  return false
+})
+
 // ── 题目元信息 ────────────────────────────────────────────────────────────────
 // 题型全集（对齐 QuestionCard/workbench 权威映射，含库里在用的 2 判断 / 3 应用，
 // 否则旧题 type=3 在 el-select 里裸显数字码 "3"）。
@@ -96,6 +113,8 @@ async function loadDetail() {
     const detail: QuestionDetail = await getQuestionDetail(questionId.value)
     // owner 判定（createUser 是创建人雪花 id；公共题多为导入孤儿 id）
     detailOwnerId.value = detail?.createUser != null ? String(detail.createUser) : null
+    // 排版精简模式判据来源（举一反三 AI 题 → 精简编辑）
+    detailImportSource.value = detail?.importSource != null ? String(detail.importSource) : null
     // 元信息回填
     if (detail?.questionType != null) questionType.value = Number(detail.questionType)
     if (detail?.difficult != null) difficult.value = Number(detail.difficult)
@@ -228,6 +247,29 @@ function removeGroupOption(ri: number) {
   if (opts.length <= 1) return // 至少留一个选项
   opts.pop()
   applyGroup(s, e, opts, doc.value.rows[s].cells.length)
+}
+
+// ── 排版精简模式：整块字号（D6 保留「字号」= 排版）────────────────────────────
+// RichTextBlock 的字号是「选区级」（包裹选中文字 ⟦s:px⟧…⟦/s⟧），但精简态没有可编辑 textarea/选区，
+// 故这里改成「整块级」字号 = 把整块 md 外层包一层 ⟦s:px⟧…⟦/s⟧（与渲染端 richtext.ts 同一标记，渲染一致）。
+// 读：剥掉最外层 ⟦s:px⟧…⟦/s⟧ 还原 px（无包裹 = 默认空）；写：先剥旧外层再包新值（同 applyTyped 替换语义）。
+const BLOCK_SIZE_OPTIONS = [
+  { label: '默认', value: 0 },
+  { label: '小', value: 14 },
+  { label: '中', value: 18 },
+  { label: '大', value: 24 },
+]
+// 整块外层字号标记正则：^⟦s:NN⟧ … ⟦/s⟧$（仅当整块被单层 size 包裹时视为块级字号）
+const BLOCK_SIZE_RE = /^⟦s:(\d{1,3})⟧([\s\S]*)⟦\/s⟧$/
+function getBlockSize(block: TextBlock): number {
+  const m = (block.md ?? '').match(BLOCK_SIZE_RE)
+  return m ? Number(m[1]) : 0
+}
+function setBlockSize(block: TextBlock, px: number) {
+  const cur = block.md ?? ''
+  const m = cur.match(BLOCK_SIZE_RE)
+  const inner = m ? m[2] : cur // 已有块级包裹 → 取内层；否则整块为内层
+  block.md = px > 0 ? `⟦s:${px}⟧${inner}⟦/s⟧` : inner
 }
 
 // ── option 块内子内容增删 ─────────────────────────────────────────────────────
@@ -506,6 +548,7 @@ watch(questionId, async (newId) => {
   } else {
     doc.value = emptyDoc()
     detailOwnerId.value = null
+    detailImportSource.value = null
   }
   nextTick(() => initSortable())
 })
@@ -581,8 +624,8 @@ watch(questionId, async (newId) => {
           </div>
         </div>
 
-        <!-- 工具栏 -->
-        <div class="toolbar">
+        <!-- 工具栏（新增块）—— 排版精简模式（举一反三 AI 题）隐藏，只保留排版调整 -->
+        <div v-if="!layoutOnlyMode" class="toolbar">
           <el-button size="small" :icon="Document" @click="addTextBlock">+ 文字块</el-button>
           <el-button size="small" :icon="Picture" @click="addImageBlock">+ 图片块</el-button>
           <span class="toolbar-divider" />
@@ -593,6 +636,14 @@ watch(questionId, async (newId) => {
           </el-select>
           <el-button size="small" :icon="List" @click="addOptionGroup">+ 选项组</el-button>
         </div>
+        <!-- 精简模式提示条：说明此态只调排版、不改内容 -->
+        <el-alert
+          v-else
+          type="info"
+          :closable="false"
+          title="排版精简模式：举一反三 AI 题仅可调整排版（行列布局 / 图片宽度对齐 / 文字字号），题面内容不可编辑"
+          class="layout-only-tip"
+        />
 
         <!-- 块列表（可拖拽换行；行内 cell 可拖拽换列）-->
         <div ref="rowsContainerRef" :key="renderKey" class="rows-container">
@@ -618,17 +669,20 @@ watch(questionId, async (newId) => {
                   <el-radio-button :value="2">2列</el-radio-button>
                   <el-radio-button :value="4">4列</el-radio-button>
                 </el-radio-group>
-                <el-button link size="small" :icon="Plus" @click="addGroupOption(ri)">选项</el-button>
-                <el-button
-                  link
-                  size="small"
-                  type="danger"
-                  :icon="Delete"
-                  :disabled="groupSize(ri) <= 1"
-                  @click="removeGroupOption(ri)"
-                >
-                  选项
-                </el-button>
+                <!-- 增/删选项 = 改内容（新增空选项），精简态隐藏；列数切换（上方 radio）= 排版，保留 -->
+                <template v-if="!layoutOnlyMode">
+                  <el-button link size="small" :icon="Plus" @click="addGroupOption(ri)">选项</el-button>
+                  <el-button
+                    link
+                    size="small"
+                    type="danger"
+                    :icon="Delete"
+                    :disabled="groupSize(ri) <= 1"
+                    @click="removeGroupOption(ri)"
+                  >
+                    选项
+                  </el-button>
+                </template>
               </span>
 
               <el-button
@@ -668,14 +722,39 @@ watch(questionId, async (newId) => {
 
                 <!-- 文字块 -->
                 <template v-if="cell.type === 'text'">
-                  <RichTextBlock
-                    v-model="(cell as TextBlock).md"
-                    :rows="3"
-                    placeholder="支持 Markdown + $...$ 行内公式，例：求 $\sqrt{2}$ 的值"
-                  />
-                  <div class="inline-preview">
-                    <QuestionBlockRender :doc="{ v: 1, rows: [{ cells: [cell] }] }" />
-                  </div>
+                  <!-- 排版精简模式（举一反三 AI 题）：内容只读（渲染展示，不可改）+ 仅保留字号（排版） -->
+                  <template v-if="layoutOnlyMode">
+                    <div class="ro-text-render">
+                      <QuestionBlockRender :doc="{ v: 1, rows: [{ cells: [cell] }] }" />
+                    </div>
+                    <div class="img-ctrl">
+                      <span class="ctrl-label">字号</span>
+                      <el-select
+                        :model-value="getBlockSize(cell as TextBlock)"
+                        size="small"
+                        style="width: 92px"
+                        @change="(v: number) => setBlockSize(cell as TextBlock, Number(v))"
+                      >
+                        <el-option
+                          v-for="s in BLOCK_SIZE_OPTIONS"
+                          :key="s.value"
+                          :label="s.label"
+                          :value="s.value"
+                        />
+                      </el-select>
+                    </div>
+                  </template>
+                  <!-- 全功能模式（手工录入题）：完整富文本编辑 + 行内预览，行为不变 -->
+                  <template v-else>
+                    <RichTextBlock
+                      v-model="(cell as TextBlock).md"
+                      :rows="3"
+                      placeholder="支持 Markdown + $...$ 行内公式，例：求 $\sqrt{2}$ 的值"
+                    />
+                    <div class="inline-preview">
+                      <QuestionBlockRender :doc="{ v: 1, rows: [{ cells: [cell] }] }" />
+                    </div>
+                  </template>
                 </template>
 
                 <!-- 图片块 -->
@@ -715,7 +794,12 @@ watch(questionId, async (newId) => {
 
                 <!-- 选项块 -->
                 <template v-else>
-                  <div class="option-edit">
+                  <!-- 排版精简模式：选项内容只读（标签 + 内文渲染展示，不可改） -->
+                  <div v-if="layoutOnlyMode" class="ro-option-render">
+                    <QuestionBlockRender :doc="{ v: 1, rows: [{ cells: [cell] }] }" />
+                  </div>
+                  <!-- 全功能模式：选项标签 + 内文/图片完整编辑，行为不变 -->
+                  <div v-else class="option-edit">
                     <div class="option-label-row">
                       <span class="opt-label-text">选项</span>
                       <el-input
@@ -1027,6 +1111,24 @@ watch(questionId, async (newId) => {
   border: 1px dashed #d8eded;
   border-radius: 6px;
   min-height: 24px;
+}
+
+/* 排版精简模式：内容只读渲染（文字 / 选项），不显可编辑控件 */
+.ro-text-render,
+.ro-option-render {
+  padding: 6px 8px;
+  background: #fff;
+  border: 1px solid #eef0f3;
+  border-radius: 6px;
+  min-height: 24px;
+}
+.ro-text-render {
+  margin-bottom: 6px;
+}
+
+/* 精简模式提示条 */
+.layout-only-tip {
+  margin-bottom: 12px;
 }
 
 /* 图片块控件 */
