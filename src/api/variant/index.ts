@@ -1851,6 +1851,28 @@ export async function setVariantFigureUrl(
 }
 
 /**
+ * PRD-A-022 批2·D8 — 回写母题「切图」OSS https url 到 toolkit state.mother_figure_url。
+ *
+ * FE 母题切图就绪（cropMotherFigure 拿到 base64）→ uploadMotherImage 上 OSS 拿 https url → 调本端点回写。
+ * 入库时 build_mother_bo 优先据 state.mother_figure_url 落母题图（D8：切图，缺则不带图、不退原图）。
+ * figureUrl 传空/null = 清（撤图）。best-effort 调用方应吞错（失败仅 warn，不阻塞）。
+ */
+export async function setMotherFigureUrl(threadId: string, figureUrl: string | null): Promise<void> {
+  const res = await fetch('/agent/variant/set-mother-figure', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ thread_id: threadId, figure_url: figureUrl }),
+  })
+  if (!res.ok) {
+    const detail = await res
+      .json()
+      .then((d: { detail?: string; error?: string }) => d.detail || d.error)
+      .catch(() => '')
+    throw new Error(detail || `/variant/set-mother-figure ${res.status}`)
+  }
+}
+
+/**
  * PRD-C-100 BC3 — 标/清「老师手动排版过」印记（toolkit state.items[index].manual_block）。
  *
  * 用途：老师对已入库变式点「手动排版」→ FE 跳 A-015 网格编辑器存 blockJson → 回会话调本端点

@@ -17,6 +17,7 @@ import {
   regenVariant,
   reorderVariant,
   reverifyVariantItem,
+  setMotherFigureUrl,
   setVariantFigureUrl,
   streamVariant,
   undoRegenVariant,
@@ -236,6 +237,9 @@ const motherFigurePng = computed<string | null>(() =>
 const motherFigureLoading = ref(false)
 const motherFigureNeeds = ref(false)
 const motherFigureReason = ref<string | null>(null)
+// 🔴 PRD-A-022 批2·D8：母题首张切图上 OSS 后的 https url（入库母题图取它=切图，不取原图 motherImg）。
+//   切图就绪后 flushMotherFigureToOss 上传一次 + 回写 state.mother_figure_url；缺则母题不带图（不退原图）。
+const motherFigureOssUrl = ref<string | null>(null)
 
 // 变式图态：按题 index（1-based）存。{png, loading, needs, reason, ossUrl, commands}
 interface VariantFigureState {
@@ -422,6 +426,25 @@ async function persistFigureBase64(index: number, base64: string): Promise<void>
   }
 }
 
+/**
+ * 🔴 PRD-A-022 批2·D8：母题首张切图就绪后，把 base64 上 OSS（无损 PNG，复用 uploadMotherImage）→
+ *   回写 toolkit state.mother_figure_url。入库时 build_mother_bo 据它落母题图（切图，不退原图）；
+ *   onPersistMother 的 stemImg 也用它。best-effort —— 失败仅 warn，不阻塞切图展示/入库主链。
+ */
+async function flushMotherFigureToOss(): Promise<void> {
+  const png = motherFigurePng.value // 首图 base64（多图取第一张，与 stemImg 单图字段对齐）
+  if (!threadId.value || !png) return
+  try {
+    const blob = await (await fetch(`data:image/png;base64,${png}`)).blob()
+    const file = new File([blob], 'mother_fig.png', { type: 'image/png' }) // PNG 无损（用户铁律）
+    const up = await uploadMotherImage(file)
+    motherFigureOssUrl.value = up.url
+    await setMotherFigureUrl(threadId.value, up.url) // 回写 state.mother_figure_url → assemble/入库取得到切图
+  } catch (e) {
+    console.warn('[variant] 母题切图上 OSS / 回写失败（不影响展示，入库可能无母题图）:', e)
+  }
+}
+
 /** 母题切图（crop_mother）：从母题原图切出图形区。重切=再调一次。 */
 async function onCropMotherFigure() {
   if (motherFigureLoading.value || !motherImg.value) return
@@ -436,6 +459,10 @@ async function onCropMotherFigure() {
     if (res.figures.length) {
       motherFigures.value = res.figures // 多图整组替换（v-for 渲染全部）
       motherFigureNeeds.value = false
+      // 🔴 D8：切图就绪 → 首张上 OSS + 回写 state.mother_figure_url（best-effort，不 await 阻塞 UI）。
+      //   重切会刷新 motherFigurePng → 重传新切图覆盖旧 url（不复用旧 ossUrl，避免新图入库成旧图）。
+      motherFigureOssUrl.value = null
+      void flushMotherFigureToOss()
       // 单元3：成功数 < 检出数（部分降级）→ 灯标 done 但 detail 外显「成功 N/M 张」（reason 已含文案）
       const partial = res.nFigures > res.figures.length
       upsertFigureStage(
@@ -1419,6 +1446,11 @@ async function onPersistMother() {
   }
   motherPersisting.value = true
   try {
+    // 🔴 D8：有切图但 OSS url 尚未就绪（切图上传还在 best-effort 飞行 / 之前失败）→ 此刻补传一次，
+    //   尽力让入库带上切图（仍失败则 motherFigureOssUrl 为空 = 不带图，绝不退原图）。
+    if (motherFigurePng.value && !motherFigureOssUrl.value) {
+      await flushMotherFigureToOss()
+    }
     const dna = mc.dna
     const qcode = qtypeToCode(mc.qtype)
     const bo: CreateQuestionWithDnaBo = {
@@ -1431,7 +1463,9 @@ async function onPersistMother() {
       analyze: mc.analysis || mc.solutionSkeleton || undefined,
       // subjectId 走主考点 id（dim1KpId）优先（题归属知识点叶子），缺则确认章 id
       subjectId: dna.mainKpId || mc.anchorChapterId || undefined,
-      stemImg: motherImg.value || undefined,
+      // 🔴 PRD-A-022 批2·D8：母题图入库取「切图」OSS url（motherFigureOssUrl），**不取原图**(motherImg)。
+      //   切图未就绪/未上 OSS 成功 → 不带图（不退原图兜底）。切图上 OSS 由 flushMotherFigureToOss 在切图就绪时完成。
+      stemImg: motherFigureOssUrl.value || undefined,
       // 5 维打标
       dim1KpId: dna.mainKpId || undefined,
       dim2Qtype: qcode,
@@ -1997,6 +2031,7 @@ function clearCanvas() {
   motherFigureLoading.value = false
   motherFigureNeeds.value = false
   motherFigureReason.value = null
+  motherFigureOssUrl.value = null // 🔴 D8：母题切图 OSS url 随会话重置（新会话切图未就绪=不带图）
   for (const k of Object.keys(variantFigures)) delete variantFigures[Number(k)]
   // 🔴 修1/修2：stem 作废表 + 自动造图集合随会话重置（新会话/切会话从零开始首轮配图全量重出）
   for (const k of Object.keys(figureStemAtIndex)) delete figureStemAtIndex[Number(k)]
