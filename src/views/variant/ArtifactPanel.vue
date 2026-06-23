@@ -529,20 +529,19 @@ function regenAll() {
       </div>
     </header>
 
-    <!-- 卡片列 -->
-    <div ref="listEl" class="canvas-body">
-      <!-- 🔴 PRD-A-023 B5（2026-06-22 二改·方案 A：母题卡悬浮浮层盖在变式之上）：
-           母题卡区 = 独立 position:absolute 浮层（定位上下文 = .canvas-body 设 position:relative），
-           top/left/right:0 + z-index 高于变式卡 → 浮在变式之上盖住顶部变式，立体阴影显「浮起」。
-           变式列在 .canvas-body 内从顶部正常铺、可滚；展开/收起母题卡时变式【不重排不移动】
-           （浮层 opacity/transform 过渡浮出/浮回，绝不挤动变式文档流）。收起即露出被盖的顶部变式。
-           上一轮 position:sticky（在文档流内吸顶）会把变式推上推下=同级——已废弃改为 absolute overlay。
-           布局闸（治「解析超长」）保留：本浮层 max-height 视口比例 + overflow:auto，母题卡再长只在浮层内滚。 -->
+    <!-- 🔴 PRD-A-023 B12（三修）：母题卡悬浮层 = 脱流 overlay，相对【不滚动的】.canvas-scroll-wrap 定位
+         （position:absolute）→ ①不挤变式（脱流，变式从顶铺、被浮层盖住顶部，收起即露出）②滚动不滑走
+         （定位上下文不滚动，变式在内层 .canvas-body 滚、浮层留顶）。sticky 在流内占位会挤变式、旧 absolute
+         相对会滚的 .canvas-body 会滑走——均已废。布局闸保留：浮层 max-height 视口比例 + overflow 内滚。 -->
+    <div class="canvas-scroll-wrap">
       <transition name="mother-float">
         <div v-show="!motherCollapsed" class="mother-slot">
           <slot name="mother-card" :collapsed="motherCollapsed" />
         </div>
       </transition>
+
+      <!-- 卡片列（滚动容器，变式在母题卡浮层之下滚动） -->
+      <div ref="listEl" class="canvas-body">
 
       <template v-if="items.length > 0 || pendingCount > 0">
         <!-- P2b：按 seq 原位 merge，剔除题（_dropped）走 is-dropping 退场过渡后由计时移除 -->
@@ -673,6 +672,7 @@ function regenAll() {
       <div v-else class="variant-await-hint">
         <span class="vah-dot" />
         变式会出现在这里 · 点上方「开始举一反三」生成
+      </div>
       </div>
     </div>
   </section>
@@ -902,18 +902,15 @@ function regenAll() {
    保留限高内滚（治解析超长）：浮层 max-height 视口比例 + overflow:auto，母题卡再长只在浮层内滚、不撑爆。
    🔴 关键：absolute 脱离文档流 → 母题卡展开/收起【不占位、不挤动变式】，变式始终从 .canvas-body 顶部铺。 */
 .mother-slot {
-  /* 🔴 Bug 1（2026-06-23）：原 position:absolute; top:0 相对【会滚动的】.canvas-body 定位 →
-     absolute 子项的 top:0 钉的是滚动容器【内容原点】而非视口顶，内容上滚时浮层随内容滑走（消失）。
-     改 position:sticky; top:0 → 浮层在 .canvas-body 滚动视口内吸顶，变式在其下滚动、母题卡留视口顶。 */
-  position: sticky;
+  /* 🔴 PRD-A-023 B12（三修，2026-06-23）：母题卡浮层定位三版演进——
+     ① 初版 absolute 相对【会滚动的】.canvas-body → 内容上滚时浮层随内容滑走（消失）；
+     ② 二版 sticky 把它放回 flex 流 → 既被 flex 压成 1px、又在流内占位把变式往下挤；
+     ③ 现版 absolute 相对【不滚动的】.canvas-scroll-wrap → 脱流 overlay：不挤变式 + 滚动不滑走。 */
+  position: absolute;
   top: 0;
   left: 0;
   right: 0;
   z-index: 6;
-  /* 🔴 Bug（2026-06-23 二修）：sticky 把母题卡放回 flex 流，它带 overflow:auto + 默认 flex-shrink:1，
-     flex 列里下方变式要空间 → flex 算法把这个可滚动项压缩到 0（overflow≠visible 时 min-height auto 解析为 0）
-     → 母题卡 height=1px 看不见。flex-shrink:0 锁住内容高度（≤max-height），sticky 才有内容可吸顶。 */
-  flex-shrink: 0;
   max-height: 42vh;
   overflow-y: auto;
   /* 浮层底 = 实底白纸（不透视下方变式）+ 双层立体阴影（近实远柔，Linear/Notion 那种精密悬浮） */
@@ -939,14 +936,21 @@ function regenAll() {
   transform: translateY(-10px);
 }
 
+/* 🔴 PRD-A-023 B12（三修）：母题卡浮层的定位上下文 = 本包裹层（不滚动）；内含浮层 overlay + 滚动的 .canvas-body。
+   浮层相对它 absolute 定位 → 不随 .canvas-body 内容滚动而滑走；脱流 overlay → 不挤变式。 */
+.canvas-scroll-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
 .canvas-body {
   flex: 1;
   /* 🔴 BUG-05a：flex 子项默认 min-height:auto（撑到内容高）→ 不会内滚而是把面板撑高、
      把吸顶头顶走。min-height:0 强制 .canvas-body 在剩余空间内滚动，头才冻结。 */
   min-height: 0;
   overflow-y: auto;
-  /* 🔴 PRD-A-023 B5：母题卡浮层（.mother-slot position:absolute）的定位上下文 = 本容器。 */
-  position: relative;
   padding: 16px 32px 24px;
   display: flex;
   flex-direction: column;
