@@ -910,6 +910,10 @@ function regenAll() {
   left: 0;
   right: 0;
   z-index: 6;
+  /* 🔴 Bug（2026-06-23 二修）：sticky 把母题卡放回 flex 流，它带 overflow:auto + 默认 flex-shrink:1，
+     flex 列里下方变式要空间 → flex 算法把这个可滚动项压缩到 0（overflow≠visible 时 min-height auto 解析为 0）
+     → 母题卡 height=1px 看不见。flex-shrink:0 锁住内容高度（≤max-height），sticky 才有内容可吸顶。 */
+  flex-shrink: 0;
   max-height: 42vh;
   overflow-y: auto;
   /* 浮层底 = 实底白纸（不透视下方变式）+ 双层立体阴影（近实远柔，Linear/Notion 那种精密悬浮） */
