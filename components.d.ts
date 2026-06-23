@@ -72,6 +72,7 @@ declare module 'vue' {
     QuestionBasket: typeof import('./src/components/business/QuestionBasket/index.vue')['default']
     QuestionBlockRender: typeof import('./src/components/business/QuestionBlockRender/index.vue')['default']
     QuestionCard: typeof import('./src/components/business/QuestionCard/index.vue')['default']
+    QuestionChoiceRender: typeof import('./src/components/business/QuestionChoiceRender/index.vue')['default']
     QuestionContent: typeof import('./src/components/business/QuestionContent/index.vue')['default']
     RichTextBlock: typeof import('./src/components/business/RichTextBlock/index.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']

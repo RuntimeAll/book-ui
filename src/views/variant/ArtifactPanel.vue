@@ -902,7 +902,10 @@ function regenAll() {
    保留限高内滚（治解析超长）：浮层 max-height 视口比例 + overflow:auto，母题卡再长只在浮层内滚、不撑爆。
    🔴 关键：absolute 脱离文档流 → 母题卡展开/收起【不占位、不挤动变式】，变式始终从 .canvas-body 顶部铺。 */
 .mother-slot {
-  position: absolute;
+  /* 🔴 Bug 1（2026-06-23）：原 position:absolute; top:0 相对【会滚动的】.canvas-body 定位 →
+     absolute 子项的 top:0 钉的是滚动容器【内容原点】而非视口顶，内容上滚时浮层随内容滑走（消失）。
+     改 position:sticky; top:0 → 浮层在 .canvas-body 滚动视口内吸顶，变式在其下滚动、母题卡留视口顶。 */
+  position: sticky;
   top: 0;
   left: 0;
   right: 0;

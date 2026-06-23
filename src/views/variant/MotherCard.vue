@@ -38,6 +38,7 @@ import {
 } from '@/api/variant'
 import MarkdownMath from '@/components/MarkdownMath.vue'
 import InlineMath from '@/components/InlineMath.vue'
+import QuestionChoiceRender from '@/components/business/QuestionChoiceRender/index.vue'
 import KpTreeDialog from './KpTreeDialog.vue'
 
 const props = defineProps<{
@@ -149,6 +150,19 @@ const hasCard = computed(() => !!props.motherCard)
 
 // 🔴 BUG-05b 去原图化：母题题面富文本（已转好的 stem，KaTeX 渲染）。兜底路径无 stem → 空。
 const stemText = computed(() => props.motherCard?.stem || '')
+
+// 🔴 Bug 2/4（2026-06-23）：母题是否选择题（决定题面走 QuestionChoiceRender 还是 MarkdownMath）。
+//   依据 qtype；qtype 缺失时按题面文本兜底判（含 A. / B. 两标记 = 选择题），与 VariantCard.editKind 同口径。
+const isChoiceMother = computed(() => {
+  const qt = props.motherCard?.qtype || ''
+  if (/选择|单选|多选/.test(qt)) return true
+  if (/判断|对错|正误|填空|解答|应用|简答|计算|证明/.test(qt)) return false
+  const stem = stemText.value
+  return (
+    /(^|[\s，。；、\n])A\s*[.．、:：)）]/.test(stem) &&
+    /(^|[\s，。；、\n])B\s*[.．、:：)）]/.test(stem)
+  )
+})
 
 // 🔴 B4-polish + BUG-08：锚定章显示文本。
 //   优先级：① 老师确认面亲手选的章人话名（最可靠）；② 后端 anchor.chapter_name（BUG-08 新增章名）；
@@ -393,7 +407,13 @@ const hasFigureCol = computed(
              🔴 PRD-A-023 B2/B3：母题切图内联进富文本题面区（题面下方），不再单独左列「图形」框。 -->
         <div v-if="stemText || hasFigureCol" class="mc-block mc-stem-block">
           <span v-if="stemText" class="mc-block-k">母题题面</span>
-          <div v-if="stemText" class="mc-stem"><MarkdownMath :content="stemText" /></div>
+          <!-- 🔴 Bug 2/4（2026-06-23）排版统一：母题为选择题（无 blockJson）时，题面「题干+选项」走共享
+               QuestionChoiceRender（= 题库基准，整段富文本流），与题库 / 变式卡一字不差；非选择题维持
+               原 MarkdownMath（题库对填空/解答也是整段富文本，口径一致）。 -->
+          <div v-if="stemText" class="mc-stem">
+            <QuestionChoiceRender v-if="isChoiceMother" :stem="stemText" />
+            <MarkdownMath v-else :content="stemText" />
+          </div>
           <!-- 🔴 PRD-A-023 B2/B3：内联切图——题面富文本下方直接显示母题切图（PNG 无损，竖图限宽不压变形）。
                复用 figureList / figurePng 数据，一就绪即内联（不依赖结构化母题卡其余字段）。 -->
           <div v-if="hasFigureCol" class="mc-fig-inline">

@@ -28,6 +28,7 @@ import {
 import { tagsByKp as fetchTagsByKp } from '@/api/question'
 import MarkdownMath from '@/components/MarkdownMath.vue'
 import InlineMath from '@/components/InlineMath.vue'
+import QuestionChoiceRender from '@/components/business/QuestionChoiceRender/index.vue'
 import KpTreeDialog from './KpTreeDialog.vue'
 import {
   normalizeStem,
@@ -367,27 +368,9 @@ function smartDraftSolution() {
   draft.solution = smartMath(draft.solution)
 }
 
-// ---------------------------------------------------------------------------
-// 展示态选择题：解析 stem → 题干 + 选项，选项按长度自适应（短则 2 列、长则 1 列），
-// 编辑框（一行一项）与展示一致（存储仍一行一项，2×2 仅渲染层）。
-// ---------------------------------------------------------------------------
-const displayChoice = computed(() => {
-  if (editKind.value !== 'choice') return null
-  const parsed = parseChoiceStem(props.item.stem || '')
-  if (!parsed.options.length) return null // 解析不出 → 回退整段 MarkdownMath
-  // A2 SSOT 封顶：选择题展示封顶到 CHOICE_LETTERS（A-D），绝不渲染 label=? 的项
-  // （与 parseChoiceStem 去重/封顶 + BE/入库 一字不差）。
-  const opts = parsed.options.slice(0, CHOICE_LETTERS.length)
-  const maxLen = opts.reduce((m, o) => Math.max(m, o.length), 0)
-  // 任一选项过长（>14 字符，约含分式/长文）→ 单列；否则 2 列（2×2）
-  const twoCol = maxLen <= 14 && opts.length <= 4
-  return {
-    stem: parsed.stem,
-    options: opts.map((o, i) => ({ letter: CHOICE_LETTERS[i], content: o })),
-    twoCol,
-    answer: ((props.item.answer || '').trim().toUpperCase().match(/[A-D]/) || [''])[0],
-  }
-})
+// 🔴 Bug 2/4（2026-06-23）：展示态选择题「题干+选项」已统一走共享 QuestionChoiceRender
+//   （= 题库基准，整段富文本流），原 displayChoice 两列网格 + parseChoiceStem 展示拆分已下线。
+//   parseChoiceStem / assembleChoiceStem 仍保留供【编辑态】拆/拼字段用（startEdit / buildSaveFields）。
 
 const isManual = computed(() => props.item.tier === 'manual')
 
@@ -535,8 +518,17 @@ function classBadge(field: DnaField): { cls: RegenClass; label: string; hint: st
 }
 
 // 🔴 PRD-C-017 B5：「重生这道」始终可点（不再限 dirty）—— 按当前改好的字段重出本题。
+// 🔴 Bug 3（2026-06-23）根因修正：原 guard 用 isBusy（= 宿主全局 busy 并集，含 motherFigureLoading /
+//   兄弟卡 persisting / verifying / 另一题 regenerating 等）。R1 收口（commit 7b37ab1）把单题重生也挂到
+//   全局并集后，只要任一不相关的结构化在途态没归零（如自动首图 motherFigureLoading 残留），isBusy 恒真，
+//   本卡「重生这道」点了被 early-return 静默吞掉。而改一维 DNA 会让 edit-dna 回灌全新 artifact 帧（清掉
+//   残留在途态）→ 之后再点才有反应 → 表现为「只有改了 DNA 才生效」。
+//   修正：单题重生只受【本卡自身 regenerating】+【SSE 生成在跑 sending】两个真冲突态守，不再吃全局 busy
+//   并集（与 index.vue 注释「单题按钮各自带 per-index 锁 + sending 守」的原设计一致；runRegen 内还有
+//   per-thread 串行锁 + regeneratingIndexes 早退兜底，并发安全不依赖这层 UI 守）。
+const regenBlocked = computed(() => props.sending || props.regenerating)
 function onRegen() {
-  if (isBusy.value || props.regenerating) return
+  if (regenBlocked.value) return
   emit('regen', props.item.index)
 }
 function onUndoRegen() {
@@ -1027,23 +1019,13 @@ function saveFieldEdit() {
 
     <!-- ============ 展示态 ============ -->
     <template v-else>
-      <!-- 题干（KaTeX 富文本）：选择题拆题干 + 自适应选项网格（短 2×2 / 长单列），
-           解析不出 → 回退整段 MarkdownMath（与编辑框一致：存储仍一行一项） -->
+      <!-- 题干 + 选项 -->
+      <!-- 🔴 Bug 2/4（2026-06-23）排版统一：以题库为基准。选择题（无 blockJson）的「题干+选项」
+           改用共享 QuestionChoiceRender（= 题库 QuestionContent → renderRichText 同管线，整段富文本流，
+           不再拆 parseChoiceStem 两列网格），与题库列表 / 母题卡长得一字不差。
+           填空/解答等非选择题维持原 MarkdownMath（题库对它们也是整段富文本，口径一致）。 -->
       <div class="card-stem">
-        <template v-if="displayChoice">
-          <MarkdownMath :content="displayChoice.stem" />
-          <ul class="choice-grid" :class="{ 'is-two-col': displayChoice.twoCol }">
-            <li
-              v-for="opt in displayChoice.options"
-              :key="opt.letter"
-              class="choice-item"
-              :class="{ 'is-answer': displayChoice.answer && opt.letter === displayChoice.answer }"
-            >
-              <span class="choice-letter">{{ opt.letter }}</span>
-              <MarkdownMath class="choice-content" :content="opt.content || ' '" />
-            </li>
-          </ul>
-        </template>
+        <QuestionChoiceRender v-if="editKind === 'choice'" :stem="item.stem" />
         <MarkdownMath v-else :content="item.stem" />
       </div>
 
@@ -1461,7 +1443,7 @@ function saveFieldEdit() {
         <button
           type="button"
           class="knob-btn is-regen"
-          :disabled="isBusy || regenerating"
+          :disabled="regenBlocked"
           @click="onRegen"
         >
           {{ regenerating ? '重生中…' : '🔄 重生这道' }}
