@@ -531,14 +531,18 @@ function regenAll() {
 
     <!-- 卡片列 -->
     <div ref="listEl" class="canvas-body">
-      <!-- 🔴 PRD-A-023 B5（2026-06-22 拍板·母题卡悬浮在变式之上）：母题卡区移进 .canvas-body 滚动容器内、
-           作为首个 sticky 子项 → 悬浮吸顶于变式区之上，变式在其下方滚动（不被推走 / 不被遮死，
-           母题卡可折叠）。原作「flex 同级」改「同滚动流内 sticky overlay」。
-           折叠态由合并头 caret 控（作用域插槽暴露 collapsed）；折叠时整槽隐藏只剩吸顶头。
-           布局闸（治「解析超长」）保留：本槽 max-height 视口比例 + overflow:auto，母题卡再长只在本区内滚。 -->
-      <div v-show="!motherCollapsed" class="mother-slot">
-        <slot name="mother-card" :collapsed="motherCollapsed" />
-      </div>
+      <!-- 🔴 PRD-A-023 B5（2026-06-22 二改·方案 A：母题卡悬浮浮层盖在变式之上）：
+           母题卡区 = 独立 position:absolute 浮层（定位上下文 = .canvas-body 设 position:relative），
+           top/left/right:0 + z-index 高于变式卡 → 浮在变式之上盖住顶部变式，立体阴影显「浮起」。
+           变式列在 .canvas-body 内从顶部正常铺、可滚；展开/收起母题卡时变式【不重排不移动】
+           （浮层 opacity/transform 过渡浮出/浮回，绝不挤动变式文档流）。收起即露出被盖的顶部变式。
+           上一轮 position:sticky（在文档流内吸顶）会把变式推上推下=同级——已废弃改为 absolute overlay。
+           布局闸（治「解析超长」）保留：本浮层 max-height 视口比例 + overflow:auto，母题卡再长只在浮层内滚。 -->
+      <transition name="mother-float">
+        <div v-show="!motherCollapsed" class="mother-slot">
+          <slot name="mother-card" :collapsed="motherCollapsed" />
+        </div>
+      </transition>
 
       <template v-if="items.length > 0 || pendingCount > 0">
         <!-- P2b：按 seq 原位 merge，剔除题（_dropped）走 is-dropping 退场过渡后由计时移除 -->
@@ -891,22 +895,41 @@ function regenAll() {
   padding: 2px 10px;
 }
 
-/* 🔴 PRD-A-023 B5：母题卡悬浮在变式之上——母题卡插槽移进 .canvas-body 滚动流内，
-   position:sticky + top:0 → 吸顶悬浮于变式区之上，变式在其下方滚动（不被推走）。
-   z-index 压在变式卡之上 + 自带不透明底（MotherCard 卡身 var(--paper)），变式滚过时不透视。
-   保留限高内滚（治解析超长）：母题卡再长也只在本槽内滚、不撑爆把变式顶出视口。
-   折叠态由父级 v-show 整槽隐藏（吸顶头另在 .canvas-head 常驻）。 */
+/* 🔴 PRD-A-023 B5（二改·方案 A）：母题卡 = 悬浮浮层，盖在变式之上。
+   position:absolute（定位上下文 = .canvas-body 的 position:relative），top/left/right:0 贴住画布顶部，
+   z-index:6 压在变式卡（流内 z-index:auto）之上 → 浮层盖住顶部变式。
+   不透明白底（变式滚过浮层下不透视）+ 立体阴影（精密悬浮感，青紫设计语言：紫向轻投影呼应 AI 区，克制不重）。
+   保留限高内滚（治解析超长）：浮层 max-height 视口比例 + overflow:auto，母题卡再长只在浮层内滚、不撑爆。
+   🔴 关键：absolute 脱离文档流 → 母题卡展开/收起【不占位、不挤动变式】，变式始终从 .canvas-body 顶部铺。 */
 .mother-slot {
-  position: sticky;
+  position: absolute;
   top: 0;
-  z-index: 4;
-  flex-shrink: 0;
-  max-height: 38vh;
+  left: 0;
+  right: 0;
+  z-index: 6;
+  max-height: 42vh;
   overflow-y: auto;
-  /* 悬浮层底色 + 轻投影，与下方滚动的变式拉开层次（青紫设计语言：紫向阴影呼应 AI 区） */
-  background: var(--bg-soft);
-  box-shadow: 0 6px 14px -8px rgba(123, 108, 240, 0.28);
-  margin-bottom: 2px;
+  /* 浮层底 = 实底白纸（不透视下方变式）+ 双层立体阴影（近实远柔，Linear/Notion 那种精密悬浮） */
+  background: var(--paper);
+  border-bottom: 1px solid var(--line);
+  border-radius: 0 0 var(--r) var(--r);
+  box-shadow:
+    0 2px 4px -1px rgba(30, 138, 138, 0.08),
+    0 10px 24px -8px rgba(123, 108, 240, 0.22);
+}
+
+/* 浮层展开/收起过渡（浮出/浮回的「浮动」感，呼应用户「打开收起要有浮动」）。
+   absolute 脱流 → 变式不重排；这里只动浮层自身 opacity + 轻位移。 */
+.mother-float-enter-active,
+.mother-float-leave-active {
+  transition:
+    opacity 0.24s ease,
+    transform 0.24s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.mother-float-enter-from,
+.mother-float-leave-to {
+  opacity: 0;
+  transform: translateY(-10px);
 }
 
 .canvas-body {
@@ -915,6 +938,8 @@ function regenAll() {
      把吸顶头顶走。min-height:0 强制 .canvas-body 在剩余空间内滚动，头才冻结。 */
   min-height: 0;
   overflow-y: auto;
+  /* 🔴 PRD-A-023 B5：母题卡浮层（.mother-slot position:absolute）的定位上下文 = 本容器。 */
+  position: relative;
   padding: 16px 32px 24px;
   display: flex;
   flex-direction: column;
