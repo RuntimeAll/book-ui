@@ -72,6 +72,9 @@ export interface QuestionItem {
    * 单题 select/{id}、批量 list?ids=（卷库预览/PDF）——四端一致结构化渲染。
    */
   blockJson?: string | null
+  // PRD-C-204 统一富文本格式化层：答案/解析 blockJson（详情页有则走 QuestionBlockRender；null 回落富文本）
+  answerBlockJson?: string | null
+  analyzeBlockJson?: string | null
 }
 
 // page 接口响应（PageHelper 结构）

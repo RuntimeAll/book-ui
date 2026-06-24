@@ -63,6 +63,9 @@ const loading = ref(false)
 
 // PRD-A-015 — 题干结构化 block 文档（非法/空返 null → 题干区回落旧富文本/图渲染）
 const parsedBlock = computed(() => parseBlockDoc(question.value?.blockJson))
+// PRD-C-204 — 答案/解析结构化 block 文档（统一富文本格式化层；非空走 QuestionBlockRender，否则回落 QuestionContent）
+const parsedAnswerBlock = computed(() => parseBlockDoc(question.value?.answerBlockJson))
+const parsedAnalyzeBlock = computed(() => parseBlockDoc(question.value?.analyzeBlockJson))
 
 // ── 编辑权限（PRD-A-015）──────────────────────────────────────
 // 本人题（createUser=登录 id）或 superadmin（角色，对齐 BE LoginHelper.isSuperAdmin）才可编辑。
@@ -476,9 +479,13 @@ watch(questionId, async () => {
           </div>
           <div v-if="answerExpanded" class="collapse-body">
             <div class="answer-label">【答案】</div>
-            <!-- 答案（富文本/图片统一走 QuestionContent）
-                 answerTextContent 优先（Markdown+LaTeX 富文本），fallback answer（旧字段） -->
+            <!-- PRD-C-204：答案 blockJson 非空 → 结构化网格渲染（三端一致）；否则回落旧富文本 -->
+            <QuestionBlockRender
+              v-if="parsedAnswerBlock"
+              :doc="parsedAnswerBlock"
+            />
             <QuestionContent
+              v-else
               :text="question.answerTextContent || question.answer"
               :img-url="question.answerImg"
               alt="答案"
@@ -493,9 +500,13 @@ watch(questionId, async () => {
             <span class="collapse-arrow" :class="{ 'expanded': explainExpanded }">▼</span>
           </div>
           <div v-if="explainExpanded" class="collapse-body">
-            <!-- 解析（富文本/图片统一走 QuestionContent）
-                 analyzeTextContent 优先（Markdown+LaTeX 富文本），fallback explain（旧字段） -->
+            <!-- PRD-C-204：解析 blockJson 非空 → 结构化网格渲染（选项分析/小问/步骤各自成块）；否则回落旧富文本 -->
+            <QuestionBlockRender
+              v-if="parsedAnalyzeBlock"
+              :doc="parsedAnalyzeBlock"
+            />
             <QuestionContent
+              v-else
               :text="question.analyzeTextContent || question.explain"
               :img-url="question.explainImg"
               alt="解析"
