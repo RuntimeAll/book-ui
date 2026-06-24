@@ -78,8 +78,12 @@ let ro: ResizeObserver | null = null
 function checkClamp() {
   const el = stemRef.value
   if (!el) return
-  // scrollHeight 比 clientHeight 大 1px 以上即视为溢出（避免亚像素误判）
-  stemClamped.value = el.scrollHeight - el.clientHeight > 1
+  // 🔴 PRD-C-204 修：仅当内容**真超过 max-height(320)**才算溢出→挂底部遮罩。
+  // 原用 scrollHeight-clientHeight>1 会被 1~3px 行高/descender 亚像素差误触发，
+  // 导致短选择题(内容仅~100px)也挂白遮罩、盖住下排 C/D 选项(用户报"白色浮层")。
+  // 改为对比 max-height：内容没顶到 320 就没有被裁的内容，不挂遮罩。
+  const maxH = parseFloat(getComputedStyle(el).maxHeight)
+  stemClamped.value = Number.isFinite(maxH) && el.scrollHeight > maxH + 2
 }
 
 onMounted(async () => {
