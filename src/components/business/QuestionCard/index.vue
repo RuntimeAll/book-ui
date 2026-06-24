@@ -13,7 +13,7 @@
  *   - 题干图沿用题库原行为：原图 + referrerpolicy="no-referrer" + onerror 隐藏，
  *     永远 PNG 无损不压缩（记忆铁则）。
  */
-import { computed } from 'vue'
+import { computed, ref, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { Edit, EditPen, Star, ShoppingCart, Key } from '@element-plus/icons-vue'
 import Icon from '@/components/Icon/index.vue'
 import FreeTagList from '@/components/business/FreeTagList/index.vue'
@@ -68,6 +68,36 @@ const showFavorite = computed(() => props.actions.includes('favorite'))
 const showBasket = computed(() => props.actions.includes('basket'))
 const showDetail = computed(() => props.actions.includes('detail'))
 const showEdit = computed(() => props.actions.includes('edit'))
+
+// 🔴 PRD-C-204 列表卡高度受控：仅当题干内容真正溢出 max-height 时才显示底部 fade 遮罩，
+// 短题不挂遮罩（否则会盖在正常内容尾部，显脏）。ResizeObserver 兼顾图片异步加载导致的高度变化。
+const stemRef = ref<HTMLElement | null>(null)
+const stemClamped = ref(false)
+let ro: ResizeObserver | null = null
+
+function checkClamp() {
+  const el = stemRef.value
+  if (!el) return
+  // scrollHeight 比 clientHeight 大 1px 以上即视为溢出（避免亚像素误判）
+  stemClamped.value = el.scrollHeight - el.clientHeight > 1
+}
+
+onMounted(async () => {
+  await nextTick()
+  checkClamp()
+  if (stemRef.value && typeof ResizeObserver !== 'undefined') {
+    ro = new ResizeObserver(() => checkClamp())
+    ro.observe(stemRef.value)
+  }
+})
+
+onBeforeUnmount(() => {
+  ro?.disconnect()
+  ro = null
+})
+
+// 题目切换（虚拟滚动/分页复用同一组件实例）时重测
+watch(() => props.question.id, () => nextTick().then(checkClamp))
 
 function getQuestionTypeLabel(type: number): string {
   const map: Record<number, string> = { 1: '选择题', 2: '判断题', 3: '应用题', 4: '填空题', 5: '简答题' }
@@ -150,7 +180,7 @@ function getQuestionTypeTag(type: number): 'success' | 'warning' | 'info' | 'pri
     </div>
 
     <!-- 题干内容：结构化题(blockJson)走 QuestionBlockRender 网格；老题回落 QuestionContent 扁平 -->
-    <div class="card-stem">
+    <div ref="stemRef" class="card-stem" :class="{ 'stem-clamped': stemClamped }">
       <QuestionBlockRender
         v-if="parsedBlock"
         :doc="parsedBlock"
@@ -305,9 +335,33 @@ function getQuestionTypeTag(type: number): 'success' | 'warning' | 'info' | 'pri
   color: #c9cdd4;
 }
 
+/* 🔴 PRD-C-204 列表卡高度受控：max-height + overflow:hidden 让每张卡高度整齐，
+   长题/大图不再撑爆；底部 fade 渐隐遮罩提示"还有更多，点详情看全"。
+   仅列表卡(QuestionCard)限制，详情页(views/question/detail.vue)直接用
+   QuestionBlockRender 不经此组件，不受波及、仍显示完整内容。 */
 .card-stem {
+  position: relative;
   margin-bottom: 8px;
   min-height: 40px;
+  max-height: 320px;
+  overflow: hidden;
+}
+
+/* 底部渐隐遮罩：仅内容真正溢出(stem-clamped)时柔和淡出，提示可点详情看全 */
+.card-stem.stem-clamped::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 40px;
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0), #ffffff 92%);
+  pointer-events: none;
+}
+
+/* 在试题栏的卡背景是 #f8fffe，遮罩同步成该底色避免白边突兀 */
+.question-card.in-basket .card-stem.stem-clamped::after {
+  background: linear-gradient(to bottom, rgba(248, 255, 254, 0), #f8fffe 92%);
 }
 
 /* .stem-img / .stem-text / .stem-placeholder 已迁入 QuestionContent 组件内部，此处删除 */
