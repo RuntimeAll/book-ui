@@ -19,6 +19,7 @@ import {
   getQuestionDetail,
   updateQuestionAttrs,
   type QuestionDetail,
+  type QuestionDna,
   type UpdateAttrsPayload,
 } from '@/api/question/index'
 import ChapterPicker from '@/components/business/ChapterPicker/index.vue'
@@ -68,6 +69,43 @@ const ANNOTATE_STATUS_OPTIONS = [
   { label: '已标全', value: 1 },
   { label: '部分', value: 2 },
 ]
+// PRD-C-204：考察类型闭集 10（与 22-题目维度 SSOT / EXAM_TYPES 一致）
+const ASSESSMENT_TYPE_OPTIONS = [
+  '概念辨析', '直接计算', '公式套用', '性质判定', '证明推理',
+  '应用建模', '作图', '探究归纳', '阅读理解迁移', '纠错',
+]
+
+// ── PRD-C-204 — JSON 串字段 try-parse（红线：解析失败原样字符串显示，绝不崩） ─────────────
+/** 把 JSON 数组串解析成 string[]；解析失败 / 非数组 → 原串包成单元素数组（友好显示，不崩） */
+function parseJsonArr(raw: unknown): string[] {
+  if (raw == null || raw === '') return []
+  if (Array.isArray(raw)) return raw.map((x) => String(x)).filter((s) => s.trim())
+  if (typeof raw !== 'string') return [String(raw)]
+  try {
+    const v = JSON.parse(raw)
+    if (Array.isArray(v)) return v.map((x) => String(x)).filter((s) => s.trim() !== '')
+    if (v == null) return []
+    return [typeof v === 'object' ? JSON.stringify(v) : String(v)]
+  } catch {
+    // 解析失败：原样字符串显示（红线）
+    return [raw]
+  }
+}
+/** 把 JSON 对象/数组串解析成「友好可读」文本；解析失败原样返回原串（不崩） */
+function parseJsonPretty(raw: unknown): string {
+  if (raw == null || raw === '') return ''
+  if (typeof raw !== 'string') {
+    try { return JSON.stringify(raw, null, 2) } catch { return String(raw) }
+  }
+  try {
+    const v = JSON.parse(raw)
+    if (v == null) return ''
+    if (typeof v === 'object') return JSON.stringify(v, null, 2)
+    return String(v)
+  } catch {
+    return raw
+  }
+}
 
 // ── 可编辑表单（高级字段全集）────────────────────────────────────────────────
 // 🔴 C-100 B-converge 方案B：dim3Skill / auxTags 随 BE V905 DROP 列剥除（属性编辑页 C 线预期降级）。
@@ -83,6 +121,17 @@ interface AdvForm {
   variantRelation: string
   motherQuestionId: string
   annotateStatus: number | null
+  // ── PRD-C-204 高级属性新增可写：来源三要素补 examYear / examPaperName ──
+  examYear: string
+  examPaperName: string
+  // ── PRD-C-204 AI 打标维度可编辑：solutionSkeleton / scenario / assessmentType / hardPoints / tags ──
+  solutionSkeleton: string
+  scenario: string
+  assessmentType: string
+  /** 难点（数组，按行编辑，UI 用多行文本） */
+  hardPoints: string[]
+  /** 标签（数组，按行编辑） */
+  tags: string[]
 }
 function blankForm(): AdvForm {
   return {
@@ -90,6 +139,9 @@ function blankForm(): AdvForm {
     dim5Structure: '', labelStatus: null,
     baseScore: null, sourceType: null, regionCode: '',
     variantRelation: '', motherQuestionId: '', annotateStatus: null,
+    examYear: '', examPaperName: '',
+    solutionSkeleton: '', scenario: '', assessmentType: '',
+    hardPoints: [], tags: [],
   }
 }
 const form = ref<AdvForm>(blankForm())
@@ -101,6 +153,70 @@ function display(v: unknown): string {
   if (v === null || v === undefined || v === '') return DASH
   return String(v)
 }
+// ── PRD-C-204 — DNA 可编辑表单初值/基线生成（load + 保存后刷新共用） ──────────────
+function formFromDetail(res: QuestionDetail): AdvForm {
+  const dna = res.dna ?? null
+  return {
+    dim1KpId: res.dim1KpId != null ? String(res.dim1KpId) : '',
+    dim2Qtype: res.dim2Qtype ?? null,
+    dim4Difficulty: res.dim4Difficulty ?? null,
+    dim5Structure: res.dim5Structure != null ? String(res.dim5Structure) : '',
+    labelStatus: res.labelStatus ?? null,
+    baseScore: res.baseScore ?? null,
+    sourceType: res.sourceType ?? null,
+    regionCode: res.regionCode != null ? String(res.regionCode) : '',
+    variantRelation: res.variantRelation != null ? String(res.variantRelation) : '',
+    motherQuestionId: res.motherQuestionId != null ? String(res.motherQuestionId) : '',
+    annotateStatus: res.annotateStatus ?? null,
+    examYear: res.examYear != null ? String(res.examYear) : '',
+    examPaperName: res.examPaperName != null ? String(res.examPaperName) : '',
+    // AI 打标可编辑维（dna 为 null 时全空）
+    solutionSkeleton: dna?.solutionSkeleton != null ? String(dna.solutionSkeleton) : '',
+    scenario: dna?.scenario != null ? String(dna.scenario) : '',
+    assessmentType: dna?.assessmentType != null ? String(dna.assessmentType) : '',
+    hardPoints: parseJsonArr(dna?.hardPoints),
+    tags: parseJsonArr(dna?.tags),
+  }
+}
+
+// ── PRD-C-204 — DNA 只读维（JSON 串 try-parse 后友好显示）────────────────────────
+const dnaObj = computed<QuestionDna | null>(() => detail.value?.dna ?? null)
+const hasDna = computed(() => !!dnaObj.value)
+const dnaReadonly = computed(() => {
+  const d = dnaObj.value
+  return {
+    breakthroughPoints: parseJsonArr(d?.breakthroughPoints),
+    mathThoughts: parseJsonArr(d?.mathThoughts),
+    dnaType: d?.dnaType ?? '',
+    verifyKind: d?.verifyKind ?? '',
+    parametricSlots: parseJsonPretty(d?.parametricSlots),
+    modelingFrame: parseJsonPretty(d?.modelingFrame),
+    conditions: parseJsonPretty(d?.conditions),
+    variationProfile: parseJsonPretty(d?.variationProfile),
+  }
+})
+// AI 解析块（reasoning + confidence + needAnchorReview，只读）
+const aiAnalysis = computed(() => {
+  const d = dnaObj.value
+  return {
+    reasoning: d?.reasoning ?? '',
+    confidence: d?.confidence ?? null,
+    needAnchorReview: d?.needAnchorReview === true,
+  }
+})
+
+// ── PRD-C-204 — 数组维（难点/标签）按行编辑：computed 字符串代理（一行一条，读写互转） ──
+function arrayLineProxy(key: 'hardPoints' | 'tags') {
+  return computed<string>({
+    get: () => form.value[key].join('\n'),
+    set: (v: string) => {
+      form.value[key] = v.split('\n').map((s) => s.trim()).filter(Boolean)
+    },
+  })
+}
+const hardPointsText = arrayLineProxy('hardPoints')
+const tagsText = arrayLineProxy('tags')
+
 const labeledAtText = computed<string>(() => {
   const v = detail.value?.labeledAt
   if (v === null || v === undefined || v === '') return DASH
@@ -118,19 +234,7 @@ async function loadDetail() {
     const res = await getQuestionDetail(questionId.value)
     detail.value = res ?? null
     if (res) {
-      const f: AdvForm = {
-        dim1KpId: res.dim1KpId != null ? String(res.dim1KpId) : '',
-        dim2Qtype: res.dim2Qtype ?? null,
-        dim4Difficulty: res.dim4Difficulty ?? null,
-        dim5Structure: res.dim5Structure != null ? String(res.dim5Structure) : '',
-        labelStatus: res.labelStatus ?? null,
-        baseScore: res.baseScore ?? null,
-        sourceType: res.sourceType ?? null,
-        regionCode: res.regionCode != null ? String(res.regionCode) : '',
-        variantRelation: res.variantRelation != null ? String(res.variantRelation) : '',
-        motherQuestionId: res.motherQuestionId != null ? String(res.motherQuestionId) : '',
-        annotateStatus: res.annotateStatus ?? null,
-      }
+      const f = formFromDetail(res)
       form.value = f
       original.value = JSON.parse(JSON.stringify(f))
     }
@@ -174,6 +278,21 @@ async function handleSave() {
   setIf('variantRelation', f.variantRelation, o.variantRelation)
   setIf('motherQuestionId', f.motherQuestionId, o.motherQuestionId)
   setIf('annotateStatus', f.annotateStatus, o.annotateStatus)
+  // ── PRD-C-204 新增可写标量 ──
+  setIf('examYear', f.examYear, o.examYear)
+  setIf('examPaperName', f.examPaperName, o.examPaperName)
+  setIf('solutionSkeleton', f.solutionSkeleton, o.solutionSkeleton)
+  setIf('scenario', f.scenario, o.scenario)
+  setIf('assessmentType', f.assessmentType, o.assessmentType)
+  // ── PRD-C-204 数组维（hardPoints / tags）：按值比对（JSON.stringify 差量），变了整数组回写 ──
+  const setArrIf = (key: string, cur: string[], old: string[]) => {
+    if (JSON.stringify(cur) !== JSON.stringify(old)) {
+      p[key] = cur
+      changed = true
+    }
+  }
+  setArrIf('hardPoints', f.hardPoints, o.hardPoints)
+  setArrIf('tags', f.tags, o.tags)
 
   // 🔴 C-100 B-converge 方案B：dim3Skill / auxTags 随 BE V905 DROP 列剥除（属性编辑页 C 线预期降级）。
 
@@ -189,19 +308,7 @@ async function handleSave() {
     if (res) {
       detail.value = res
       // 用返回值刷新表单基线
-      const nf: AdvForm = {
-        dim1KpId: res.dim1KpId != null ? String(res.dim1KpId) : '',
-        dim2Qtype: res.dim2Qtype ?? null,
-        dim4Difficulty: res.dim4Difficulty ?? null,
-        dim5Structure: res.dim5Structure != null ? String(res.dim5Structure) : '',
-        labelStatus: res.labelStatus ?? null,
-        baseScore: res.baseScore ?? null,
-        sourceType: res.sourceType ?? null,
-        regionCode: res.regionCode != null ? String(res.regionCode) : '',
-        variantRelation: res.variantRelation != null ? String(res.variantRelation) : '',
-        motherQuestionId: res.motherQuestionId != null ? String(res.motherQuestionId) : '',
-        annotateStatus: res.annotateStatus ?? null,
-      }
+      const nf = formFromDetail(res)
       form.value = nf
       original.value = JSON.parse(JSON.stringify(nf))
     }
@@ -270,14 +377,15 @@ watch(questionId, async () => {
     />
 
     <div v-loading="loading" class="attr-body">
-      <!-- ══ AI 打标维度（可编辑）══ -->
+      <!-- ══ 基础打标维度（dim1~5 + 标注状态，可编辑）══ -->
       <el-card class="attr-card" shadow="never">
         <template #header>
-          <span class="card-title">AI 打标维度</span>
+          <span class="card-title">基础打标维度</span>
         </template>
         <div class="field-list">
           <div class="field-row">
-            <span class="field-label">知识点 (dim1)</span>
+            <!-- PRD-C-204 命名对齐：题库这里的「知识点」= 母题卡的「主考点」 -->
+            <span class="field-label">知识点 (dim1)<span class="field-note">(主考点)</span></span>
             <div class="field-control">
               <ChapterPicker v-if="canEdit" v-model="form.dim1KpId" />
               <span v-else class="field-value">{{ display(form.dim1KpId) }}</span>
@@ -295,7 +403,8 @@ watch(questionId, async () => {
           </div>
           <!-- 🔴 C-100 B-converge 方案B：思维方法 (dim3) 随 BE V905 DROP 列剥除（属性编辑页 C 线预期降级） -->
           <div class="field-row">
-            <span class="field-label">难度 (dim4)</span>
+            <!-- PRD-C-204 难度档文案与母题卡对齐：1=送分 / 2=常规 / 3=多步综合 / 4=压轴 -->
+            <span class="field-label">难度 (dim4)<span class="field-note">(1送分/2常规/3多步综合/4压轴)</span></span>
             <el-input-number
               v-model="form.dim4Difficulty"
               :disabled="!canEdit"
@@ -326,6 +435,167 @@ watch(questionId, async () => {
             >
               <el-option v-for="s in LABEL_STATUS_OPTIONS" :key="s.value" :label="s.label" :value="s.value" />
             </el-select>
+          </div>
+        </div>
+      </el-card>
+
+      <!-- ══ AI 打标维度（全 DNA 维；部分可编辑，其余只读）══ -->
+      <el-card class="attr-card" shadow="never">
+        <template #header>
+          <span class="card-title">AI 打标维度</span>
+          <span class="card-hint">真实打标 DNA · 全维展示</span>
+        </template>
+
+        <!-- dna=null → 无打标数据提示 -->
+        <div v-if="!hasDna" class="dna-empty">该题暂无 AI 打标数据</div>
+
+        <div v-else class="field-list">
+          <!-- ── 可编辑维 ── -->
+          <div class="field-row">
+            <span class="field-label">考察类型</span>
+            <el-select
+              v-model="form.assessmentType"
+              :disabled="!canEdit"
+              clearable
+              filterable
+              allow-create
+              placeholder="考察类型"
+              style="width: 220px"
+            >
+              <el-option v-for="t in ASSESSMENT_TYPE_OPTIONS" :key="t" :label="t" :value="t" />
+            </el-select>
+          </div>
+          <div class="field-row">
+            <span class="field-label">场景</span>
+            <el-input
+              v-model="form.scenario"
+              :disabled="!canEdit"
+              placeholder="场景（如「纯代数」或一句话场景）"
+              style="width: 100%; max-width: 420px"
+            />
+          </div>
+          <div class="field-row field-row-top">
+            <span class="field-label">解法骨架</span>
+            <el-input
+              v-model="form.solutionSkeleton"
+              :disabled="!canEdit"
+              type="textarea"
+              :autosize="{ minRows: 2, maxRows: 8 }"
+              resize="none"
+              placeholder="解法骨架（【】标最难步）"
+              style="width: 100%; max-width: 520px"
+            />
+          </div>
+          <div class="field-row field-row-top">
+            <span class="field-label">难点<span class="field-note">(一行一条)</span></span>
+            <div class="field-control">
+              <el-input
+                v-if="canEdit"
+                v-model="hardPointsText"
+                type="textarea"
+                :autosize="{ minRows: 2, maxRows: 6 }"
+                resize="none"
+                placeholder="一行一条难点（基础题可留空，宁空不凑）"
+                style="width: 100%; max-width: 520px"
+              />
+              <template v-else>
+                <template v-if="form.hardPoints.length">
+                  <el-tag v-for="(hp, i) in form.hardPoints" :key="i" type="warning" size="small" class="dna-chip">{{ hp }}</el-tag>
+                </template>
+                <span v-else class="field-value dna-muted">未标</span>
+              </template>
+            </div>
+          </div>
+          <div class="field-row field-row-top">
+            <span class="field-label">标签<span class="field-note">(一行一个)</span></span>
+            <div class="field-control">
+              <el-input
+                v-if="canEdit"
+                v-model="tagsText"
+                type="textarea"
+                :autosize="{ minRows: 2, maxRows: 6 }"
+                resize="none"
+                placeholder="一行一个标签"
+                style="width: 100%; max-width: 520px"
+              />
+              <template v-else>
+                <template v-if="form.tags.length">
+                  <el-tag v-for="(t, i) in form.tags" :key="i" size="small" class="dna-chip">{{ t }}</el-tag>
+                </template>
+                <span v-else class="field-value dna-muted">未标</span>
+              </template>
+            </div>
+          </div>
+
+          <!-- ── 只读维（BE 暂只读；JSON 串 try-parse 后友好显示）── -->
+          <div class="dna-readonly-head">以下维度暂为只读</div>
+          <div class="field-row field-row-top">
+            <span class="field-label">突破点</span>
+            <div class="field-control">
+              <template v-if="dnaReadonly.breakthroughPoints.length">
+                <el-tag v-for="(bp, i) in dnaReadonly.breakthroughPoints" :key="i" type="success" size="small" class="dna-chip">{{ bp }}</el-tag>
+              </template>
+              <span v-else class="field-value dna-muted">未标</span>
+            </div>
+          </div>
+          <div class="field-row field-row-top">
+            <span class="field-label">数学思想</span>
+            <div class="field-control">
+              <template v-if="dnaReadonly.mathThoughts.length">
+                <el-tag v-for="(mt, i) in dnaReadonly.mathThoughts" :key="i" type="info" size="small" class="dna-chip">{{ mt }}</el-tag>
+              </template>
+              <span v-else class="field-value dna-muted">未标</span>
+            </div>
+          </div>
+          <div class="field-row">
+            <span class="field-label">DNA 类型</span>
+            <span class="field-value">{{ display(dnaReadonly.dnaType) }}</span>
+          </div>
+          <div class="field-row">
+            <span class="field-label">验证种类</span>
+            <span class="field-value">{{ display(dnaReadonly.verifyKind) }}</span>
+          </div>
+          <div v-if="dnaReadonly.parametricSlots" class="field-row field-row-top">
+            <span class="field-label">参数槽</span>
+            <pre class="dna-json">{{ dnaReadonly.parametricSlots }}</pre>
+          </div>
+          <div v-if="dnaReadonly.modelingFrame" class="field-row field-row-top">
+            <span class="field-label">建模框架</span>
+            <pre class="dna-json">{{ dnaReadonly.modelingFrame }}</pre>
+          </div>
+          <div v-if="dnaReadonly.conditions" class="field-row field-row-top">
+            <span class="field-label">条件</span>
+            <pre class="dna-json">{{ dnaReadonly.conditions }}</pre>
+          </div>
+          <div v-if="dnaReadonly.variationProfile" class="field-row field-row-top">
+            <span class="field-label">变式画像</span>
+            <pre class="dna-json">{{ dnaReadonly.variationProfile }}</pre>
+          </div>
+        </div>
+      </el-card>
+
+      <!-- ══ AI 解析（reasoning / confidence / needAnchorReview，只读）══ -->
+      <el-card v-if="hasDna" class="attr-card" shadow="never">
+        <template #header>
+          <span class="card-title">AI 解析</span>
+          <span class="card-hint">AI 产出 · 只读</span>
+        </template>
+        <div class="field-list">
+          <div class="field-row">
+            <span class="field-label">置信度</span>
+            <span class="field-value">{{ aiAnalysis.confidence != null ? aiAnalysis.confidence : '—' }}</span>
+          </div>
+          <div class="field-row">
+            <span class="field-label">锚定待人审</span>
+            <el-tag v-if="aiAnalysis.needAnchorReview" type="warning" size="small">待人审</el-tag>
+            <span v-else class="field-value">否</span>
+          </div>
+          <div class="field-row field-row-top">
+            <span class="field-label">打标依据</span>
+            <div class="field-control">
+              <span v-if="aiAnalysis.reasoning" class="dna-reasoning">{{ aiAnalysis.reasoning }}</span>
+              <span v-else class="field-value dna-muted">未提供</span>
+            </div>
           </div>
         </div>
       </el-card>
@@ -393,6 +663,25 @@ watch(questionId, async () => {
               :disabled="!canEdit"
               placeholder="地域编码，如 330100"
               style="width: 200px"
+            />
+          </div>
+          <!-- PRD-C-204：来源三要素补 真题年份 + 来源卷名（与 来源类型/地域 凑齐） -->
+          <div class="field-row">
+            <span class="field-label">真题年份</span>
+            <el-input
+              v-model="form.examYear"
+              :disabled="!canEdit"
+              placeholder="如 2024"
+              style="width: 200px"
+            />
+          </div>
+          <div class="field-row">
+            <span class="field-label">来源卷名</span>
+            <el-input
+              v-model="form.examPaperName"
+              :disabled="!canEdit"
+              placeholder="如 2024 杭州中考数学"
+              style="width: 100%; max-width: 420px"
             />
           </div>
           <div class="field-row">
@@ -554,5 +843,55 @@ watch(questionId, async () => {
   font-size: 13px;
   color: #1d2129;
   word-break: break-all;
+}
+
+/* ── PRD-C-204 DNA 全维展示样式 ── */
+.field-note {
+  margin-left: 4px;
+  font-size: 11px;
+  font-weight: 400;
+  color: #a8acb3;
+}
+.dna-empty {
+  font-size: 13px;
+  color: #c9cdd4;
+  padding: 8px 0;
+}
+.dna-muted {
+  color: #c9cdd4;
+}
+.dna-chip {
+  margin: 0 4px 4px 0;
+}
+.dna-readonly-head {
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px dashed #e5e6eb;
+  font-size: 12px;
+  color: #86909c;
+  font-weight: 600;
+}
+.dna-json {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 8px 10px;
+  background: #f7f8fa;
+  border: 1px solid #f0f1f3;
+  border-radius: 6px;
+  font-size: 12px;
+  font-family: var(--mono, ui-monospace, Menlo, Consolas, monospace);
+  color: #4e5969;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-width: 520px;
+}
+.dna-reasoning {
+  font-size: 13px;
+  color: #4e5969;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 </style>
