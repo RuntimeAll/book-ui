@@ -18,6 +18,7 @@ import {
   saveQuestionNote,
   getQuestionSources,
   getSimilarQuestions,
+  getQuestionLineage,
   addFavorite,
   removeFavorite,
   type QuestionItem,
@@ -25,6 +26,8 @@ import {
   type QuestionNote,
   type QuestionSource,
   type SimilarQuestion,
+  type QuestionLineage,
+  type LineageNode,
 } from '@/api/question/index'
 import FreeTagList from '@/components/business/FreeTagList/index.vue'
 import SketchPad from '@/components/business/SketchPad/index.vue'
@@ -251,6 +254,49 @@ async function loadSimilar() {
   }
 }
 
+// ── PRD-C-204 血缘母子链 ─────────────────────────────────────
+const lineage = ref<QuestionLineage | null>(null)
+const lineageLoading = ref(false)
+
+async function loadLineage() {
+  lineageLoading.value = true
+  try {
+    const res = await getQuestionLineage(questionId.value)
+    // 宽松兜底：role 不合法时按 none 处理，绝不崩
+    if (res && (res.role === 'mother' || res.role === 'variant' || res.role === 'none')) {
+      lineage.value = {
+        role: res.role,
+        mother: res.mother ?? null,
+        variants: Array.isArray(res.variants) ? res.variants : [],
+      }
+    } else {
+      lineage.value = { role: 'none', mother: null, variants: [] }
+    }
+  } catch (e) {
+    console.warn('[detail] lineage GET failed', e)
+    lineage.value = null
+  } finally {
+    lineageLoading.value = false
+  }
+}
+
+// 题型文案（血缘条目用）
+function lineageTypeLabel(type: number | null): string {
+  const map: Record<number, string> = { 1: '选择', 4: '填空', 5: '解答' }
+  return type != null && map[type] ? map[type] : '—'
+}
+// 难度档文案（与母题卡对齐：1送分/2常规/3多步综合/4压轴）
+const DIFFICULTY_LABELS = ['', '送分', '常规', '多步综合', '压轴']
+function lineageDifficultyLabel(d: number | null): string {
+  return d != null && d >= 1 && d <= 4 ? `${DIFFICULTY_LABELS[d]}（${d}）` : '—'
+}
+// 跳到血缘条目对应题详情（id 全程 String，防精度）
+function goToLineageNode(node: LineageNode) {
+  const id = String(node.id)
+  if (!id || id === String(questionId.value)) return
+  router.push(`/question/detail/${id}`)
+}
+
 // ── 工具 ─────────────────────────────────────────────────────
 function getDifficultyStars(difficult: number | null) {
   const val = difficult ?? 0
@@ -303,8 +349,8 @@ onMounted(async () => {
     }
   }
   await loadQuestion()
-  // 并行加载侧边栏数据
-  Promise.allSettled([loadNotes(), loadSources()])
+  // 并行加载侧边栏数据 + 血缘母子链（PRD-C-204）
+  Promise.allSettled([loadNotes(), loadSources(), loadLineage()])
 })
 
 // SPA 内 route.params.id 变化（如点「相似题推荐」跳另一题）时重载——
@@ -316,8 +362,9 @@ watch(questionId, async () => {
   similarExpanded.value = false
   similarQuestions.value = []
   noteInput.value = ''
+  lineage.value = null
   await loadQuestion()
-  Promise.allSettled([loadNotes(), loadSources()])
+  Promise.allSettled([loadNotes(), loadSources(), loadLineage()])
 })
 </script>
 
@@ -543,6 +590,81 @@ watch(questionId, async () => {
               />
             </div>
           </div>
+        </div>
+
+        <!-- ══ PRD-C-204 血缘关系（母子链）══ -->
+        <div class="lineage-card">
+          <div class="lineage-head">
+            <span class="lineage-title">血缘关系</span>
+            <el-tag
+              v-if="lineage && lineage.role !== 'none'"
+              :type="lineage.role === 'mother' ? 'warning' : 'primary'"
+              size="small"
+            >
+              {{ lineage.role === 'mother' ? '母题' : '变式题' }}
+            </el-tag>
+          </div>
+
+          <div v-if="lineageLoading" class="lineage-loading">
+            <el-skeleton :rows="2" animated />
+          </div>
+
+          <template v-else-if="lineage">
+            <!-- role=mother：本题为母题，下列为其变式 -->
+            <template v-if="lineage.role === 'mother'">
+              <p class="lineage-desc">本题为母题，下列为其变式：</p>
+              <div v-if="lineage.variants.length" class="lineage-list">
+                <div
+                  v-for="v in lineage.variants"
+                  :key="v.id"
+                  class="lineage-item"
+                  @click="goToLineageNode(v)"
+                >
+                  <span class="lineage-item-brief">{{ v.stemBrief || '（无摘要）' }}</span>
+                  <span class="lineage-item-meta">
+                    {{ lineageTypeLabel(v.questionType) }} · {{ lineageDifficultyLabel(v.difficult) }}
+                    <span v-if="v.variantRelation" class="lineage-rel">· {{ v.variantRelation }}</span>
+                  </span>
+                </div>
+              </div>
+              <p v-else class="lineage-empty">暂无变式</p>
+            </template>
+
+            <!-- role=variant：本题为变式，显示母题 + 同门变式 -->
+            <template v-else-if="lineage.role === 'variant'">
+              <div v-if="lineage.mother" class="lineage-sub">
+                <span class="lineage-sub-label">母题：</span>
+                <div class="lineage-item lineage-item--mother" @click="goToLineageNode(lineage.mother)">
+                  <span class="lineage-item-brief">{{ lineage.mother.stemBrief || '（无摘要）' }}</span>
+                  <span class="lineage-item-meta">
+                    {{ lineageTypeLabel(lineage.mother.questionType) }} · {{ lineageDifficultyLabel(lineage.mother.difficult) }}
+                  </span>
+                </div>
+              </div>
+              <div v-if="lineage.variants.length" class="lineage-sub">
+                <span class="lineage-sub-label">同门变式：</span>
+                <div class="lineage-list">
+                  <div
+                    v-for="v in lineage.variants"
+                    :key="v.id"
+                    class="lineage-item"
+                    @click="goToLineageNode(v)"
+                  >
+                    <span class="lineage-item-brief">{{ v.stemBrief || '（无摘要）' }}</span>
+                    <span class="lineage-item-meta">
+                      {{ lineageTypeLabel(v.questionType) }} · {{ lineageDifficultyLabel(v.difficult) }}
+                      <span v-if="v.variantRelation" class="lineage-rel">· {{ v.variantRelation }}</span>
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </template>
+
+            <!-- role=none -->
+            <p v-else class="lineage-empty">无血缘关系</p>
+          </template>
+
+          <p v-else class="lineage-empty">血缘信息加载失败</p>
         </div>
       </div>
 
@@ -847,6 +969,110 @@ watch(questionId, async () => {
 /* 相似题文本也走统一字号变量（与主题面一致缩放） */
 .similar-text {
   color: #4e5969;
+}
+
+/* ── PRD-C-204 血缘关系卡 ── */
+.lineage-card {
+  background: #fff;
+  border-radius: 10px;
+  border: 1px solid #f2f3f5;
+  padding: 14px 16px;
+}
+
+.lineage-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.lineage-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1d2129;
+}
+
+.lineage-loading {
+  padding: 4px 0;
+}
+
+.lineage-desc {
+  font-size: 13px;
+  color: #4e5969;
+  margin: 0 0 8px;
+}
+
+.lineage-sub {
+  margin-bottom: 10px;
+}
+
+.lineage-sub:last-child {
+  margin-bottom: 0;
+}
+
+.lineage-sub-label {
+  display: block;
+  font-size: 12px;
+  color: #86909c;
+  font-weight: 500;
+  margin-bottom: 6px;
+}
+
+.lineage-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.lineage-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid #f0f1f3;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.lineage-item:hover {
+  border-color: #1e8a8a;
+  background: #f6fbfb;
+}
+
+.lineage-item--mother {
+  border-color: #fadcaa;
+  background: #fffbf3;
+}
+
+.lineage-item--mother:hover {
+  border-color: #f7ba1e;
+}
+
+.lineage-item-brief {
+  font-size: 13px;
+  color: #1d2129;
+  line-height: 1.5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.lineage-item-meta {
+  font-size: 12px;
+  color: #86909c;
+}
+
+.lineage-rel {
+  color: #1e8a8a;
+}
+
+.lineage-empty {
+  font-size: 13px;
+  color: #c9cdd4;
+  margin: 0;
 }
 
 /* ── 右侧 sidebar 样式（.detail-sidebar / .sidebar-card* / .note-* / 收录卡 /
