@@ -71,6 +71,14 @@ function blockDocOf(q: QuestionDetail): QuestionBlockDoc | null {
   return parseBlockDoc(q.blockJson)
 }
 
+// PRD-C-204：答案/解析结构化块文档（统一富文本格式化层）。非空 → QuestionBlockRender；否则回落旧答案/解析图。
+function answerDocOf(q: QuestionDetail): QuestionBlockDoc | null {
+  return parseBlockDoc(q.answerBlockJson)
+}
+function analyzeDocOf(q: QuestionDetail): QuestionBlockDoc | null {
+  return parseBlockDoc(q.analyzeBlockJson)
+}
+
 /** 手机号脱敏 138****1234 */
 function maskPhone(phone?: string): string {
   if (!phone || phone.length < 7) return phone ?? ''
@@ -493,11 +501,16 @@ async function handleAsyncExport() {
                 <span v-else class="pp-q-missing">该题缺题干图（请联系管理员补图）</span>
               </div>
 
-              <!-- 答案图 — checkbox 控显隐 -->
+              <!-- 答案 — checkbox 控显隐。PRD-C-204：结构化 answerBlockJson 优先,否则回落答案图 -->
               <div v-show="showAnswer" class="pp-q-answer">
                 <span class="label">【答案】</span>
+                <QuestionBlockRender
+                  v-if="answerDocOf(q)"
+                  :doc="answerDocOf(q)!"
+                  :proxy="true"
+                />
                 <img
-                  v-if="q.answerImg"
+                  v-else-if="q.answerImg"
                   :src="proxyImage(q.answerImg)"
                   alt="答案图"
                   class="ans-img"
@@ -505,11 +518,16 @@ async function handleAsyncExport() {
                 <span v-else class="placeholder">（无答案图）</span>
               </div>
 
-              <!-- 解析图 — checkbox 控显隐 -->
+              <!-- 解析 — checkbox 控显隐。PRD-C-204：结构化 analyzeBlockJson 优先(选项分析/小问/步骤拆块),否则回落解析图 -->
               <div v-show="showExplain" class="pp-q-explain">
                 <span class="label">【解析】</span>
+                <QuestionBlockRender
+                  v-if="analyzeDocOf(q)"
+                  :doc="analyzeDocOf(q)!"
+                  :proxy="true"
+                />
                 <img
-                  v-if="q.explainImg"
+                  v-else-if="q.explainImg"
                   :src="proxyImage(q.explainImg)"
                   alt="解析图"
                   class="exp-img"
