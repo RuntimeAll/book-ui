@@ -4,6 +4,7 @@
 // （老师自己的题跨多章节，默认选首节点会几乎空 → 改为先全量展示自己的题，点树仍可过滤）。
 // 血缘展示（母题关系等）暂不做（QuestionCard 列表本就不展示血缘，无需额外隐藏）。
 import { ref, reactive, onMounted, computed, watch, nextTick } from 'vue'
+import { useDictStore, DICT_QUESTION_TYPE } from '@/store/dict'
 import { ElMessage } from 'element-plus'
 import { Search, Document } from '@element-plus/icons-vue'
 import {
@@ -83,12 +84,13 @@ function handleNodeClick(data: SubjectNode) {
 }
 
 // ── 筛选条 ──────────────────────────────────────────────────
-const QUESTION_TYPES = [
-  { label: '全部题型', value: '' },
-  { label: '选择题', value: 1 },
-  { label: '填空题', value: 4 },
-  { label: '简答题', value: 5 },
-]
+// PRD-C-204：题型读字典 SSOT（biz_question_type），不再硬编码
+const dict = useDictStore()
+dict.load(DICT_QUESTION_TYPE)
+const QUESTION_TYPES = computed(() => [
+  { label: '全部题型', value: '' as number | '' },
+  ...dict.list(DICT_QUESTION_TYPE).map((d) => ({ label: d.dictLabel, value: Number(d.dictValue) })),
+])
 
 const DIFFICULTY_OPTIONS = [
   { label: '全部难度', value: '' },

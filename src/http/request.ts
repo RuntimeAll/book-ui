@@ -91,8 +91,9 @@ instance.interceptors.response.use(
   (response) => {
     const url = response.config.url ?? ''
 
-    // 分支 1：RuoYi 原 envelope（/auth/* 直出，未经 MisiktEnvelopeAdvice）
-    if (url.startsWith('/auth/')) {
+    // 分支 1：RuoYi 原 envelope（/auth/* 与 /system/*：未经 MisiktEnvelopeAdvice，code===200）
+    // PRD-C-204：/system/dict/** 走字典(题型/难度/来源 SSOT)，是 RuoYi 原生 envelope，并入本分支。
+    if (url.startsWith('/auth/') || url.startsWith('/system/')) {
       const data = response.data as RuoYiEnvelope
       if (data.code === 200) {
         // PRD-A-013 T3 — 拦截器自身没泛型上下文（axios v1 fulfill 类型签名要求返

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, computed, watch, nextTick } from 'vue'
+import { useDictStore, DICT_QUESTION_TYPE, DICT_QUESTION_DIFFICULTY } from '@/store/dict'
 import { ElMessage } from 'element-plus'
 import { Search, Document } from '@element-plus/icons-vue'
 import {
@@ -87,20 +88,19 @@ function handleNodeClick(data: SubjectNode) {
 }
 
 // ── 筛选条 ──────────────────────────────────────────────────
-const QUESTION_TYPES = [
-  { label: '全部题型', value: '' },
-  { label: '选择题', value: 1 },
-  { label: '填空题', value: 4 },
-  { label: '简答题', value: 5 },
-]
+// PRD-C-204：题型/难度读字典 SSOT（biz_question_type / biz_question_difficulty），超管可维护，不再硬编码
+const dict = useDictStore()
+dict.load(DICT_QUESTION_TYPE)
+dict.load(DICT_QUESTION_DIFFICULTY)
+const QUESTION_TYPES = computed(() => [
+  { label: '全部题型', value: '' as number | '' },
+  ...dict.list(DICT_QUESTION_TYPE).map((d) => ({ label: d.dictLabel, value: Number(d.dictValue) })),
+])
 
-const DIFFICULTY_OPTIONS = [
-  { label: '全部难度', value: '' },
-  { label: '1星', value: 1 },
-  { label: '2星', value: 2 },
-  { label: '3星', value: 3 },
-  { label: '4星', value: 4 },
-]
+const DIFFICULTY_OPTIONS = computed(() => [
+  { label: '全部难度', value: '' as number | '' },
+  ...dict.list(DICT_QUESTION_DIFFICULTY).map((d) => ({ label: d.dictLabel, value: Number(d.dictValue) })),
+])
 
 const LABEL_STATUS_OPTIONS = [
   { label: '全部', value: '' },

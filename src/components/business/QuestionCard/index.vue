@@ -20,6 +20,7 @@ import FreeTagList from '@/components/business/FreeTagList/index.vue'
 import QuestionContent from '@/components/business/QuestionContent/index.vue'
 import QuestionBlockRender from '@/components/business/QuestionBlockRender/index.vue'
 import { parseBlockDoc } from '@/utils/blockSchema'
+import { useDictStore, DICT_QUESTION_TYPE } from '@/store/dict'
 import type { QuestionItem } from '@/api/question/index'
 
 // PRD-A-015 — 'edit' 为可选 action（opt-in，默认 actions 不含），仅「我的题库」等本人题场景启用。
@@ -103,13 +104,15 @@ onBeforeUnmount(() => {
 // 题目切换（虚拟滚动/分页复用同一组件实例）时重测
 watch(() => props.question.id, () => nextTick().then(checkClamp))
 
+// PRD-C-204：题型标签读字典 SSOT（biz_question_type，超管可维护），不再硬编码
+const dict = useDictStore()
+dict.load(DICT_QUESTION_TYPE)
 function getQuestionTypeLabel(type: number): string {
-  const map: Record<number, string> = { 1: '选择题', 2: '判断题', 3: '应用题', 4: '填空题', 5: '简答题' }
-  return map[type] ?? `题型${type}`
+  return dict.label(DICT_QUESTION_TYPE, type) || `题型${type}`
 }
 
 function getQuestionTypeTag(type: number): 'success' | 'warning' | 'info' | 'primary' {
-  const map: Record<number, 'primary' | 'success' | 'warning'> = { 1: 'primary', 4: 'success', 5: 'warning' }
+  const map: Record<number, 'primary' | 'success' | 'warning'> = { 1: 'primary', 4: 'success', 5: 'warning', 7: 'warning' }
   return map[type] ?? 'info'
 }
 </script>

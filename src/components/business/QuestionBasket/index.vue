@@ -14,6 +14,7 @@ import Sortable from 'sortablejs'
 import { ShoppingCart, Delete, DocumentAdd, Close, ZoomIn, Rank } from '@element-plus/icons-vue'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
 import { getQuestionDetail, type QuestionItem } from '@/api/question/index'
+import { useDictStore, DICT_QUESTION_TYPE } from '@/store/dict'
 // 放大预览复用题库/组卷工作台共享题卡组件（actions=[] 关掉操作按钮，纯展示题干大图 + meta），不另造预览渲染。
 import QuestionCard from '@/components/business/QuestionCard/index.vue'
 import QuestionContent from '@/components/business/QuestionContent/index.vue'
@@ -94,9 +95,11 @@ onBeforeUnmount(() => {
   sortable = null
 })
 
+// PRD-C-204：题型标签读字典 SSOT
+const dict = useDictStore()
+dict.load(DICT_QUESTION_TYPE)
 function getQuestionTypeLabel(type: number): string {
-  const map: Record<number, string> = { 1: '选择题', 4: '填空题', 5: '简答题' }
-  return map[type] ?? `题型${type}`
+  return dict.label(DICT_QUESTION_TYPE, type) || `题型${type}`
 }
 
 function getQuestionTypeTag(type: number): 'success' | 'warning' | 'info' | 'primary' | 'danger' {
