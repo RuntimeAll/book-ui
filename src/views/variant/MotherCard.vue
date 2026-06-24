@@ -148,6 +148,14 @@ const detailExpanded = ref(false)
 const dna = computed(() => props.motherCard?.dna ?? null)
 const hasCard = computed(() => !!props.motherCard)
 
+// 🔴 PRD-C-204 补维：血缘文案。VariantMotherCard 仅含 motherQuestionId（雪花 string）——
+//   有值 → 本卡所示题本身是变式，显「变式题 · 母题 {id}」；无值 → 是母题，模板显「母题」。
+//   不展示来源/标准分值（VariantMotherCard 结构里没有这些字段，禁硬塞占位）。
+const lineageText = computed(() => {
+  const mid = props.motherCard?.motherQuestionId
+  return mid ? `变式题 · 母题 ${String(mid)}` : ''
+})
+
 // 🔴 BUG-05b 去原图化：母题题面富文本（已转好的 stem，KaTeX 渲染）。兜底路径无 stem → 空。
 const stemText = computed(() => props.motherCard?.stem || '')
 
@@ -613,6 +621,14 @@ const hasFigureCol = computed(
           <span class="mc-k">锚定章</span>
           <span class="mc-v">
             <span class="mc-anchor-id">{{ anchorChapterText }}</span>
+          </span>
+
+          <!-- 🔴 PRD-C-204 补维：血缘（仅 VariantMotherCard 真有的字段 motherQuestionId；
+               有值 = 本身是变式题，显示其母题 id；无值 = 母题，显「母题」。不造假其余来源/分值字段。 -->
+          <span class="mc-k">血缘</span>
+          <span class="mc-v">
+            <span v-if="lineageText" class="mc-lineage">{{ lineageText }}</span>
+            <span v-else class="mc-pill">母题</span>
           </span>
         </div>
 
@@ -1085,6 +1101,15 @@ const hasFigureCol = computed(
   font-size: 11px;
   color: var(--faint);
   font-family: var(--mono);
+}
+/* 🔴 PRD-C-204 血缘文案（变式题 · 母题 id） */
+.mc-lineage {
+  font-size: 11.5px;
+  color: var(--violet-700);
+  background: var(--violet-50);
+  border: 1px solid var(--violet-line);
+  border-radius: var(--r-xs);
+  padding: 1px 8px;
 }
 
 /* 🔴 B3.6 内联编辑控件（复用 MotherBar 守恒维编辑视觉） */
