@@ -183,9 +183,19 @@ function imageStyle(b: Extract<Block, { type: 'image' }>) {
 }
 
 .qbr-img {
+  /* 🔴 PRD-C-204 渲染修复：max-height + object-fit:contain 让图按比例缩放、不溢出不变形。
+     原仅 max-width:100%+height:auto，高瘦图(几何图常见)按 width% 渲染时高度被无限拉伸 → 撑爆卡片。
+     对四端(列表/详情/卷库/PDF)均安全：contain 只缩不裁，仅高图不再无限拉伸。 */
   max-width: 100%;
+  max-height: 240px;
   height: auto;
+  object-fit: contain;
   border-radius: 6px;
+}
+
+/* 选项内的图通常更小，max-height 更紧凑，避免选项行被大图撑高、破坏 A/B/C/D 整齐 */
+.qbr-option .qbr-img {
+  max-height: 120px;
 }
 
 .qbr-option {
