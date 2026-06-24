@@ -106,8 +106,56 @@ export interface QuestionPageParams {
   labelStatus?: number
 }
 
+// ── PRD-C-204 题库核实增维 — AI 打标 DNA 嵌套对象 ────────────────────────────
+// 后端 QuestionDetail 新增 dna 子对象（来自 biz_question_ai）。ai 无数据时 dna=null。
+// 🔴 JSON 串字段（hardPoints/breakthroughPoints/tags/mathThoughts/parametricSlots/
+//    modelingFrame/conditions/variationProfile）后端给的是 JSON 序列化串，FE 自己 try-parse；
+//    解析失败原样字符串展示，绝不让页面崩。
+export interface QuestionDna {
+  /** 解法骨架（【】标最难步）—— 纯文本/富文本 */
+  solutionSkeleton?: string | null
+  /** 场景（"纯代数" 或一句话场景） */
+  scenario?: string | null
+  /** 考察类型（闭集 10） */
+  assessmentType?: string | null
+  /** 难点列表 JSON 数组串（try-parse → string[]） */
+  hardPoints?: string | null
+  /** 突破点 JSON 串（try-parse） */
+  breakthroughPoints?: string | null
+  /** 标签 JSON 数组串（try-parse → string[]） */
+  tags?: string | null
+  /** 数学思想 JSON 数组串（try-parse → string[]） */
+  mathThoughts?: string | null
+  /** DNA 类型 */
+  dnaType?: string | null
+  /** 验证种类 */
+  verifyKind?: string | null
+  /** 参数槽 JSON 串（try-parse） */
+  parametricSlots?: string | null
+  /** 建模框架 JSON 串（try-parse） */
+  modelingFrame?: string | null
+  /** 条件 JSON 串（try-parse） */
+  conditions?: string | null
+  /** 变式画像 JSON 串（try-parse） */
+  variationProfile?: string | null
+  /** 锚定 subject 节点 id（雪花 string） */
+  anchorId?: string | null
+  /** 打标依据（AI 解析） */
+  reasoning?: string | null
+  /** 锚定待人审标记 */
+  needAnchorReview?: boolean | null
+  /** 置信度 0~1 */
+  confidence?: number | null
+  /** DNA 层打标状态 */
+  labelStatus?: number | null
+}
+
 // 题目详情（GET /teacher/question/{id} 返）
 export interface QuestionDetail extends QuestionItem {
+  // ── PRD-C-204 — AI 打标 DNA 嵌套对象（biz_question_ai），ai 无数据时为 null ──
+  dna?: QuestionDna | null
+  // ── PRD-C-204 — 主表补来源三要素 + 打标状态（examYear / examPaperName 已在 QuestionItem 基类） ──
+  // examYear / examPaperName 继承自 QuestionItem（已声明）；labelStatus 也已在基类。此处仅注记。
   // ── Q' 卡 段③ 扩展 — BE QuestionDetailVo 详情字段（list / select 端点返回） ──
   answer?: string | null              // 答案文本（旧字段，兼容保留）
   explain?: string | null             // 解析文本（旧字段，兼容保留）
@@ -534,6 +582,21 @@ export interface UpdateAttrsPayload {
   variantRelation?: string
   motherQuestionId?: string
   annotateStatus?: number
+  // ── PRD-C-204 题库核实增维 — 新增可写字段（BE update-attrs 已支持回写） ──
+  /** 解法骨架（biz_question_ai.solution_skeleton） */
+  solutionSkeleton?: string
+  /** 场景（biz_question_ai.scenario） */
+  scenario?: string
+  /** 考察类型（biz_question_ai.assessment_type，闭集 10） */
+  assessmentType?: string
+  /** 难点列表（数组；BE 收数组，序列化进 biz_question_ai.hard_points） */
+  hardPoints?: string[]
+  /** 标签列表（数组；BE 收数组） */
+  tags?: string[]
+  /** 真题年份（biz_question.exam_year） */
+  examYear?: string
+  /** 来源卷名（biz_question.exam_paper_name） */
+  examPaperName?: string
 }
 
 /**
@@ -543,6 +606,45 @@ export interface UpdateAttrsPayload {
  */
 export const updateQuestionAttrs = (payload: UpdateAttrsPayload) =>
   request.post<QuestionDetail, QuestionDetail>('/teacher/question/update-attrs', payload)
+
+
+// ── PRD-C-204 题库核实增维 — 血缘母子链 ────────────────────────────────────
+// GET /teacher/question/{id}/lineage（走 /api → :8090 misikt envelope，code===1 判成功，拦截器已解包）。
+// role 三态：mother（本题为母题，下挂 variants）/ variant（本题为变式，有 mother + 同门 variants）/
+//   none（无血缘）。所有 id 雪花 string（防精度），跳转/对比一律 String。
+
+/** 血缘链单条（母题或变式的简要信息） */
+export interface LineageNode {
+  /** 题 id（雪花 string） */
+  id: string
+  /** 题干摘要（BE 截断后的纯文本） */
+  stemBrief: string
+  /** 题型 1=选择 / 4=填空 / 5=解答 */
+  questionType: number | null
+  /** 难度 1-4 星 */
+  difficult: number | null
+  /** 变式关系描述（如「数值替换」「条件增减」） */
+  variantRelation?: string | null
+}
+
+/** 血缘链响应（GET /teacher/question/{id}/lineage） */
+export interface QuestionLineage {
+  /** 本题角色：mother=母题 / variant=变式 / none=无血缘 */
+  role: 'mother' | 'variant' | 'none'
+  /** 本题为变式时，其母题（role=mother / none 时为 null） */
+  mother: LineageNode | null
+  /** 变式列表（role=mother→本题的变式；role=variant→同门变式；none→空数组） */
+  variants: LineageNode[]
+}
+
+/**
+ * 获取血缘母子链（PRD-C-204）。
+ * GET /teacher/question/{id}/lineage —— misikt envelope 由拦截器解包，拿到的是 response 内层。
+ * 失败 reject（toast 由拦截器已弹），调用方兜底显「无血缘关系」。
+ * PRD-A-013 T2 — id 雪花 string。
+ */
+export const getQuestionLineage = (id: string) =>
+  request.get<QuestionLineage, QuestionLineage>(`/teacher/question/${id}/lineage`)
 
 
 // Q' 卡 段① BE 新端点 — 按 ids 批查完整字段（含 answer / explain / freeTags / questionStdKnowledges）。
