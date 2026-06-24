@@ -23,7 +23,8 @@ export const useDictStore = defineStore('dict', () => {
 
   async function load(dictType: string): Promise<DictItem[]> {
     if (cache.value[dictType]) return cache.value[dictType]
-    if (loading.value[dictType]) return loading.value[dictType]
+    const pending = loading.value[dictType]
+    if (pending) return pending
     const p = request
       .get<DictItem[], DictItem[]>(`/system/dict/data/type/${dictType}`)
       .then((list) => {
