@@ -6,7 +6,7 @@
 import { ref, reactive, onMounted, computed, watch, nextTick } from 'vue'
 import { useDictStore, DICT_QUESTION_TYPE } from '@/store/dict'
 import { ElMessage } from 'element-plus'
-import { Search, Document, Plus } from '@element-plus/icons-vue'
+import { Search, Document, Plus, ArrowDown, Crop, Upload } from '@element-plus/icons-vue'
 import {
   lazyTree,
   questionPage,
@@ -24,6 +24,7 @@ import ContentWrap from '@/components/ContentWrap/index.vue'
 import SearchWrap from '@/components/SearchWrap/index.vue'
 import QuestionCard from '@/components/business/QuestionCard/index.vue'
 import SketchPad from '@/components/business/SketchPad/index.vue'
+import BatchUploadDialog from '@/views/ingest/components/BatchUploadDialog.vue'
 import { useFontScale } from '@/composables/useFontScale'
 
 // ── 路由 ────────────────────────────────────────────────────
@@ -83,9 +84,21 @@ function handleNodeClick(data: SubjectNode) {
   fetchQuestions()
 }
 
-// PRD-A-002 — 进入框选录题全屏页
+// PRD-A-002 — 进入框选录题全屏页（路A）
 function goIngestFrame() {
   router.push('/ingest/frame')
+}
+
+// PRD-A-002 路B — 批量上传弹层
+const batchUploadVisible = ref(false)
+
+// 录题下拉：framedraw=框选录题(路A) / batch=批量上传(路B)
+function handleIngestCommand(command: string) {
+  if (command === 'frame') {
+    goIngestFrame()
+  } else if (command === 'batch') {
+    batchUploadVisible.value = true
+  }
 }
 
 // ── 筛选条 ──────────────────────────────────────────────────
@@ -386,7 +399,25 @@ onMounted(async () => {
             </el-tag>
           </div>
           <div class="list-header-right">
-            <el-button type="primary" :icon="Plus" @click="goIngestFrame">录题</el-button>
+            <el-dropdown trigger="click" @command="handleIngestCommand">
+              <el-button type="primary">
+                <el-icon style="margin-right: 4px;"><Plus /></el-icon>
+                录题
+                <el-icon style="margin-left: 4px;"><ArrowDown /></el-icon>
+              </el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="frame">
+                    <el-icon style="margin-right: 6px;"><Crop /></el-icon>
+                    框选录题
+                  </el-dropdown-item>
+                  <el-dropdown-item command="batch">
+                    <el-icon style="margin-right: 6px;"><Upload /></el-icon>
+                    批量上传
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </div>
         </div>
 
@@ -438,6 +469,9 @@ onMounted(async () => {
     />
 
     <SketchPad v-model:visible="sketchVisible" />
+
+    <!-- PRD-A-002 路B — 批量上传录题弹层 -->
+    <BatchUploadDialog v-model:visible="batchUploadVisible" />
   </div>
 </template>
 

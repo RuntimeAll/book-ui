@@ -4,6 +4,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import QuestionBasket from '@/components/business/QuestionBasket/index.vue'
 import PaperBasketFab from '@/components/business/PaperBasketFab/index.vue'
+import IngestFab from '@/components/business/IngestFab/index.vue'
 import { useUserStore } from '@/store/user'
 
 const router = useRouter()
@@ -118,6 +119,17 @@ const showPaperBasketFab = computed(() => {
     || route.path === '/workspace'
 })
 
+// PRD-A-002 路B — 批量拆题进度球 FAB 显示白名单：题库 / 卷库 / 工作台 / 我的题库
+//   （批量上传入口在 /my-question，提交后用户在这些页都能看进度球）。审核页本身
+//   已是作业上下文，且 FAB bottom:264 会压审核操作 → 排除 /ingest/*。
+const showIngestFab = computed(() => {
+  if (route.path.startsWith('/ingest/')) return false
+  return route.path.startsWith('/question/')
+    || route.path.startsWith('/papers/')
+    || route.path === '/workspace'
+    || route.path === '/my-question'
+})
+
 function handleUpgrade() {
   ElMessage.info('升级会员功能开发中')
 }
@@ -201,6 +213,9 @@ function handleUpgrade() {
 
     <!-- 全局试卷篮入口 FAB（PRD-001 回归补丁 — 绿色，点击跳 /papers/basket 三栏工作台） -->
     <PaperBasketFab v-if="showPaperBasketFab" />
+
+    <!-- 全局批量拆题进度球 FAB（PRD-A-002 路B — 紫色，点击开作业列表抽屉，自轮询进度） -->
+    <IngestFab v-if="showIngestFab" />
   </el-container>
 </template>
 

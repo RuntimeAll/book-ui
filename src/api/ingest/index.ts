@@ -202,3 +202,142 @@ export function mapDifficultyToCode(difficulty: number | null | undefined): numb
   if (difficulty === 2) return 2
   return 3
 }
+
+// ===========================================================================
+// PRD-A-002 路B「批量上传录题」接口封装（全经 request /api，misikt 已解包返 response）。
+//
+//   作业（job）= 一次「上传一张试卷图 → 后端拆题流水线」的批处理实例。
+//   流程：① createIngestJob 提交文件 → 拿 jobId（拆题异步）
+//         ② listIngestJobs / getIngestJob 轮询状态 + 拉拆出的题项
+//         ③ commitIngestJob 勾选入库 / dropIngestJobItem 软弃题
+//
+//   🔴 雪花 id 在 http 层 jsonBigParser 已转 string，但 BE 也可能返 number →
+//      interface 统一 string | number 兼容，渲染前不强转。
+//   🔴 optionsJson / dnaJson 是 JSON 字符串，渲染前 JSON.parse（容错见 review.vue）。
+// ===========================================================================
+
+/** 答案解析模式：原卷自带 / AI 解题 / 只录题 */
+export type IngestAnswerMode = 'from_source' | 'ai_solve' | 'stem_only'
+
+/** 入库方式：审核后入库 / 直接入库 */
+export type IngestCommitMode = 'review' | 'direct'
+
+/** 作业状态机 */
+export type IngestJobStatus =
+  | 'PENDING'
+  | 'EXTRACT_ING'
+  | 'SPLIT_ING'
+  | 'DONE'
+  | 'FAILED'
+  | string
+
+/** 作业列表行（GET /teacher/ingest/jobs?mine=1 单项） */
+export interface IngestJobRow {
+  id: string | number
+  status: IngestJobStatus
+  questionCount: number
+  committedCount: number
+  sourceFileName: string | null
+  errorMsg: string | null
+  createTime: string | null
+}
+
+/** 作业详情头（GET /teacher/ingest/job/{jobId} 的 job 字段） */
+export interface IngestJobDetail {
+  id: string | number
+  teacherId: string | number | null
+  subjectId: string | number | null
+  sourceFileName: string | null
+  sourceOssUrl: string | null
+  sourceType: string | null
+  status: IngestJobStatus
+  errorMsg: string | null
+  questionCount: number
+  committedCount: number
+  createTime?: string | null
+  [k: string]: unknown
+}
+
+/** 题项当前状态 */
+export type IngestItemStatus = 'pending' | 'committed' | 'dropped' | string
+
+/** 作业拆出的题项（GET /teacher/ingest/job/{jobId} 的 items 单项）。
+ *  🔴 optionsJson / dnaJson 是 JSON 字符串，调用方 JSON.parse（容错）。 */
+export interface IngestJobItem {
+  id: string | number
+  seq: number
+  stemText: string | null
+  /** 题型：1 选择 / 2 填空 / 5 解答 */
+  questionType: number
+  /** 选项 JSON 字符串，需 JSON.parse */
+  optionsJson: string | null
+  answerText: string | null
+  analyzeText: string | null
+  /** 0/1 是否含图 */
+  hasFigure: number
+  difficulty: number | null
+  /** DNA JSON 字符串，需 JSON.parse */
+  dnaJson: string | null
+  verifyVerdict: string | null
+  /** 0/1 是否需人工审核 */
+  needReview: number
+  itemStatus: IngestItemStatus
+  committedQuestionId: string | number | null
+}
+
+/**
+ * ① 创建作业（multipart 上传试卷图 → 启动拆题流水线）。超时 60s。
+ * @param form FormData：file, subjectId, answerMode, commitMode, gradeHint?
+ */
+export function createIngestJob(form: FormData): Promise<{ jobId: string }> {
+  return request.post<{ jobId: string }, { jobId: string }>(
+    '/teacher/ingest/job',
+    form,
+    {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 60_000,
+    },
+  )
+}
+
+/** ② 我的作业列表（时间倒序）。 */
+export function listIngestJobs(): Promise<IngestJobRow[]> {
+  return request.get<IngestJobRow[], IngestJobRow[]>(
+    '/teacher/ingest/jobs',
+    { params: { mine: 1 } },
+  )
+}
+
+/** ③ 作业详情（含拆出的题项列表）。 */
+export function getIngestJob(
+  jobId: string | number,
+): Promise<{ job: IngestJobDetail; items: IngestJobItem[] }> {
+  return request.get<
+    { job: IngestJobDetail; items: IngestJobItem[] },
+    { job: IngestJobDetail; items: IngestJobItem[] }
+  >(`/teacher/ingest/job/${jobId}`)
+}
+
+/**
+ * ④ 勾选入库（itemIds 空数组 / 不传 = 全部 pending）。
+ * @returns { committed: 实际入库题数 }
+ */
+export function commitIngestJob(
+  jobId: string | number,
+  itemIds: (string | number)[],
+): Promise<{ committed: number }> {
+  return request.post<{ committed: number }, { committed: number }>(
+    `/teacher/ingest/job/${jobId}/commit`,
+    { itemIds },
+  )
+}
+
+/** ⑤ 软弃题（itemStatus → dropped）。 */
+export function dropIngestJobItem(
+  jobId: string | number,
+  itemId: string | number,
+): Promise<{ dropped: boolean }> {
+  return request.delete<{ dropped: boolean }, { dropped: boolean }>(
+    `/teacher/ingest/job/${jobId}/item/${itemId}`,
+  )
+}

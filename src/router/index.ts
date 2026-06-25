@@ -78,6 +78,12 @@ const router = createRouter({
           name: 'IngestFrame',
           component: () => import('@/views/ingest/frame.vue'),
         },
+        // PRD-A-002 路B「批量上传录题」审核页——审核某拆题作业拆出的题项 → 勾选入库 / 软弃题。
+        {
+          path: '/ingest/review/:jobId',
+          name: 'IngestReview',
+          component: () => import('@/views/ingest/review.vue'),
+        },
         // PRD-A-007 — misikt 式两栏组卷工作台（新建态 + 编辑态同页两入口）
         // 新建态（无 id）：数据源 = useQuestionBasket，动作"创建试卷"
         // 编辑态（带 id）：加载 paper detail，动作"保存修改"
