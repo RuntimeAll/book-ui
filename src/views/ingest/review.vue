@@ -12,13 +12,14 @@
 import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowLeft, Refresh, Delete, Picture } from '@element-plus/icons-vue'
+import { ArrowLeft, Refresh, Delete, Picture, EditPen } from '@element-plus/icons-vue'
 import { useDictStore, DICT_QUESTION_TYPE } from '@/store/dict'
 import MarkdownMath from '@/components/MarkdownMath.vue'
 import {
   getIngestJob,
   commitIngestJob,
   dropIngestJobItem,
+  updateIngestJobItem,
   type IngestJobDetail,
   type IngestJobItem,
   type IngestJobStatus,
@@ -165,6 +166,68 @@ async function handleDrop(it: IngestJobItem) {
     await fetchJob(true)
   } catch (e) {
     console.warn('[ingest-review] drop failed', e)
+  }
+}
+
+// ── 就地改题（PRD-A-002 B5） ────────────────────────────────
+interface EditDraft {
+  stemText: string
+  answerText: string
+  analyzeText: string
+  questionType: number
+}
+const editing = reactive<Record<string, boolean>>({})
+const drafts = reactive<Record<string, EditDraft>>({})
+const savingEdit = reactive<Record<string, boolean>>({})
+
+const QTYPE_OPTIONS = [
+  { label: '选择', value: 1 },
+  { label: '填空', value: 2 },
+  { label: '解答', value: 5 },
+]
+
+function startEdit(it: IngestJobItem) {
+  const k = String(it.id)
+  drafts[k] = {
+    stemText: it.stemText || '',
+    answerText: it.answerText || '',
+    analyzeText: it.analyzeText || '',
+    questionType: it.questionType ?? 5,
+  }
+  editing[k] = true
+}
+
+function cancelEdit(it: IngestJobItem) {
+  editing[String(it.id)] = false
+}
+
+async function saveEdit(it: IngestJobItem) {
+  const k = String(it.id)
+  const d = drafts[k]
+  if (!d) return
+  if (!d.stemText.trim()) {
+    ElMessage.warning('题干不能为空')
+    return
+  }
+  savingEdit[k] = true
+  try {
+    await updateIngestJobItem(jobId.value, it.id, {
+      stemText: d.stemText,
+      answerText: d.answerText,
+      analyzeText: d.analyzeText,
+      questionType: d.questionType,
+    })
+    // 本地即时回写（避免整页轮询闪烁）
+    it.stemText = d.stemText
+    it.answerText = d.answerText
+    it.analyzeText = d.analyzeText
+    it.questionType = d.questionType
+    editing[k] = false
+    ElMessage.success('已保存')
+  } catch (e) {
+    console.warn('[ingest-review] saveEdit failed', e)
+  } finally {
+    savingEdit[k] = false
   }
 }
 
@@ -316,6 +379,17 @@ onBeforeUnmount(() => {
             </el-tag>
             <div class="item-head-ops">
               <el-button
+                v-if="!editing[String(it.id)]"
+                size="small"
+                link
+                type="primary"
+                :icon="EditPen"
+                :disabled="isCommitted(it)"
+                @click="startEdit(it)"
+              >
+                改题
+              </el-button>
+              <el-button
                 size="small"
                 link
                 type="danger"
@@ -328,7 +402,34 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
-          <!-- 题干 -->
+          <!-- 就地改题编辑态 -->
+          <div v-if="editing[String(it.id)]" class="item-edit">
+            <div class="edit-row">
+              <span class="edit-label">题型</span>
+              <el-select v-model="drafts[String(it.id)].questionType" size="small" style="width:120px">
+                <el-option v-for="o in QTYPE_OPTIONS" :key="o.value" :label="o.label" :value="o.value" />
+              </el-select>
+            </div>
+            <div class="edit-row">
+              <span class="edit-label">题干</span>
+              <el-input v-model="drafts[String(it.id)].stemText" type="textarea" :autosize="{ minRows: 3, maxRows: 10 }" placeholder="题干 Markdown + $LaTeX$" />
+            </div>
+            <div class="edit-row">
+              <span class="edit-label">答案</span>
+              <el-input v-model="drafts[String(it.id)].answerText" type="textarea" :autosize="{ minRows: 1, maxRows: 6 }" placeholder="答案（可空）" />
+            </div>
+            <div class="edit-row">
+              <span class="edit-label">解析</span>
+              <el-input v-model="drafts[String(it.id)].analyzeText" type="textarea" :autosize="{ minRows: 1, maxRows: 6 }" placeholder="解析（可空）" />
+            </div>
+            <div class="edit-actions">
+              <el-button size="small" @click="cancelEdit(it)">取消</el-button>
+              <el-button size="small" type="primary" :loading="savingEdit[String(it.id)]" @click="saveEdit(it)">保存</el-button>
+            </div>
+          </div>
+
+          <!-- 题干（只读态） -->
+          <template v-else>
           <div class="item-stem">
             <MarkdownMath :content="it.stemText || ''" />
           </div>
@@ -364,6 +465,7 @@ onBeforeUnmount(() => {
               <MarkdownMath :content="it.analyzeText" />
             </div>
           </div>
+          </template>
         </div>
       </div>
     </div>
@@ -565,5 +667,34 @@ onBeforeUnmount(() => {
   font-weight: 600;
   color: #1d2a2e;
   margin-bottom: 4px;
+}
+
+/* ── 就地改题 ── */
+.item-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background: #f7faf9;
+  border: 1px dashed #b7d8cf;
+  border-radius: 6px;
+}
+
+.edit-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.edit-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #4e5969;
+}
+
+.edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 </style>

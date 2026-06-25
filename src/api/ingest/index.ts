@@ -341,3 +341,23 @@ export function dropIngestJobItem(
     `/teacher/ingest/job/${jobId}/item/${itemId}`,
   )
 }
+
+/** 就地改题入参（仅传非空字段，局部更新） */
+export interface IngestJobItemEdit {
+  stemText?: string
+  answerText?: string
+  analyzeText?: string
+  questionType?: number
+}
+
+/** ⑥ 审核页就地改题（PRD-A-002 B5）：改拆错的题面/答案/解析/题型，入库前暂存编辑。仅 pending 项可改。 */
+export function updateIngestJobItem(
+  jobId: string | number,
+  itemId: string | number,
+  payload: IngestJobItemEdit,
+): Promise<{ updated: boolean }> {
+  return request.put<{ updated: boolean }, { updated: boolean }>(
+    `/teacher/ingest/job/${jobId}/item/${itemId}`,
+    payload,
+  )
+}
