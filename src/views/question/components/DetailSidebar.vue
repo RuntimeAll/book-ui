@@ -8,9 +8,13 @@
  *   - 收录：sources/sourcesLoading；点收录卡 emit('go-to-source', paperId)
  *   - 题目信息：questionType（题型彩标，纯函数随迁）
  * 保存备注动作 emit('save-note')，父级 saveNote 接住，行为零变化。
+ *
+ * G6 fix（2026-06-25）：题型标签改读字典 SSOT（biz_question_type），与 QuestionCard 同口径，
+ * 覆盖 type 6(作图)/7(计算)/8(证明)；移除本地硬编码 map。
  */
 import { Plus } from '@element-plus/icons-vue'
 import type { QuestionNote, QuestionSource } from '@/api/question/index'
+import { useDictStore, DICT_QUESTION_TYPE } from '@/store/dict'
 
 defineProps<{
   note: QuestionNote | null
@@ -29,14 +33,23 @@ const emit = defineEmits<{
   (e: 'go-to-source', paperId: string): void
 }>()
 
-// 题型彩色标签（逐字搬自 detail.vue）
+// G6 fix：题型标签读字典 SSOT，与 QuestionCard 同口径（biz_question_type 8 类全覆盖）。
+// 原硬编码 { 1:'选择题', 4:'填空题', 5:'简答题' } 导致 type 6/7/8 显示「题型N」且 type5 标签
+// 与列表卡「解答题」不一致（列表卡走字典，详情侧栏走硬编码）。
+const dict = useDictStore()
+dict.load(DICT_QUESTION_TYPE)
+
 function getQuestionTypeLabel(type: number): string {
-  const map: Record<number, string> = { 1: '选择题', 4: '填空题', 5: '简答题' }
-  return map[type] ?? `题型${type}`
+  return dict.label(DICT_QUESTION_TYPE, type) || `题型${type}`
 }
 
 function getQuestionTypeTagType(type: number): 'primary' | 'success' | 'warning' | 'info' {
-  const map: Record<number, 'primary' | 'success' | 'warning'> = { 1: 'primary', 4: 'success', 5: 'warning' }
+  const map: Record<number, 'primary' | 'success' | 'warning'> = {
+    1: 'primary',  // 选择题
+    4: 'success',  // 填空题
+    5: 'warning',  // 解答题
+    7: 'warning',  // 计算题（与 QuestionCard 对齐）
+  }
   return map[type] ?? 'info'
 }
 </script>
