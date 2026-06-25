@@ -24,6 +24,7 @@ export interface ImageBlock {
   url: string
   width: number // 1-100，占容器宽百分比
   align: ImageAlign
+  caption?: string // 可选图序号，如"图①"/"图（1）"，多图题由数据侧回填
 }
 
 export interface OptionBlock {
@@ -130,13 +131,16 @@ export function parseBlockDoc(input: QuestionBlockDoc | string | null | undefine
 
 function normalizeBlock(b: any): Block {
   if (b.type === 'text') return { type: 'text', md: String(b.md ?? '') }
-  if (b.type === 'image')
-    return {
+  if (b.type === 'image') {
+    const img: ImageBlock = {
       type: 'image',
       url: String(b.url),
       width: Math.min(100, Math.max(1, Math.round(Number(b.width) || 100))),
       align: ALIGNS.includes(b.align) ? b.align : 'left',
     }
+    if (typeof b.caption === 'string' && b.caption.trim()) img.caption = b.caption.trim()
+    return img
+  }
   // option
   return {
     type: 'option',
