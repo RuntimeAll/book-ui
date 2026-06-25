@@ -71,6 +71,13 @@ const router = createRouter({
           name: 'MyQuestion',
           component: () => import('@/views/my-question/index.vue'),
         },
+        // PRD-A-002 路A「框选录题全屏页」——上传题/卷照片 → 拖框选区 → 每框识别去手写富文本题
+        //   → 改题/解题（可选）→ 绑定章节 → 录入 biz_question 草稿(status='0')。
+        {
+          path: '/ingest/frame',
+          name: 'IngestFrame',
+          component: () => import('@/views/ingest/frame.vue'),
+        },
         // PRD-A-007 — misikt 式两栏组卷工作台（新建态 + 编辑态同页两入口）
         // 新建态（无 id）：数据源 = useQuestionBasket，动作"创建试卷"
         // 编辑态（带 id）：加载 paper detail，动作"保存修改"

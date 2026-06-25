@@ -6,7 +6,7 @@
 import { ref, reactive, onMounted, computed, watch, nextTick } from 'vue'
 import { useDictStore, DICT_QUESTION_TYPE } from '@/store/dict'
 import { ElMessage } from 'element-plus'
-import { Search, Document } from '@element-plus/icons-vue'
+import { Search, Document, Plus } from '@element-plus/icons-vue'
 import {
   lazyTree,
   questionPage,
@@ -81,6 +81,11 @@ function handleNodeClick(data: SubjectNode) {
   pageParams.subjectId = data.id
   pageParams.pageIndex = 1
   fetchQuestions()
+}
+
+// PRD-A-002 — 进入框选录题全屏页
+function goIngestFrame() {
+  router.push('/ingest/frame')
 }
 
 // ── 筛选条 ──────────────────────────────────────────────────
@@ -379,6 +384,9 @@ onMounted(async () => {
             <el-tag v-if="total > 0" type="info" size="small" round style="margin-left: 8px;">
               共 {{ total }} 题
             </el-tag>
+          </div>
+          <div class="list-header-right">
+            <el-button type="primary" :icon="Plus" @click="goIngestFrame">录题</el-button>
           </div>
         </div>
 
