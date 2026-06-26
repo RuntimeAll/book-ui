@@ -8,10 +8,13 @@
 // re-map 成「2 阶段 × 5 节点」展示，颜色一律 var(--xxx)（token 在 variant-theme.css）。
 //
 // 8key → 2阶段×节点 映射：
-//   定题中(ding) 3节点（🔴 2026-06-19 新 stage 帧契约，三节点各读独立 key，不再 classify+knobs 硬凑）：
-//                读图锚定(classify) / 母题切图(figure[定题相]) / 确认母题(review)
-//   出题中(chu) 5节点：生成变式(generate) / 平行度比对(gene_gate) / 程序验算(verify) /
-//                配图(figure[出题相]|solution) / 题组就绪(persist|assemble)
+//   定题中(ding) 3节点（🔴 2026-06-19 新 stage 帧契约 + PRD-A-023 隐藏异步内部步）：
+//                解题(solve) / 深度解析(label) / 确认母题(review)。富文本化/切图为异步旁挂、不进可见节点。
+//   出题中(chu) 5节点（🔴 PRD-C-103 WS4·验证回到最后 重排顺序）：
+//                生成变式(generate) / 考点一致比对(gene_gate) / 配图(figure|solution) /
+//                题组就绪(persist|assemble) / 程序验算(verify·可选·末位)。
+//   → 程序验算从「比对与配图之间」移到主序**最末**：它是用户点才跑的可选步（默认不跑省 token），
+//     不再排中间卡视觉，对齐目标态状态机「验证 = 阶段二末尾、可选」。
 //
 // 5 态：todo 待完成灰 / run 进行中紫呼吸 / done 已完成青 / err 异常红 / human 需人工橙。
 // 底部 .ps-cast = 真值流式播报：取当前 run/human 节点的 stage.detail（R2 真子帧），
@@ -144,17 +147,19 @@ const chuNodes = computed<PsNode[]>(() => {
     state: nodeStateFromStatus(gate?.status, 'todo'),
     desc: gate?.detail ?? '逐道与母题对照考点',
   }
-  // 🔴 PRD-A-018 C1(A-10)：程序验算 = 老师自选的可选旁挂步，从出题主干「必经链」摘出，
-  //   不计入 coreDone / 题组就绪 / allDone（手动模式 BE 不再硬发 verify=done，而发 await/pending）。
+  // 🔴 PRD-C-103 WS4（2026-06-26 治积病·验证回到最后）：程序验算 = 老师自选的可选旁挂步，
+  //   目标态状态机要求它在阶段二**末尾、可选、用户点才跑**（默认不跑 = 提速省 token），不再卡中间。
+  //   故此节点（verifyNode）在下方 return 时排到「题组就绪」之后（数组末位），不再夹在 比对→配图 之间。
+  //   它本就是 optional（不计入 coreDone / 题组就绪 / allDone），位置后移纯属外显顺序修正，不动任何完成判定。
   //   节点标「可选·待验算」——await→需人工提示（待老师点验算）、done→已完成、running→进行中、无帧→「可选·待验算」灰态。
-  const n3: PsNode = {
+  const verifyNode: PsNode = {
     label: '程序验算',
     state:
       ver?.status === 'await'
         ? 'human'
         : nodeStateFromStatus(ver?.status, 'todo'),
-    desc: ver?.detail ?? '可选 · 待老师点「验算」核对答案闭合（不影响题组就绪）',
-    optional: true, // 🔴 C1：可选旁挂，不计入题组就绪/全部完成
+    desc: ver?.detail ?? '可选 · 题组就绪后老师点「验算」核对答案闭合（不影响就绪）',
+    optional: true, // 🔴 可选旁挂，不计入题组就绪/全部完成
   }
   // 🔴 C1：核心完成 = 生成 + 考点比对（不含验算）。验算摘出后题组就绪只依赖 generate+gate(+真配图)。
   const coreDone = gen?.status === 'done' && gate?.status === 'done'
@@ -194,7 +199,7 @@ const chuNodes = computed<PsNode[]>(() => {
   const n4: PsNode = { label: '配图', state: n4State, desc: n4Desc }
 
   // 题组就绪：persist done → done；await → human；无 persist stage 但核心+配图都完成 → 收口为「就绪」。
-  //   🔴 C1：不依赖验算（n3）；🔴 C2：依赖聚合后的配图（n4），任一变式图未完成则不显就绪。
+  //   🔴 C1：不依赖验算（verifyNode·optional）；🔴 C2：依赖聚合后的配图（n4），任一变式图未完成则不显就绪。
   const groupReady = coreDone && n4.state === 'done'
   const n5: PsNode = {
     label: '题组就绪',
@@ -207,7 +212,9 @@ const chuNodes = computed<PsNode[]>(() => {
         : 'todo',
     desc: persist?.detail ?? (groupReady ? '全部完成 · 可换数字 / 换场景 / 重生这道 / 入库' : '可换数字 / 换场景 / 重生这道 / 入库'),
   }
-  return [n1, n2, n3, n4, n5]
+  // 🔴 PRD-C-103 WS4：主序 = 生成 → 比对 → 配图 → 题组就绪；程序验算（verifyNode·可选）排**最末**，
+  //   语义 = 题组已就绪后老师可选自点验算，不挡就绪、不卡中间。对照目标态 §1/§4「验证回到最后·可选·用户点」。
+  return [n1, n2, n4, n5, verifyNode]
 })
 
 const phase = computed(() => (isChu.value ? 'chu' : 'ding'))
