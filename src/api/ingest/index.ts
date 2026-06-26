@@ -1,4 +1,5 @@
 import request from '@/http/request'
+import { fetchEventSource } from '@microsoft/fetch-event-source'
 
 // ---------------------------------------------------------------------------
 // PRD-A-002 路A「框选录题」三接口封装。
@@ -178,6 +179,174 @@ export async function grade(req: GradeRequest): Promise<GradeResult> {
   } finally {
     clearTimeout(timer)
   }
+}
+
+// ── ①c 解题流 / 批改流（toolkit SSE，B4 实时流式不黑盒） ────────────────────
+//
+// 维护者拍板：录题解题/批改像举一反三第一阶段一样**实时流式**——按钮直调预设 prompt，
+// LLM 逐字流式（老师实时看怎么解/怎么改），打标(DNA)异步跟在解题后。
+// 协议（对齐 variant）：data: {"type":"token","content":"<片段>"} / {"type":"result","content":<结构>}
+//   / {"type":"error",...} ；data: [DONE] 裸串结束。走 /agent 代理（toolkit 原生，不经 request 拦截器）。
+
+/** 解题流结构化结果（result 帧） */
+export interface SolveStreamResult {
+  stem: string
+  qtype: string
+  options: string[]
+  answer: string
+  analysis: string
+  need_grading: boolean
+}
+
+/** 解题流回调 */
+export interface SolveStreamHandlers {
+  /** 逐字增量（人类可读解题过程，追加进卡内流式区） */
+  onToken: (delta: string) => void
+  /** 流末尾结构化结果（入库用 stem/answer/options 等） */
+  onResult: (r: SolveStreamResult) => void
+  /** 服务端错误帧 */
+  onError?: (msg: string) => void
+  /** 流自然结束（[DONE] 或连接关闭） */
+  onClose?: () => void
+}
+
+/** 解题流（识别+解题一起做，SSE）。返回 { abort } 可中止。 */
+export function solveStream(imageBase64: string, handlers: SolveStreamHandlers): { abort: () => void } {
+  const ctrl = new AbortController()
+  fetchEventSource('/agent/solve_stream', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ image_base64: imageBase64 }),
+    signal: ctrl.signal,
+    openWhenHidden: true,
+    async onopen(res) {
+      const ct = res.headers.get('content-type') || ''
+      if (res.ok && ct.includes('text/event-stream')) return
+      throw new Error(`解题流异常 (${res.status})`)
+    },
+    onmessage(ev) {
+      if (!ev.data) return
+      if (ev.data === '[DONE]') {
+        handlers.onClose?.()
+        ctrl.abort()
+        return
+      }
+      try {
+        const p = JSON.parse(ev.data) as { type: string; content: unknown }
+        if (p.type === 'token') handlers.onToken(String(p.content || ''))
+        else if (p.type === 'result') handlers.onResult(p.content as SolveStreamResult)
+        else if (p.type === 'error') handlers.onError?.(String(p.content || '解题出错'))
+      } catch {
+        // 跳过坏帧
+      }
+    },
+    onerror(err) {
+      handlers.onError?.(err instanceof Error ? err.message : '解题流中断')
+      throw err
+    },
+    onclose() {
+      handlers.onClose?.()
+    },
+  }).catch((err) => {
+    if (ctrl.signal.aborted) return
+    handlers.onError?.(err instanceof Error ? err.message : '解题流失败')
+  })
+  return { abort: () => ctrl.abort() }
+}
+
+/** 批改流结构化结果 */
+export interface GradeStreamResult {
+  stem: string
+  standard_answer: string
+  student_answer: string
+  has_handwriting: boolean
+  verdict: GradeVerdict
+  feedback: string
+}
+
+/** 批改流回调 */
+export interface GradeStreamHandlers {
+  onToken: (delta: string) => void
+  onResult: (r: GradeStreamResult) => void
+  onError?: (msg: string) => void
+  onClose?: () => void
+}
+
+/** 批改流（识别+先解题+判对错，SSE）。返回 { abort }。 */
+export function gradeStream(
+  req: { imageBase64: string; knowledge?: string; chapter?: string },
+  handlers: GradeStreamHandlers,
+): { abort: () => void } {
+  const ctrl = new AbortController()
+  fetchEventSource('/agent/grade_stream', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      image_base64: req.imageBase64,
+      ...(req.knowledge ? { knowledge: req.knowledge } : {}),
+      ...(req.chapter ? { chapter: req.chapter } : {}),
+    }),
+    signal: ctrl.signal,
+    openWhenHidden: true,
+    async onopen(res) {
+      const ct = res.headers.get('content-type') || ''
+      if (res.ok && ct.includes('text/event-stream')) return
+      throw new Error(`批改流异常 (${res.status})`)
+    },
+    onmessage(ev) {
+      if (!ev.data) return
+      if (ev.data === '[DONE]') {
+        handlers.onClose?.()
+        ctrl.abort()
+        return
+      }
+      try {
+        const p = JSON.parse(ev.data) as { type: string; content: unknown }
+        if (p.type === 'token') handlers.onToken(String(p.content || ''))
+        else if (p.type === 'result') handlers.onResult(p.content as GradeStreamResult)
+        else if (p.type === 'error') handlers.onError?.(String(p.content || '批改出错'))
+      } catch {
+        // 跳过坏帧
+      }
+    },
+    onerror(err) {
+      handlers.onError?.(err instanceof Error ? err.message : '批改流中断')
+      throw err
+    },
+    onclose() {
+      handlers.onClose?.()
+    },
+  }).catch((err) => {
+    if (ctrl.signal.aborted) return
+    handlers.onError?.(err instanceof Error ? err.message : '批改流失败')
+  })
+  return { abort: () => ctrl.abort() }
+}
+
+// ── ①d 打标（toolkit /label，解题后异步跟跑，不阻塞老师其他操作） ─────────────
+
+/** 打标结果（dna 整段，渲染前可 JSON.parse 已是对象） */
+export interface LabelResult {
+  ok: boolean
+  dna: RecognizeDna | Record<string, unknown> | null
+  error: string | null
+}
+
+/** 单题打标（解题完成后异步调，产 10 维 DNA）。失败静默（打标是额外的事，不影响录题）。 */
+export async function labelQuestion(payload: {
+  stem: string
+  qtype?: string
+  options?: string[]
+  answer?: string
+  analysis?: string
+}): Promise<LabelResult> {
+  const res = await fetch('/agent/label', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) return { ok: false, dna: null, error: `打标服务异常 (${res.status})` }
+  return (await res.json()) as LabelResult
 }
 
 // ── ② 配图上传（BE /api，已鉴权） ──────────────────────────────────────────
