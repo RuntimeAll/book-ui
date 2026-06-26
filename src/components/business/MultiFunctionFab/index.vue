@@ -49,7 +49,7 @@ const activeTab = ref<TabKey>('prog')
 
 // ── 进行中（拆题作业）：轮询，逻辑搬自原 IngestFab ──────────────
 const jobs = ref<IngestJobRow[]>([])
-const ACTIVE_STATUS = new Set<IngestJobStatus>(['PENDING', 'EXTRACT_ING', 'SPLIT_ING'])
+const ACTIVE_STATUS = new Set<IngestJobStatus>(['PENDING', 'EXTRACT_ING', 'SPLIT_ING', 'SOLVING'])
 const activeJobCount = computed(() => jobs.value.filter((j) => ACTIVE_STATUS.has(j.status)).length)
 const doneJobCount = computed(() => jobs.value.filter((j) => j.status === 'DONE').length)
 
@@ -94,8 +94,9 @@ function onIngestJobSubmitted() {
 function jobProgress(s: IngestJobStatus): number {
   switch (s) {
     case 'PENDING': return 10
-    case 'EXTRACT_ING': return 40
-    case 'SPLIT_ING': return 70
+    case 'EXTRACT_ING': return 35
+    case 'SPLIT_ING': return 60
+    case 'SOLVING': return 85
     case 'DONE': return 100
     default: return 0
   }
@@ -113,6 +114,7 @@ function statusLabel(s: IngestJobStatus): string {
     case 'PENDING': return '排队中'
     case 'EXTRACT_ING': return '识别中'
     case 'SPLIT_ING': return '拆题中'
+    case 'SOLVING': return '解题中'
     case 'DONE': return '已完成'
     case 'FAILED': return '失败'
     default: return String(s)
@@ -134,9 +136,16 @@ function goReview(job: IngestJobRow) {
 // ── 球内优先级状态（FP7）──────────────────────────────────────
 //   P1 处理中 ＞ 完成 ＞ P3 试题栏有货 ＞ P4 试卷篮有货 ＞ idle
 type BallMode = 'processing' | 'done' | 'question' | 'paper' | 'idle'
+// 活跃作业的代表阶段标签 = 进度最低（最落后）那个作业的阶段（球心只显一个，取老师在等的瓶颈阶段）
+const activeLabel = computed(() => {
+  const act = jobs.value.filter((j) => ACTIVE_STATUS.has(j.status))
+  if (act.length === 0) return '处理中'
+  const slowest = act.reduce((a, b) => (jobProgress(a.status) <= jobProgress(b.status) ? a : b))
+  return statusLabel(slowest.status)
+})
 const ballState = computed<{ mode: BallMode; pct: number; label: string; count: number }>(() => {
   if (activeJobCount.value > 0) {
-    return { mode: 'processing', pct: activeAvgProgress.value, label: '拆题中', count: activeJobCount.value }
+    return { mode: 'processing', pct: activeAvgProgress.value, label: activeLabel.value, count: activeJobCount.value }
   }
   if (doneJobCount.value > 0) {
     return { mode: 'done', pct: 100, label: '已完成', count: doneJobCount.value }
