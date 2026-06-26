@@ -67,6 +67,7 @@ declare module 'vue' {
     IngestFab: typeof import('./src/components/business/IngestFab/index.vue')['default']
     InlineMath: typeof import('./src/components/InlineMath.vue')['default']
     MarkdownMath: typeof import('./src/components/MarkdownMath.vue')['default']
+    MultiFunctionFab: typeof import('./src/components/business/MultiFunctionFab/index.vue')['default']
     PaperBasketFab: typeof import('./src/components/business/PaperBasketFab/index.vue')['default']
     PaperLibrary: typeof import('./src/components/business/PaperLibrary/index.vue')['default']
     PaperPreview: typeof import('./src/components/business/PaperPreview/index.vue')['default']
