@@ -76,6 +76,18 @@ export interface VariantRequest {
    * 的「学段约束」，让模型解题/打标都知道老师定的章（之前只注年级册、漏了章）。空/省略 → 不塞此键。
    */
   presetChapterName?: string
+  /**
+   * 🔴 PRD-C-103 WS3·双旋钮·变式系数（0–1，默认 0.7）：管"像不像母题"。经
+   * agent_config(config.configurable.variant_similarity) 回传 toolkit → generate 据系数落相似度带
+   * 选算子（高仿/中变/远迁），注入出题配方段让变式"像不像"随系数变。省略 → toolkit 回落默认 0.7。
+   */
+  variantSimilarity?: number
+  /**
+   * 🔴 PRD-C-103 WS3·双旋钮·难度（'keep' 或目标档 1–4，默认 keep=母题档）：管"难不难"。经
+   * agent_config(config.configurable.difficulty_target) 回传 toolkit → recipe 把起步档 md 移到目标档
+   * （依赖 WS1 难度接线，确定性判档生效）。'keep'/省略 → 维持母题档 md+i 递增（旧行为）。
+   */
+  difficultyTarget?: 'keep' | number
 }
 
 /** toolkit ChatMessage（只取前端用得到的字段，其余宽松忽略） */
@@ -1117,6 +1129,15 @@ export function streamVariant(
   if (payload.presetChapterId) agentConfig.preset_chapter_id = payload.presetChapterId
   // 🔴 R5：老师亲选章人话名 → 注入 R1/R2 prompt 学段约束（之前漏注章）。
   if (payload.presetChapterName) agentConfig.preset_chapter_name = payload.presetChapterName
+  // 🔴 PRD-C-103 WS3·双旋钮：变式系数(0–1) + 难度目标档('keep'|1–4) → config.configurable，
+  //   toolkit generate 据它选算子带 + 移起步档。变式系数默认 0.7（非空即透传，含 0）；
+  //   难度默认 'keep'（不传或传 'keep' → toolkit 不移 md，维持母题档 md+i）。
+  if (typeof payload.variantSimilarity === 'number') {
+    agentConfig.variant_similarity = payload.variantSimilarity
+  }
+  if (payload.difficultyTarget !== undefined && payload.difficultyTarget !== 'keep') {
+    agentConfig.difficulty_target = payload.difficultyTarget
+  }
   if (Object.keys(agentConfig).length) body.agent_config = agentConfig
 
   fetchEventSource('/agent/variant/stream', {

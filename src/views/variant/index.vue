@@ -141,6 +141,11 @@ const thinking = ref(false) // LLM token 流期的「思考中」动效
 //   关（默认）→ 维持现状（走主站、不带 thinking、便宜）。开了但成交站不支持 → 参数静默忽略，
 //   思考块不显示，绝不报错（graceful，见 streamVariant onReasoning 向后兼容）。
 const thinkingStream = ref(false)
+// 🔴 PRD-C-103 WS3·双旋钮：变式系数(0–1，默认 0.7=像不像母题) + 难度目标档('keep' 或 1–4，默认
+//   keep=母题档)。两轴独立、每轮随 dispatch 透传给 toolkit generate（config.configurable）。
+//   变式系数默认 0.7（策略定稿 §二）；难度默认 keep（不移 md，维持母题档 md+i 递增）。
+const variantSimilarity = ref(0.7)
+const difficultyTarget = ref<'keep' | number>('keep')
 // 当前轮 rail 锚点（onStage 只更新它；新一轮 send 换新锚点，旧轮 rail 冻结留存）
 const currentRail = ref<RailItem | null>(null)
 // 🔴 PRD-A-018 G10-5：最后一轮有内容的 rail 快照（sticky）。编辑/结构化指令轮不发阶段帧 →
@@ -1115,6 +1120,10 @@ function dispatch(
         : undefined,
       // 🔴 R5：章人话名注入 R1/R2 prompt 学段约束（之前漏注章）
       presetChapterName: isFirstTurn ? presetChapterName.value || undefined : undefined,
+      // 🔴 PRD-C-103 WS3·双旋钮：每轮透传变式系数 + 难度目标档（仅 generate 节点消费）。
+      //   变式系数恒传（含 0）；难度 'keep' 时 streamVariant 不塞键 → toolkit 维持母题档。
+      variantSimilarity: variantSimilarity.value,
+      difficultyTarget: difficultyTarget.value,
     },
     {
       onToken: (delta) => {
@@ -2631,6 +2640,52 @@ onBeforeUnmount(() => {
           />
 
           <!-- 按钮条 .cbar -->
+          <!-- 🔴 PRD-C-103 WS3·双旋钮：变式系数(像不像母题) + 难度(目标档)。两轴独立，每轮随发送透传。 -->
+          <div class="composer-knobs" data-testid="variant-knobs">
+            <div class="knob-row">
+              <span class="knob-label">变式系数</span>
+              <el-slider
+                v-model="variantSimilarity"
+                :min="0"
+                :max="1"
+                :step="0.05"
+                :disabled="sending"
+                size="small"
+                class="knob-slider"
+                data-testid="knob-similarity"
+              />
+              <span class="knob-value">{{ variantSimilarity.toFixed(2) }}</span>
+              <el-tooltip
+                placement="top"
+                content="像不像母题：高(0.8+)=只换数字的高仿；中(0.4–0.7)=改结构/情境/条件；低(0.2–0.4)=逆向/推广/升维等远迁变式。默认 0.7。"
+              >
+                <span class="knob-hint">ⓘ</span>
+              </el-tooltip>
+            </div>
+            <div class="knob-row">
+              <span class="knob-label">难度</span>
+              <el-select
+                v-model="difficultyTarget"
+                size="small"
+                :disabled="sending"
+                class="knob-select"
+                data-testid="knob-difficulty"
+              >
+                <el-option label="不变(母题档)" value="keep" />
+                <el-option label="L1 送分" :value="1" />
+                <el-option label="L2 巩固" :value="2" />
+                <el-option label="L3 中档" :value="3" />
+                <el-option label="L4 压轴" :value="4" />
+              </el-select>
+              <el-tooltip
+                placement="top"
+                content="目标难度档：默认「不变」按母题档逐题递增；选某档则把起步档移到该档（难度由模型表+确定性判档算，非 LLM 自评）。"
+              >
+                <span class="knob-hint">ⓘ</span>
+              </el-tooltip>
+            </div>
+          </div>
+
           <div class="composer-bar">
             <button
               type="button"
@@ -3021,6 +3076,44 @@ onBeforeUnmount(() => {
   color: var(--ink-2);
 }
 .thinking-toggle-hint {
+  font-size: 12px;
+  color: var(--faint);
+  cursor: help;
+}
+
+/* 🔴 PRD-C-103 WS3·双旋钮条（composer 内，按钮条上方） */
+.composer-knobs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  padding: 6px 4px 2px;
+}
+.knob-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 240px;
+}
+.knob-label {
+  font-size: 12px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.knob-slider {
+  flex: 1;
+  min-width: 110px;
+}
+.knob-value {
+  font-size: 12px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+  width: 34px;
+  text-align: right;
+}
+.knob-select {
+  width: 140px;
+}
+.knob-hint {
   font-size: 12px;
   color: var(--faint);
   cursor: help;
