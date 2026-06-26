@@ -73,7 +73,6 @@ async function loadTree() {
 // ── 处理选项 ────────────────────────────────────────────────
 const answerMode = ref<IngestAnswerMode>('from_source')
 const commitMode = ref<IngestCommitMode>('review')
-const gradeHint = ref('')
 
 // ── 提交 ────────────────────────────────────────────────────
 const submitting = ref(false)
@@ -98,7 +97,6 @@ async function handleSubmit() {
     form.append('subjectId', selectedSubjectId.value)
     form.append('answerMode', answerMode.value)
     form.append('commitMode', commitMode.value)
-    if (gradeHint.value.trim()) form.append('gradeHint', gradeHint.value.trim())
 
     await createIngestJob(form)
     ElMessage.success('已提交，拆题中，右下角进度球可查看')
@@ -121,7 +119,6 @@ function resetForm() {
   selectedSubjectId.value = ''
   answerMode.value = 'from_source'
   commitMode.value = 'review'
-  gradeHint.value = ''
 }
 
 // 打开弹层时懒加载章节树
@@ -143,11 +140,11 @@ watch(
     class="batch-upload-dialog"
   >
     <div class="batch-body">
-      <!-- 上传区 -->
+      <!-- 上传区（B2：整页走 TextIn OCR，已支持 图片 / PDF / Word docx） -->
       <el-upload
         drag
         :auto-upload="false"
-        accept="image/*"
+        accept="image/*,.pdf,.docx"
         :limit="1"
         :on-change="onFileChange"
         :on-remove="onFileRemove"
@@ -156,11 +153,11 @@ watch(
       >
         <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
         <div class="el-upload__text">
-          将试卷图片拖到此处，或<em>点击选择</em>
+          将试卷文件拖到此处，或<em>点击选择</em>
         </div>
         <template #tip>
           <div class="el-upload__tip">
-            当前支持图片（jpg / png / webp）；PDF / Word 后续接入
+            支持 图片（jpg / png / webp）、PDF、Word（docx）
           </div>
         </template>
       </el-upload>
@@ -198,17 +195,6 @@ watch(
           <el-radio value="review">审核后入库</el-radio>
           <el-radio value="direct">直接入库</el-radio>
         </el-radio-group>
-      </div>
-
-      <!-- 学段提示 -->
-      <div class="form-row">
-        <label class="form-label">学段提示</label>
-        <el-input
-          v-model="gradeHint"
-          placeholder="可选，如「七年级」（帮助识别更准）"
-          class="full-width"
-          clearable
-        />
       </div>
     </div>
 

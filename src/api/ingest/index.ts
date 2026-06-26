@@ -59,6 +59,8 @@ export interface RecognizeRequest {
 export interface RecognizeResult {
   ok: boolean
   has_figure: boolean
+  /** B4：框区内含学生手写作答/批改痕迹 → true，前端据此条件出现「批改」按钮 */
+  need_grading: boolean
   stem: string
   qtype: '选择' | '填空' | '解答' | string
   options: string[]
@@ -99,6 +101,78 @@ export async function recognize(req: RecognizeRequest): Promise<RecognizeResult>
   } catch (e) {
     if (e instanceof DOMException && e.name === 'AbortError') {
       throw new Error('识别超时（请重试或缩小框选区域）')
+    }
+    throw e
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+// ── ①b 批改（toolkit 裸 JSON 契约，B4） ─────────────────────────────────────
+
+/** /agent/grade 请求体（批改：裁剪题区图 → 先解题 → 判学生作答对错） */
+export interface GradeRequest {
+  /** 裸 base64，不带 data: 前缀（原图坐标裁剪出的题区图，含印刷体+学生手写） */
+  image_base64: string
+  /** 注入的相关知识点（帮助判定，可选） */
+  knowledge?: string
+  /** 注入的所属章节（帮助判定，可选） */
+  chapter?: string
+}
+
+/** 批改判定结果 */
+export type GradeVerdict = 'correct' | 'wrong' | 'partial' | 'blank' | 'uncertain' | string
+
+/** /agent/grade 响应（直接是这个对象，不取 .response） */
+export interface GradeResult {
+  ok: boolean
+  /** 去手写的印刷体原题 */
+  stem: string
+  qtype: string
+  /** AI 解出的标准答案 */
+  standard_answer: string
+  /** 标准解题过程 */
+  standard_analysis: string
+  /** 学生手写的最终答案 */
+  student_answer: string
+  /** 是否检测到手写作答 */
+  has_handwriting: boolean
+  /** 批改判定：对/错/部分对/未作答/存疑 */
+  verdict: GradeVerdict
+  /** 老师视角点评 */
+  feedback: string
+  verify: RecognizeVerify | null
+  error: string | null
+}
+
+/**
+ * 调 toolkit 批改（裸 fetch，与 recognize 同范式）。超时 120s（先解题再批改，~40s）。
+ * 内部逻辑：先自己严谨解题拿标准答案 → 再据此判学生作答对错；多异常态（无笔迹→blank/存疑→uncertain）。
+ */
+export async function grade(req: GradeRequest): Promise<GradeResult> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 120_000)
+  try {
+    const res = await fetch('/agent/grade', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+      signal: controller.signal,
+    })
+    if (!res.ok) {
+      let detail = ''
+      try {
+        const d = (await res.json()) as { detail?: string; error?: string }
+        detail = d.detail || d.error || ''
+      } catch {
+        detail = ''
+      }
+      throw new Error(detail || `批改服务异常 (${res.status})`)
+    }
+    return (await res.json()) as GradeResult
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') {
+      throw new Error('批改超时（请重试）')
     }
     throw e
   } finally {
@@ -227,6 +301,7 @@ export type IngestJobStatus =
   | 'PENDING'
   | 'EXTRACT_ING'
   | 'SPLIT_ING'
+  | 'SOLVING'
   | 'DONE'
   | 'FAILED'
   | string

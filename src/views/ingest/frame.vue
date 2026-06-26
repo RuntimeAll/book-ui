@@ -1,37 +1,45 @@
 <script setup lang="ts">
 // ---------------------------------------------------------------------------
-// PRD-A-002 路A「框选录题全屏页」。
+// PRD-A-002 路A「框选录题全屏页」（bug 轮 B3/B4/B6 重构）。
 //
-// 老师上传一张题/卷照片 → 在放大的图上拖框选区（可多框）→ 每框自动调识别接口得「去手写
-// 富文本题(+可选解题/DNA)」→ 可就地改题 → 选绑定章节 →「录入」落 biz_question 草稿(status='0')。
+// 🔴 维护者拍板的正确流程（B3）：上传（点击/拖拽/粘贴）→ 在放大的图上拖框选区（可多框）→
+//   **框完只裁剪、暂存到右侧题卡列**（不自动识别、不无痕操作）→ 老师在卡上点按钮**确认**触发：
+//   智能识别 / 解题 / 批改 / 编辑（B4 四功能）→ 选绑定章节 →「录入」落 biz_question 草稿。
 //
-// 流程：上传 → 读成 Image 画到承载 img（按自然分辨率）→ 拖框（显示坐标换算回自然分辨率）→
-//   离屏 canvas 自然分辨率裁出 → toDataURL('image/png')（无损 PNG，禁压缩，R7）→
-//   去 data: 前缀得 image_base64 喂识别；录入时再转 Blob 喂上传 → ingest/question。
+// 四功能（B4）：
+//   · 智能识别 = OCR 转去手写富文本（顺带 need_grading 标记：框区有学生作答/笔迹）。
+//   · 解题     = AI 解这道题（自动打标 DNA + sympy 验算）。
+//   · 批改     = 仅 need_grading 时出现；裁剪图 → 先解题 → 判学生作答对错（弹窗展示）。
+//   · 编辑     = 改题面/答案/解析文本（非 LLM）。
+//
+// 🔴 提示规范（B3）：不内联堆字占屏；耗时只用 loading 态，必要提示走弹窗/消息条。
+// 🔴 学段提示已删（B6）：学段从绑定章节推断，不让老师填。
 // ---------------------------------------------------------------------------
 import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
-import { Back, Upload, ZoomIn, ZoomOut, Delete, MagicStick } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Back, Upload, ZoomIn, ZoomOut, Delete, MagicStick, EditPen, DocumentChecked } from '@element-plus/icons-vue'
 import MarkdownMath from '@/components/MarkdownMath.vue'
 import { lazyTree, type SubjectNode } from '@/api/question/index'
 import {
   recognize,
+  grade,
   uploadIngestImage,
   ingestQuestion,
   mapQtypeToCode,
   mapDifficultyToCode,
   type RecognizeResult,
+  type GradeResult,
   type IngestQuestionImage,
 } from '@/api/ingest/index'
 
 const router = useRouter()
 
 // ── 框卡状态机 ───────────────────────────────────────────────────────────
+// pending = 框完裁剪暂存、待识别；recognizing = 识别中；done = 已识别；failed = 识别失败
 type CardStatus = 'pending' | 'recognizing' | 'done' | 'failed'
 
 interface RegionRect {
-  // 自然分辨率坐标（裁剪/识别口径）
   x: number
   y: number
   w: number
@@ -50,7 +58,9 @@ interface IngestCard {
   /** 是否已解题（带 answer/analysis/dna/verify） */
   solved: boolean
   recognizing: boolean
-  // 识别 + 改题后的可编辑字段
+  /** B4：智能识别标记到该框含学生作答/笔迹 → 出现「批改」按钮 */
+  needGrading: boolean
+  // 识别 + 编辑后的可编辑字段
   stem: string
   qtype: string
   options: string[]
@@ -63,11 +73,19 @@ interface IngestCard {
   examType: string | null
   mainKp: string | null
   tags: string[]
-  // 改题编辑态
+  // 编辑态
   editing: boolean
   draftStem: string
   draftAnswer: string
   draftAnalysis: string
+  // 批改态（B4）
+  grading: boolean
+  graded: boolean
+  gradeVerdict: string | null
+  gradeFeedback: string
+  gradeStudentAnswer: string
+  gradeStandardAnswer: string
+  gradeStandardAnalysis: string
   // 录入态
   ingesting: boolean
   ingested: boolean
@@ -79,18 +97,14 @@ let cardSeq = 0
 const fileInputRef = ref<HTMLInputElement>()
 const imgEl = ref<HTMLImageElement>()
 const stageRef = ref<HTMLDivElement>()
-const imageSrc = ref<string>('') // 原图 dataURL
+const imageSrc = ref<string>('')
 const naturalW = ref(0)
 const naturalH = ref(0)
-const scale = ref(1) // 显示缩放（transform）
+const scale = ref(1)
 const cards = ref<IngestCard[]>([])
 
 const hasImage = computed(() => !!imageSrc.value)
-
-// 解题开关（影响每框识别是否带 solve）
-const solveOnRecognize = ref(false)
-// 学段提示（可选，传给识别接口）
-const gradeHint = ref('')
+const isDragOver = ref(false)
 
 // ── 上传/读图 ────────────────────────────────────────────────────────────
 function triggerUpload() {
@@ -101,7 +115,6 @@ function onFileChange(e: Event) {
   const input = e.target as HTMLInputElement
   const file = input.files?.[0]
   if (file) loadImageFile(file)
-  // 允许重选同一文件
   input.value = ''
 }
 
@@ -119,7 +132,6 @@ function loadImageFile(file: File) {
       naturalH.value = img.naturalHeight
       imageSrc.value = url
       cards.value = []
-      // 初始缩放：让图宽度大致铺满舞台（最大 1，避免小图放大失真）
       fitScale()
     }
     img.onerror = () => ElMessage.error('图片加载失败')
@@ -137,7 +149,7 @@ function fitScale() {
   scale.value = Math.min(1, avail / naturalW.value)
 }
 
-// 粘贴上传（可选增强）
+// 粘贴上传
 function onPaste(e: ClipboardEvent) {
   const items = e.clipboardData?.items
   if (!items) return
@@ -153,6 +165,22 @@ function onPaste(e: ClipboardEvent) {
   }
 }
 
+// 拖拽上传（B3：空态 + 舞台均可拖入）
+function onDragOver(e: DragEvent) {
+  e.preventDefault()
+  isDragOver.value = true
+}
+function onDragLeave(e: DragEvent) {
+  e.preventDefault()
+  isDragOver.value = false
+}
+function onDrop(e: DragEvent) {
+  e.preventDefault()
+  isDragOver.value = false
+  const file = e.dataTransfer?.files?.[0]
+  if (file) loadImageFile(file)
+}
+
 function zoomIn() {
   scale.value = Math.min(3, +(scale.value + 0.15).toFixed(2))
 }
@@ -162,11 +190,10 @@ function zoomOut() {
 
 // ── 拖框选区 ─────────────────────────────────────────────────────────────
 const drawing = ref(false)
-const drawRect = reactive({ x: 0, y: 0, w: 0, h: 0 }) // 显示坐标（相对承载图左上）
+const drawRect = reactive({ x: 0, y: 0, w: 0, h: 0 })
 let startX = 0
 let startY = 0
 
-// 把鼠标事件坐标换算到「图显示坐标系」（相对 imgEl 左上，未除 scale）
 function toDisplayCoord(e: MouseEvent): { x: number; y: number } | null {
   const img = imgEl.value
   if (!img) return null
@@ -200,20 +227,17 @@ function onStageMouseMove(e: MouseEvent) {
 function onStageMouseUp() {
   if (!drawing.value) return
   drawing.value = false
-  // 太小的框忽略（误点）
   if (drawRect.w < 12 || drawRect.h < 12) return
+  // 🔴 B3：框完只裁剪暂存生成题卡，**不自动识别**（待老师在卡上点「智能识别」确认）
   commitRegion()
 }
 
-// 把显示坐标的框换算回自然分辨率并裁剪、生成卡
 function commitRegion() {
   const s = scale.value || 1
-  // 显示坐标 → 自然分辨率坐标（显示坐标已含 scale，除回去）
   let nx = drawRect.x / s
   let ny = drawRect.y / s
   let nw = drawRect.w / s
   let nh = drawRect.h / s
-  // 夹取到图边界内
   nx = Math.max(0, Math.min(nx, naturalW.value))
   ny = Math.max(0, Math.min(ny, naturalH.value))
   nw = Math.min(nw, naturalW.value - nx)
@@ -233,10 +257,8 @@ function commitRegion() {
   }
   const card = createCard(rect, dataUrl)
   cards.value.push(card)
-  void recognizeCard(card)
 }
 
-// 离屏 canvas 在自然分辨率裁出区域 → 无损 PNG dataURL（禁压缩，R7）
 function cropRegion(rect: RegionRect): string | null {
   const img = imgEl.value
   if (!img) return null
@@ -245,16 +267,13 @@ function cropRegion(rect: RegionRect): string | null {
   canvas.height = rect.h
   const ctx = canvas.getContext('2d')
   if (!ctx) return null
-  // img 元素天然按自然分辨率绘制（drawImage 用自然像素坐标，不受 CSS 缩放影响）
   ctx.drawImage(img, rect.x, rect.y, rect.w, rect.h, 0, 0, rect.w, rect.h)
-  // 🔴 无损 PNG，禁传质量参数压缩
+  // 🔴 无损 PNG，禁传质量参数压缩（R7）
   return canvas.toDataURL('image/png')
 }
 
 function createCard(rect: RegionRect, dataUrl: string): IngestCard {
-  // 🔴 必须 reactive 包裹：cards 是 ref<IngestCard[]>，push 普通对象后异步回调持有的是原始引用，
-  // 在其上改 status/stem 不触发渲染（首帧"识别中"只因 push 触发数组重渲染+同步预设）。
-  // 包成 reactive 后对象本身即代理，识别/解题/改题/录入各异步突变均生效。
+  // 🔴 必须 reactive 包裹：异步识别/解题/批改各突变才触发渲染（见 bug 轮根因）。
   return reactive({
     id: ++cardSeq,
     rect,
@@ -264,6 +283,7 @@ function createCard(rect: RegionRect, dataUrl: string): IngestCard {
     selected: true,
     solved: false,
     recognizing: false,
+    needGrading: false,
     stem: '',
     qtype: '',
     options: [],
@@ -280,18 +300,26 @@ function createCard(rect: RegionRect, dataUrl: string): IngestCard {
     draftStem: '',
     draftAnswer: '',
     draftAnalysis: '',
+    grading: false,
+    graded: false,
+    gradeVerdict: null,
+    gradeFeedback: '',
+    gradeStudentAnswer: '',
+    gradeStandardAnswer: '',
+    gradeStandardAnalysis: '',
     ingesting: false,
     ingested: false,
   })
 }
 
-// ── 识别 ─────────────────────────────────────────────────────────────────
+// ── 智能识别 / 解题（B4）─────────────────────────────────────────────────
 function stripDataPrefix(dataUrl: string): string {
   const idx = dataUrl.indexOf(',')
   return idx >= 0 ? dataUrl.slice(idx + 1) : dataUrl
 }
 
-async function recognizeCard(card: IngestCard, solve = solveOnRecognize.value) {
+async function recognizeCard(card: IngestCard, solve = false) {
+  if (card.recognizing || card.ingesting) return
   card.status = 'recognizing'
   card.recognizing = true
   card.error = null
@@ -299,7 +327,6 @@ async function recognizeCard(card: IngestCard, solve = solveOnRecognize.value) {
     const result: RecognizeResult = await recognize({
       image_base64: stripDataPrefix(card.dataUrl),
       solve,
-      ...(gradeHint.value.trim() ? { grade_hint: gradeHint.value.trim() } : {}),
     })
     if (!result.ok || result.error) {
       card.status = 'failed'
@@ -320,6 +347,7 @@ function applyRecognizeResult(card: IngestCard, r: RecognizeResult, solved: bool
   card.stem = r.stem || ''
   card.qtype = r.qtype || ''
   card.options = Array.isArray(r.options) ? r.options : []
+  card.needGrading = !!r.need_grading
   if (solved) {
     card.solved = true
     card.answer = r.answer || ''
@@ -334,15 +362,31 @@ function applyRecognizeResult(card: IngestCard, r: RecognizeResult, solved: bool
   }
 }
 
-// 解题（重调识别带 solve=true）
+// 智能识别（OCR 富文本，不解题）
+function recognizeCardOnly(card: IngestCard) {
+  void recognizeCard(card, false)
+}
+
+// 解题（识别 + 解题 + 自动打标）
 function solveCard(card: IngestCard) {
-  if (card.recognizing || card.ingesting) return
   void recognizeCard(card, true)
+}
+
+// 批量识别所有待识别框（确认后识别的批量入口）
+async function recognizeAllPending() {
+  const pend = cards.value.filter((c) => c.status === 'pending' && !c.recognizing)
+  if (pend.length === 0) {
+    ElMessage.info('没有待识别的题框')
+    return
+  }
+  for (const card of pend) {
+    await recognizeCard(card, false)
+  }
 }
 
 function retryCard(card: IngestCard) {
   if (card.recognizing) return
-  void recognizeCard(card)
+  void recognizeCard(card, card.solved)
 }
 
 function removeCard(card: IngestCard) {
@@ -350,7 +394,86 @@ function removeCard(card: IngestCard) {
   if (i >= 0) cards.value.splice(i, 1)
 }
 
-// ── 改题 ─────────────────────────────────────────────────────────────────
+async function clearAll() {
+  if (cards.value.length === 0) return
+  try {
+    await ElMessageBox.confirm('清空所有题框重新框选？已识别但未录入的内容会丢失。', '清空重框', {
+      type: 'warning',
+      confirmButtonText: '清空',
+      cancelButtonText: '取消',
+    })
+    cards.value = []
+  } catch {
+    // 取消
+  }
+}
+
+// ── 批改（B4）：裁剪图 → 先解题 → 判学生作答对错，弹窗展示 ──────────────────
+async function gradeCard(card: IngestCard) {
+  if (card.grading) return
+  card.grading = true
+  try {
+    const knowledge = card.mainKp || ''
+    const chapter = selectedChapterLabel.value || ''
+    const r: GradeResult = await grade({
+      image_base64: stripDataPrefix(card.dataUrl),
+      ...(knowledge ? { knowledge } : {}),
+      ...(chapter ? { chapter } : {}),
+    })
+    if (!r.ok && r.error) {
+      ElMessage.error('批改失败：' + r.error)
+      return
+    }
+    card.graded = true
+    card.gradeVerdict = r.verdict
+    card.gradeFeedback = r.feedback || ''
+    card.gradeStudentAnswer = r.student_answer || ''
+    card.gradeStandardAnswer = r.standard_answer || ''
+    card.gradeStandardAnalysis = r.standard_analysis || ''
+    showGradeDialog(card)
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '批改失败')
+  } finally {
+    card.grading = false
+  }
+}
+
+function gradeVerdictText(v: string | null): string {
+  switch (v) {
+    case 'correct':
+      return '✅ 作答正确'
+    case 'wrong':
+      return '❌ 作答错误'
+    case 'partial':
+      return '⚠️ 部分正确'
+    case 'blank':
+      return '⬜ 未作答'
+    case 'uncertain':
+      return '❓ 存疑（建议人工复核）'
+    default:
+      return v || ''
+  }
+}
+
+// 批改结果弹窗（不内联占屏，B3 提示规范）
+function showGradeDialog(card: IngestCard) {
+  const lines = [
+    `<p><b>${gradeVerdictText(card.gradeVerdict)}</b></p>`,
+    card.gradeStudentAnswer ? `<p>学生作答：${escapeHtml(card.gradeStudentAnswer)}</p>` : '',
+    card.gradeStandardAnswer ? `<p>标准答案：${escapeHtml(card.gradeStandardAnswer)}</p>` : '',
+    card.gradeFeedback ? `<p style="color:#4e5969">点评：${escapeHtml(card.gradeFeedback)}</p>` : '',
+  ].filter(Boolean)
+  ElMessageBox.alert(lines.join(''), '批改结果', {
+    dangerouslyUseHTMLString: true,
+    confirmButtonText: '知道了',
+  })
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] || c))
+}
+
+// ── 编辑（原「改题」，B4 重命名为编辑）─────────────────────────────────────
 function startEdit(card: IngestCard) {
   card.draftStem = card.stem
   card.draftAnswer = card.answer
@@ -369,10 +492,26 @@ function cancelEdit(card: IngestCard) {
   card.editing = false
 }
 
-// ── 章节绑定（el-tree-select，懒加载） ─────────────────────────────────────
+// ── 章节绑定 ───────────────────────────────────────────────────────────────
 const chapterTreeData = ref<SubjectNode[]>([])
 const chapterTreeLoading = ref(false)
 const selectedSubjectId = ref<string>('')
+
+// 选中章节的 label（B4 批改 prompt 注入章节上下文用）
+const selectedChapterLabel = computed(() => {
+  const find = (nodes: SubjectNode[]): string => {
+    for (const n of nodes) {
+      const node = n as unknown as { id: string; title?: string; name?: string; children?: SubjectNode[] }
+      if (String(node.id) === selectedSubjectId.value) return node.title || node.name || ''
+      if (node.children?.length) {
+        const got = find(node.children)
+        if (got) return got
+      }
+    }
+    return ''
+  }
+  return selectedSubjectId.value ? find(chapterTreeData.value) : ''
+})
 
 async function loadChapterTree() {
   chapterTreeLoading.value = true
@@ -407,13 +546,11 @@ const ingestableCards = computed(() =>
 async function ingestOne(card: IngestCard): Promise<boolean> {
   card.ingesting = true
   try {
-    // ② 上传配图（无损 PNG Blob）
     const blob = dataUrlToBlob(card.dataUrl)
     const up = await uploadIngestImage(blob)
     const images: IngestQuestionImage[] = [
       { assetId: up.assetId, ossUrl: up.ossUrl, role: 'figure', seq: 0, isDecorative: 0 },
     ]
-    // ③ 录入草稿
     await ingestQuestion({
       status: '0',
       subjectId: selectedSubjectId.value,
@@ -449,7 +586,6 @@ async function ingestAll() {
   ingestingAll.value = true
   let okCount = 0
   try {
-    // 逐卡录入（有进度，禁重复点）
     for (const card of targets) {
       const ok = await ingestOne(card)
       if (ok) okCount++
@@ -474,7 +610,7 @@ function goMyQuestion() {
   router.push('/my-question')
 }
 
-// ── 框预览（显示坐标，叠在图上） ───────────────────────────────────────────
+// ── 框预览 ─────────────────────────────────────────────────────────────────
 function cardDisplayStyle(card: IngestCard) {
   const s = scale.value || 1
   return {
@@ -485,13 +621,11 @@ function cardDisplayStyle(card: IngestCard) {
   }
 }
 
-// 难度文本
 function difficultyText(d: number | null): string {
   if (d == null) return ''
   return `${d}星`
 }
 
-// verify 徽章类型
 function verifyTagType(v: string | null): 'success' | 'danger' | 'info' {
   if (v === 'pass') return 'success'
   if (v === 'fail') return 'danger'
@@ -504,6 +638,8 @@ function verifyText(v: string | null): string {
   if (v === 'degrade') return '验算降级'
   return v || ''
 }
+
+const pendingCount = computed(() => cards.value.filter((c) => c.status === 'pending').length)
 
 onMounted(() => {
   loadChapterTree()
@@ -551,11 +687,19 @@ onBeforeUnmount(() => {
     <div class="body">
       <!-- ══ 左：图像 + 框选舞台 ══ -->
       <section class="stage-pane">
-        <!-- 空态 -->
-        <div v-if="!hasImage" class="empty-stage" @click="triggerUpload">
+        <!-- 空态（B3：点击 / 拖拽 / 粘贴 三入口上传） -->
+        <div
+          v-if="!hasImage"
+          class="empty-stage"
+          :class="{ 'is-dragover': isDragOver }"
+          @click="triggerUpload"
+          @dragover="onDragOver"
+          @dragleave="onDragLeave"
+          @drop="onDrop"
+        >
           <el-icon class="empty-icon"><Upload /></el-icon>
-          <p class="empty-title">点击上传题/卷照片</p>
-          <p class="empty-hint">支持点击选择或直接粘贴（Ctrl+V）图片；上传后在图上拖框选区</p>
+          <p class="empty-title">点击 / 拖拽 / 粘贴 上传题卷照片</p>
+          <p class="empty-hint">上传后在图上拖框选区，框完在右侧确认识别</p>
         </div>
 
         <!-- 有图：工具条 + 舞台 -->
@@ -567,12 +711,26 @@ onBeforeUnmount(() => {
             <span class="zoom-val">{{ Math.round(scale * 100) }}%</span>
             <el-button text :icon="ZoomIn" @click="zoomIn" />
             <el-divider direction="vertical" />
-            <el-checkbox v-model="solveOnRecognize">识别时同时解题（较慢）</el-checkbox>
-            <el-input v-model="gradeHint" placeholder="学段提示（可选，如 七年级）" size="small" class="grade-input" />
-            <span class="stage-tip">在图上按住鼠标拖动画框，每框自动识别</span>
+            <el-button
+              size="small"
+              type="primary"
+              plain
+              :disabled="pendingCount === 0"
+              @click="recognizeAllPending"
+            >
+              识别全部待识别{{ pendingCount ? `（${pendingCount}）` : '' }}
+            </el-button>
+            <el-button size="small" text :disabled="cards.length === 0" @click="clearAll">清空重框</el-button>
+            <span class="stage-tip">按住鼠标拖动画框，框完在右侧逐题确认识别</span>
           </div>
 
-          <div ref="stageRef" class="stage-scroll">
+          <div
+            ref="stageRef"
+            class="stage-scroll"
+            @dragover="onDragOver"
+            @dragleave="onDragLeave"
+            @drop="onDrop"
+          >
             <div
               class="stage-canvas"
               :style="{ width: `${naturalW * scale}px`, height: `${naturalH * scale}px` }"
@@ -589,17 +747,15 @@ onBeforeUnmount(() => {
                 draggable="false"
                 alt="待框选题图"
               />
-              <!-- 已提交的框 -->
               <div
                 v-for="(card, idx) in cards"
                 :key="card.id"
                 class="region-box"
-                :class="{ 'is-failed': card.status === 'failed', 'is-done': card.status === 'done' }"
+                :class="{ 'is-failed': card.status === 'failed', 'is-done': card.status === 'done', 'is-pending': card.status === 'pending' }"
                 :style="cardDisplayStyle(card)"
               >
                 <span class="region-no">{{ idx + 1 }}</span>
               </div>
-              <!-- 正在画的框 -->
               <div
                 v-if="drawing"
                 class="region-box drawing"
@@ -627,7 +783,7 @@ onBeforeUnmount(() => {
 
         <el-empty
           v-if="cards.length === 0"
-          description="还没有框选。上传图片后在左侧拖框，每框生成一张题卡"
+          description="还没有框选。上传图片后在左侧拖框，框完在此逐题确认识别"
           :image-size="80"
         />
 
@@ -646,24 +802,30 @@ onBeforeUnmount(() => {
               />
               <span class="card-no">第 {{ idx + 1 }} 框</span>
               <el-tag v-if="card.ingested" type="success" size="small">已录入</el-tag>
+              <el-tag v-else-if="card.needGrading" size="small" type="warning" effect="plain">含作答</el-tag>
               <div class="card-top-spacer" />
               <el-button text :icon="Delete" size="small" :disabled="card.ingesting" @click="removeCard(card)" />
             </div>
 
-            <!-- 缩略图 -->
+            <!-- 缩略图（裁剪暂存图） -->
             <div class="card-thumb">
               <img :src="card.dataUrl" alt="框选区域" />
             </div>
 
-            <!-- 识别中 -->
-            <div v-if="card.status === 'recognizing'" class="card-loading">
-              <el-icon class="is-loading"><MagicStick /></el-icon>
-              <span>识别中…{{ solveOnRecognize ? '（含解题，约 30 秒）' : '（约 12 秒）' }}</span>
+            <!-- 待识别（B3：框完暂存，等老师确认识别）-->
+            <div v-if="card.status === 'pending'" class="card-pending">
+              <div class="pending-actions">
+                <el-button size="small" type="primary" :icon="MagicStick" @click="recognizeCardOnly(card)">
+                  智能识别
+                </el-button>
+                <el-button size="small" :icon="Delete" @click="removeCard(card)">删除</el-button>
+              </div>
             </div>
 
-            <!-- 待识别（理论上瞬间转走，兜底） -->
-            <div v-else-if="card.status === 'pending'" class="card-loading">
-              <span>待识别…</span>
+            <!-- 识别中 -->
+            <div v-else-if="card.status === 'recognizing'" class="card-loading">
+              <el-icon class="is-loading"><MagicStick /></el-icon>
+              <span>处理中…</span>
             </div>
 
             <!-- 识别失败 -->
@@ -677,7 +839,7 @@ onBeforeUnmount(() => {
 
             <!-- 已识别 -->
             <div v-else class="card-body">
-              <!-- 改题编辑态 -->
+              <!-- 编辑态 -->
               <template v-if="card.editing">
                 <div class="edit-field">
                   <label class="edit-label">题干</label>
@@ -715,6 +877,9 @@ onBeforeUnmount(() => {
                   >
                     {{ verifyText(card.verifyVerdict) }}
                   </el-tag>
+                  <el-tag v-if="card.graded && card.gradeVerdict" size="small" effect="dark">
+                    {{ gradeVerdictText(card.gradeVerdict) }}
+                  </el-tag>
                 </div>
 
                 <div class="stem-render">
@@ -734,7 +899,6 @@ onBeforeUnmount(() => {
                   </el-tag>
                 </div>
 
-                <!-- 解题结果 -->
                 <div v-if="card.solved && (card.answer || card.analysis)" class="solve-block">
                   <p v-if="card.answer" class="solve-label">答案</p>
                   <MarkdownMath v-if="card.answer" :content="card.answer" />
@@ -743,7 +907,7 @@ onBeforeUnmount(() => {
                   <div v-if="card.verifyDetail" class="verify-detail">{{ card.verifyDetail }}</div>
                 </div>
 
-                <!-- 卡操作 -->
+                <!-- B4 四功能：智能识别(重) / 解题 / 批改(条件) / 编辑 -->
                 <div class="card-actions">
                   <el-button
                     v-if="!card.solved"
@@ -754,7 +918,20 @@ onBeforeUnmount(() => {
                   >
                     解题
                   </el-button>
-                  <el-button size="small" :disabled="card.ingesting" @click="startEdit(card)">改题</el-button>
+                  <el-button
+                    v-if="card.needGrading"
+                    size="small"
+                    type="warning"
+                    :icon="DocumentChecked"
+                    :loading="card.grading"
+                    :disabled="card.ingesting"
+                    @click="gradeCard(card)"
+                  >
+                    批改
+                  </el-button>
+                  <el-button size="small" :icon="EditPen" :disabled="card.ingesting" @click="startEdit(card)">
+                    编辑
+                  </el-button>
                   <el-button
                     size="small"
                     type="primary"
@@ -849,14 +1026,16 @@ onBeforeUnmount(() => {
   gap: 10px;
   cursor: pointer;
   background: #fff;
-  transition: border-color 0.2s;
+  transition: border-color 0.2s, background 0.2s;
 }
-.empty-stage:hover {
-  border-color: #1e8a8a;
+.empty-stage:hover,
+.empty-stage.is-dragover {
+  border-color: #0fb488;
+  background: #f0fdf9;
 }
 .empty-icon {
   font-size: 48px;
-  color: #1e8a8a;
+  color: #0fb488;
 }
 .empty-title {
   font-size: 16px;
@@ -883,9 +1062,6 @@ onBeforeUnmount(() => {
   color: #4e5969;
   min-width: 42px;
   text-align: center;
-}
-.grade-input {
-  width: 180px;
 }
 .stage-tip {
   font-size: 12px;
@@ -914,10 +1090,14 @@ onBeforeUnmount(() => {
 /* 框 */
 .region-box {
   position: absolute;
-  border: 2px solid #1e8a8a;
-  background: rgba(30, 138, 138, 0.08);
+  border: 2px solid #0fb488;
+  background: rgba(15, 180, 136, 0.08);
   box-sizing: border-box;
   pointer-events: none;
+}
+.region-box.is-pending {
+  border-color: #f5a623;
+  background: rgba(245, 166, 35, 0.08);
 }
 .region-box.is-failed {
   border-color: #f53f3f;
@@ -930,7 +1110,7 @@ onBeforeUnmount(() => {
   position: absolute;
   left: 0;
   top: 0;
-  background: #1e8a8a;
+  background: #0fb488;
   color: #fff;
   font-size: 12px;
   line-height: 18px;
@@ -1009,6 +1189,13 @@ onBeforeUnmount(() => {
   object-fit: contain;
 }
 
+.card-pending {
+  padding: 4px 0 2px;
+}
+.pending-actions {
+  display: flex;
+  gap: 8px;
+}
 .card-loading {
   display: flex;
   align-items: center;
@@ -1070,7 +1257,7 @@ onBeforeUnmount(() => {
 .solve-label {
   font-size: 12px;
   font-weight: 600;
-  color: #4080ff;
+  color: #0fb488;
   margin: 6px 0 2px;
 }
 .verify-detail {
@@ -1085,6 +1272,7 @@ onBeforeUnmount(() => {
 .card-actions {
   margin-top: 10px;
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 

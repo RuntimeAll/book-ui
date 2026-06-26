@@ -30,7 +30,7 @@ const router = useRouter()
 
 const jobId = computed(() => String(route.params.jobId ?? ''))
 
-const ACTIVE_STATUS = new Set<IngestJobStatus>(['PENDING', 'EXTRACT_ING', 'SPLIT_ING'])
+const ACTIVE_STATUS = new Set<IngestJobStatus>(['PENDING', 'EXTRACT_ING', 'SPLIT_ING', 'SOLVING'])
 
 // ── 字典（题型标签） ────────────────────────────────────────
 const dict = useDictStore()
@@ -244,6 +244,8 @@ function statusLabel(s: IngestJobStatus | undefined): string {
       return '识别中'
     case 'SPLIT_ING':
       return '拆题中'
+    case 'SOLVING':
+      return '解题打标中'
     case 'DONE':
       return '已完成'
     case 'FAILED':
@@ -387,7 +389,7 @@ onBeforeUnmount(() => {
                 :disabled="isCommitted(it)"
                 @click="startEdit(it)"
               >
-                改题
+                编辑
               </el-button>
               <el-button
                 size="small"
