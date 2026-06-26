@@ -759,25 +759,32 @@ onBeforeUnmount(() => {
   transition: stroke-dashoffset 0.4s ease;
 }
 
-/* 球心 */
+/* 球心：🔴 绝对居中盖在进度环上 + line-height:1（防继承大行高致 pct/lbl 行盒重叠，
+   维护者实测「61%」与「拆题中」叠字）。pct 在上、lbl 在下，强制竖排紧凑。 */
 .mf-ball-core {
+  position: absolute;
+  inset: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 1px;
+  gap: 2px;
   color: #fff;
+  line-height: 1;
+  pointer-events: none;
   z-index: 1;
 }
 .mf-core-pct {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 700;
+  line-height: 1;
   letter-spacing: 0.2px;
   font-family: 'Space Mono', monospace;
 }
 .mf-core-lbl {
   font-size: 10px;
   font-weight: 600;
+  line-height: 1;
   letter-spacing: 0.3px;
 }
 
