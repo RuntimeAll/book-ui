@@ -645,6 +645,51 @@ const currentRailEmpty = computed(
 )
 
 // ---------------------------------------------------------------------------
+// 🔴 PRD-C-105 件C（AC-C1/G-C）— 解题首 token 前「静默窗」活进度占位。
+//   现象：举一反三发起后，解题阶段首个 token 出现前有 ~8-20s（opus 读图+推理），此刻
+//   rail 已收到 solve 帧（→ currentRailEmpty=false，原「思考中」气泡被关掉），但聊天流里
+//   既无 token 文本、母题卡（artifact）也未 ready → 那块空白像卡死。
+//   补法（stage 驱动、不死文字）：sending 期 + 还没开始打字（!typingBubbleActive）+ 母题卡未出
+//   （artifact 空）+ 当前轮某「定题中」核心阶段在跑（solve/classify/label） → 在流里显一个
+//   带动效的活进度占位气泡，文案随【当前在跑的定题阶段】走（solve→正在读题与推理…）。
+//   首 token 一到 onToken 置 typingBubbleActive=true → 占位自动让位给打字机流式文本。
+//   richtextStem / motherCard 任一出现也让位（已读到干净题面/结构化卡，不再空白）。
+// ---------------------------------------------------------------------------
+// onToken 首字到达即置位（驱动占位让位给真正的流式文本）；每轮 dispatch 复位。
+const typingBubbleActive = ref(false)
+// 「定题中」核心阶段（与 PhasedStatusRail dingNodes 同口径）的活进度文案。
+const SOLVE_STAGE_CAST: Record<string, string> = {
+  solve: '正在读题与推理，一步步算…',
+  classify: '正在判定年级与章节…',
+  label: '正在深度解析、做 10 维打标…',
+}
+const SOLVE_STAGE_KEYS = ['solve', 'classify', 'label']
+// 当前轮正在跑的「定题中」核心阶段（按 SOLVE_STAGE_KEYS 顺序取末一个 running，无则 null）。
+const runningSolveStage = computed<VariantStage | null>(() => {
+  const stages = currentRail.value?.stages ?? []
+  let hit: VariantStage | null = null
+  for (const s of stages) {
+    if (SOLVE_STAGE_KEYS.includes(s.key) && s.status === 'running') hit = s
+  }
+  return hit
+})
+// 占位是否显示：发送中 + 未开始打字 + 母题卡/富文本题面都还没出 + 有定题阶段在跑。
+const showSolvePlaceholder = computed(
+  () =>
+    sending.value &&
+    !typingBubbleActive.value &&
+    !artifact.value &&
+    !richtextStem.value &&
+    !!runningSolveStage.value
+)
+// 占位文案：优先该阶段的 detail（BE 真子帧），否则按 key 取预设句，再否则用阶段标题兜底。
+const solvePlaceholderText = computed(() => {
+  const s = runningSolveStage.value
+  if (!s) return ''
+  return s.detail || SOLVE_STAGE_CAST[s.key] || s.title || '正在读题与推理…'
+})
+
+// ---------------------------------------------------------------------------
 // 🔴 PRD-A-021 R1 收口：忙态单一事实源（busy）。
 //   sending = 聊天/出题 SSE 流在跑（generate / 解析 / 换一批 / 答疑 / 母题确认续聊）。
 //   但「重生 / 验算 / 入库 / 加篮 / 重验」走结构化 BE 端点、不置 sending、与 SSE 并发。
@@ -1091,6 +1136,8 @@ function dispatch(
   sending.value = true
   thinking.value = true
   typingBubble = null
+  // 🔴 PRD-C-105 件C：新一轮重置「已开始打字」标志 → 解题静默窗占位重新可显（首 token 到再让位）。
+  typingBubbleActive.value = false
   // 🔴 R6：本轮带图（新母题）→ 清上一轮富文本题面，避免旧题面串到新母题占位区。
   if (images && images.length) richtextStem.value = ''
   // 🔴 R6（2026-06-22 拍板·切图尽早触发）：母题图一就绪（有母题原图 + 本轮带图、sending 已置）即触发切图，
@@ -1130,6 +1177,8 @@ function dispatch(
         // 思维外放（用户反馈①）：BE 已在服务端滤掉 JSON 中间产物的 token
         //（skip_stream），到这里的都是人话（答疑/解释），打字机逐字渲染。
         thinking.value = false
+        // 🔴 PRD-C-105 件C：首 token 到达 → 关掉解题静默窗占位（让位给真正的流式文本）。
+        typingBubbleActive.value = true
         if (!typingBubble) {
           typingBubble = reactive<Bubble>({ type: 'bubble', role: 'ai', kind: 'normal', text: '' })
           stream.value.push(typingBubble)
@@ -2541,6 +2590,26 @@ onBeforeUnmount(() => {
             <span class="thinking-text">AI 正在分析 / 出题…（出 3 道含解析，稍候）</span>
           </div>
         </div>
+
+        <!-- 🔴 PRD-C-105 件C（AC-C1/G-C）：解题首 token 前「静默窗」活进度占位。
+             条件 = 发送中 + 还没开始打字 + 母题卡/富文本题面未出 + 当前轮某「定题中」核心阶段在跑。
+             文案随 runningSolveStage 走（solve→正在读题与推理…），骨架 + 呼吸点动效，让老师看出在动；
+             首 token 一到（onToken 置 typingBubbleActive）即让位给真正的流式文本。 -->
+        <div v-if="showSolvePlaceholder" class="msg-row is-ai" data-testid="solve-placeholder">
+          <div class="bubble ai-normal solve-placeholder">
+            <div class="sp-head">
+              <span class="sp-brain">🧠</span>
+              <span class="sp-dot" /><span class="sp-dot" /><span class="sp-dot" />
+              <span class="sp-text">{{ solvePlaceholderText }}</span>
+            </div>
+            <!-- 骨架行（呼吸态），暗示「正文马上来」 -->
+            <div class="sp-skeleton">
+              <span class="sp-line w90" />
+              <span class="sp-line w75" />
+              <span class="sp-line w60" />
+            </div>
+          </div>
+        </div>
       </div>
 
       <footer class="chat-input">
@@ -3368,6 +3437,87 @@ onBeforeUnmount(() => {
   font-size: 12px;
   color: var(--faint);
   margin-left: 4px;
+}
+
+/* 🔴 PRD-C-105 件C：解题静默窗活进度占位（大脑 + 呼吸点 + 骨架行）。 */
+.solve-placeholder {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  min-width: 220px;
+}
+.sp-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.sp-brain {
+  font-size: 14px;
+  animation: sp-breathe 1.8s infinite ease-in-out;
+}
+.sp-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--violet);
+  animation: dot-pulse 1.2s infinite ease-in-out;
+}
+.sp-dot:nth-child(3) {
+  animation-delay: 0.2s;
+}
+.sp-dot:nth-child(4) {
+  animation-delay: 0.4s;
+}
+.sp-text {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--violet-700);
+  margin-left: 4px;
+}
+.sp-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sp-line {
+  height: 9px;
+  border-radius: 5px;
+  background: linear-gradient(
+    90deg,
+    var(--violet-100) 25%,
+    rgba(255, 255, 255, 0.65) 50%,
+    var(--violet-100) 75%
+  );
+  background-size: 200% 100%;
+  animation: sp-shimmer 1.4s infinite linear;
+}
+.sp-line.w90 {
+  width: 90%;
+}
+.sp-line.w75 {
+  width: 75%;
+}
+.sp-line.w60 {
+  width: 60%;
+}
+@keyframes sp-breathe {
+  0%,
+  100% {
+    opacity: 0.5;
+    transform: scale(0.92);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.05);
+  }
+}
+@keyframes sp-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
 }
 
 .chat-input {
