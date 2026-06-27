@@ -587,13 +587,12 @@ function onPickExamType(v: string) {
   emit('edit-dna', { index: props.item.index, field: 'exam_type', value: v })
 }
 
-// ---- T3：难度点星覆盖（1-4，老师覆盖优先级最高）----
-function onPickDifficulty(n: number) {
-  if (isBusy.value) return
-  if (n < 1 || n > 4) return
-  if (Math.round(props.item.difficulty) === n) return
-  emit('edit-dna', { index: props.item.index, field: 'difficulty', value: n })
-}
+// ---- 🔴 PRD-C-105 件G2（AC-G2/G-G2/PRD D4）：难度星改为【只读展示】----
+//   原 onPickDifficulty 让老师点星把难度覆盖成 n（emit edit-dna field='difficulty'）。但难度是
+//   soft_regen 维、重生时会被表驱动值覆盖，且违「难度只表驱动、不取人/LLM 自评」铁律。
+//   故移除点星编辑入口：难度星只读、点击无反应、不再 emit difficulty 编辑。调难度的正路 =
+//   双旋钮（变式系数 + 难度目标档，index.vue 顶部），保留不动。
+//   ⚠️ 代码层断言（G-G2）：本文件不再存在 emit('edit-dna', {field:'difficulty'}) 路径。
 
 // ---- T3：标签多选弹层（候选 = tagsByKp（按主考点）+ 手输补充）----
 const tagPopover = ref(false)
@@ -727,14 +726,14 @@ function saveFieldEdit() {
     <header class="card-head">
       <span class="seq">{{ item.index }}</span>
       <span v-if="item.qtype" class="meta-tag">{{ item.qtype }}</span>
-      <!-- 可点星级：点第 n 颗 = 把难度覆盖成 n（1-4），老师覆盖优先级最高 -->
-      <span v-if="difficultyStars" class="diff-stars" :title="`${difficultyStars.title}（点星可改）`">
+      <!-- 🔴 PRD-C-105 件G2：难度星【只读展示】（点星改难度入口已移除；难度只表驱动，调档走双旋钮）。
+           去掉 @click / is-click，title 改为只读说明，不再 emit edit-dna field='difficulty'。 -->
+      <span v-if="difficultyStars" class="diff-stars is-readonly" :title="`${difficultyStars.title}（只读 · 调难度走顶部「难度目标档」旋钮）`">
         <span
           v-for="n in 4"
           :key="`s${n}`"
-          class="star is-click"
+          class="star"
           :class="n <= Math.round(item.difficulty) ? 'is-full' : 'is-empty'"
-          @click="onPickDifficulty(n)"
         >{{ n <= Math.round(item.difficulty) ? '★' : '☆' }}</span>
       </span>
       <span class="head-spacer" />
@@ -1194,23 +1193,22 @@ function saveFieldEdit() {
               <span v-if="dimDirty('exam_type')" class="dim-dirty">待重生⏳</span>
             </span>
 
-            <!-- 难度（soft_regen：点星覆盖，改→待重生；这里给文字档位） -->
+            <!-- 🔴 PRD-C-105 件G2：难度【只读展示】（点星改难度入口已移除；难度只表驱动，调档走双旋钮）。
+                 去掉 @click / is-click，不再 emit edit-dna field='difficulty'；仅显档位文字。 -->
             <span class="dna-k">
               难度
-              <span class="rc-badge" :class="`rc-${classBadge('difficulty').cls}`" :title="classBadge('difficulty').hint">{{ classBadge('difficulty').label }}</span>
+              <span class="rc-badge rc-readonly" title="难度由难度表驱动，只读；调难度走顶部「难度目标档」旋钮">只读</span>
             </span>
             <span class="dna-v dna-diff">
-              <span class="diff-stars-inline">
+              <span class="diff-stars-inline is-readonly" :title="`难度 ${Math.round(item.difficulty)}（只读 · 调难度走顶部「难度目标档」旋钮）`">
                 <span
                   v-for="n in 4"
                   :key="`ds${n}`"
-                  class="star is-click"
+                  class="star"
                   :class="n <= Math.round(item.difficulty) ? 'is-full' : 'is-empty'"
-                  @click="onPickDifficulty(n)"
                 >{{ n <= Math.round(item.difficulty) ? '★' : '☆' }}</span>
               </span>
               <span class="diff-label">{{ difficultyLabel(item.difficulty) }}（{{ Math.round(item.difficulty) }}）</span>
-              <span v-if="dimDirty('difficulty')" class="dim-dirty">待重生⏳</span>
             </span>
 
             <!-- 场景（soft_regen：点击-说话改 / 改→待重生） -->
