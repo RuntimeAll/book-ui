@@ -607,6 +607,9 @@ const hasFigureCol = computed(
             <template v-if="dna?.models.length">
               <span v-for="m in dna.models" :key="m.id" class="mc-model"><InlineMath :content="m.name || m.id" /></span>
             </template>
+            <!-- 🔴 PRD-C-106 B4③c·诚实三态：真无考模型（BE model_flag=no_model）→ 明示「无考模型」，
+                 非空白 / 非「未标」 / 非 M00 占位。有模型走上面真模型 chips；旧线程无 flag 且 models 空亦视无模型。 -->
+            <span v-else-if="dna?.noModel" class="mc-no-model" title="这道题没有对应的考试解题模型（不硬凑 M00 占位）">无考模型</span>
             <span v-else class="mc-muted">未标</span>
           </span>
 
@@ -1089,6 +1092,16 @@ const hasFigureCol = computed(
   border: 1px solid var(--violet-line);
   border-radius: 999px;
   padding: 1px 9px;
+}
+/* 🔴 PRD-C-106 B4③c·诚实三态「无考模型」明示态（灰中性，区别于真模型 violet chips、不报错不空白） */
+.mc-no-model {
+  font-size: 11.5px;
+  color: var(--muted);
+  background: var(--bg-soft);
+  border: 1px dashed var(--line);
+  border-radius: var(--r-xs);
+  padding: 1px 9px;
+  font-weight: 600;
 }
 .mc-tag {
   font-size: 11.5px;

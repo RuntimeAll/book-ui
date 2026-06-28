@@ -1279,6 +1279,8 @@ function saveFieldEdit() {
               <template v-if="dna.models.length">
                 <span v-for="m in dna.models" :key="m.id" class="model-pill"><InlineMath :content="m.name || m.id" /></span>
               </template>
+              <!-- 🔴 PRD-C-106 B4③c·诚实三态：真无考模型 → 明示「无考模型」（非空白/非 M00 占位） -->
+              <span v-else-if="dna.noModel" class="no-model-pill" title="这道题没有对应的考试解题模型（不硬凑 M00）">无考模型</span>
               <span v-else class="dna-muted">未标</span>
               <span v-if="dimDirty('models')" class="dim-dirty">待重生⏳</span>
               <el-popover :visible="modelPopover" placement="bottom-start" :width="300" trigger="manual">
@@ -2224,6 +2226,17 @@ function saveFieldEdit() {
 }
 .model-pill.is-chosen {
   cursor: pointer;
+}
+/* 🔴 PRD-C-106 B4③c·诚实三态「无考模型」明示态（灰中性虚线，区别真模型 violet 实 chip） */
+.no-model-pill {
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--bg-soft);
+  border: 1px dashed var(--line);
+  border-radius: var(--r-xs);
+  padding: 2px 9px;
+  display: inline-block;
+  font-weight: 600;
 }
 .tag-pop-note {
   margin: 8px 0 0;

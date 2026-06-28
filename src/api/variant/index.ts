@@ -245,10 +245,21 @@ export interface VariantDna {
   /** 场景（"纯代数" 或一句话场景；点击-说话改 → revise target=scene） */
   scene: string | null
   /**
-   * PRD-C-015 块② — 解题模型维（双轴指纹「怎么解」轴；1~3 项，含保底 M00 概念直用）。
+   * PRD-C-015 块② — 解题模型维（双轴指纹「怎么解」轴；1~3 项）。
    * field=models，归 rewrite_solve 视觉档（改 models=换解法=重写解析）。BE 缺失 → []。
    */
   models: VariantModel[]
+  /**
+   * 🔴 PRD-C-106 B4③c·诚实三态：BE 去 M00 兜底后，真无考模型 → model_flag="no_model"。
+   *   FE 据此把模型行渲染「无考模型」明示态（非空白/非「未标」/非 M00）。有模型 → null（出真模型）。
+   *   BE 缺该键（旧后端/旧线程）→ null；此时若 models 为空，noModel 由派生逻辑兜底判（见 pickDna）。
+   */
+  modelFlag: string | null
+  /**
+   * 🔴 PRD-C-106 B4③c：是否「无考模型」展示态（modelFlag==="no_model" 或 无 flag 但 models 空）。
+   *   模板直读它渲染「无考模型」徽章，与 BE mother_card no_model 同口径。
+   */
+  noModel: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -572,6 +583,13 @@ function pickDna(o: Record<string, unknown>): VariantDna {
     scene: str(d.scene) ?? str(d.scenario),
     // PRD-C-015 块②：models 维（[{id,name}]；兼容嵌套 d.models 或散键，缺失 → []）
     models: pickModels(d.models),
+    // 🔴 PRD-C-106 B4③c·诚实三态：model_flag 透传（BE mother_card.dna.model_flag / _item_dna）。
+    //   缺键 → null。noModel 派生：flag==="no_model" 显式无模型；或 无 flag 但 models 空 → 兜底视作无模型态。
+    modelFlag: str(d.model_flag) ?? str(d.modelFlag),
+    noModel:
+      (str(d.model_flag) ?? str(d.modelFlag)) === 'no_model' ||
+      (d.no_model === true || d.noModel === true) ||
+      ((str(d.model_flag) ?? str(d.modelFlag)) == null && pickModels(d.models).length === 0),
   }
 }
 
