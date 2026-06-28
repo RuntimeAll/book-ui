@@ -2,8 +2,7 @@
 import { computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import QuestionBasket from '@/components/business/QuestionBasket/index.vue'
-import PaperBasketFab from '@/components/business/PaperBasketFab/index.vue'
+import MultiFunctionFab from '@/components/business/MultiFunctionFab/index.vue'
 import { useUserStore } from '@/store/user'
 
 const router = useRouter()
@@ -88,34 +87,24 @@ function isActive(path: string): boolean {
   return base.length > 1 && route.path.startsWith(base)
 }
 
-// U 卡顺手实装 P-2 — 试题栏 FAB 路由白名单（仅题库 / 卷库 / 工作台显示）。
-// Q 卡正式排除 /question/compose（工作台自身已展示题目列表，FAB 嵌套冗余）。
-const showQuestionBasket = computed(() => {
-  // 组卷工作台自身已是组题上下文，FAB 浮在「创建试卷」CTA 上属冗余遮挡 → 与 /question/compose 同理排除
-  if (route.path === '/question/compose' || route.path.startsWith('/papers/workbench')) {
+// PRD-A-002 B1 — 多功能球 hub（合并原 试题栏/试卷篮/拆题 三球为一）。
+//   显示白名单 = 三球白名单的并集（题库 / 卷库 / 工作台 / 我的题库 / 举一反三）。
+//   排除组卷上下文页（/question/compose、/papers/basket、/papers/workbench：已是组题/
+//   组卷上下文，球冗余压 CTA）；排除审核页（/ingest/*：已是作业上下文）。
+const showMultiFunctionFab = computed(() => {
+  if (
+    route.path === '/question/compose'
+    || route.path === '/papers/basket'
+    || route.path.startsWith('/papers/workbench')
+    || route.path.startsWith('/ingest/')
+  ) {
     return false
   }
   return route.path.startsWith('/question/')
     || route.path.startsWith('/papers/')
     || route.path === '/workspace'
-    // 🔴 PRD-A-021 S1：举一反三页（/ai-variant）单题「加入试题篮」走同一 useQuestionBasket
-    //   singleton，但全局试题栏 FAB/抽屉原白名单未含此路由 → 加进篮看不到篮子。补进白名单，
-    //   复用题库/卷库同款全局组件（共享组件铁则），不重造。
+    || route.path === '/my-question'
     || route.path === '/ai-variant'
-})
-
-// PRD-001 — 旧绿色试卷篮 FAB/dialog(818 行)已下线，功能迁入 /papers/basket 三栏工作台。
-//   usePaperBasket 状态 composable 保留(外层"加入试卷篮"入口 + 工作台共享态)。
-// PRD-001 回归补丁 — 新增轻量绿色试卷篮 FAB(仅入口+角标，点击跳工作台，不复活旧 dialog)。
-//   白名单同试题栏(题库/卷库/工作台)，但在工作台本页隐藏(避免"点了进当前页")。
-const showPaperBasketFab = computed(() => {
-  // /papers/basket 三栏工作台 + /papers/workbench 组卷台：已在组卷上下文，FAB 冗余且压 CTA → 隐藏
-  if (route.path === '/papers/basket' || route.path.startsWith('/papers/workbench')) {
-    return false
-  }
-  return route.path.startsWith('/question/')
-    || route.path.startsWith('/papers/')
-    || route.path === '/workspace'
 })
 
 function handleUpgrade() {
@@ -196,11 +185,9 @@ function handleUpgrade() {
       <RouterView />
     </el-main>
 
-    <!-- 全局试题栏（U 卡 P-2 — 路由白名单：仅题库 / 卷库 / 工作台显示，登录 / home 隐藏） -->
-    <QuestionBasket v-if="showQuestionBasket" />
-
-    <!-- 全局试卷篮入口 FAB（PRD-001 回归补丁 — 绿色，点击跳 /papers/basket 三栏工作台） -->
-    <PaperBasketFab v-if="showPaperBasketFab" />
+    <!-- 全局多功能球 hub（PRD-A-002 B1 — 合并 试题栏/试卷篮/拆题 三球为一：
+         单击展开 hub（＋录入新题 + 进行中/试题栏/试卷篮 三 tab），收起态球内进度环，可拖动） -->
+    <MultiFunctionFab v-if="showMultiFunctionFab" />
   </el-container>
 </template>
 
