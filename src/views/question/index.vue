@@ -20,7 +20,6 @@ import ContentWrap from '@/components/ContentWrap/index.vue'
 import SearchWrap from '@/components/SearchWrap/index.vue'
 import QuestionCard from '@/components/business/QuestionCard/index.vue'
 import SketchPad from '@/components/business/SketchPad/index.vue'
-import FontSizeSwitch from '@/components/business/FontSizeSwitch/index.vue'
 import { useFontScale } from '@/composables/useFontScale'
 
 // ── 路由 ────────────────────────────────────────────────────
@@ -449,7 +448,6 @@ onMounted(async () => {
               共 {{ total }} 题
             </el-tag>
           </div>
-          <FontSizeSwitch />
         </div>
 
         <!-- 题目列表 -->

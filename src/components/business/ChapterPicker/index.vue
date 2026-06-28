@@ -6,7 +6,7 @@
  * 🔴 lazyTree 实际一次返整棵嵌套树（后端忽略 parentId，见 api/question/index.ts 注释），
  *    故这里挂载时拉一次全树喂 el-tree-select :data（非懒加载），选中后 label 也能正确解析。
  */
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import { lazyTree, type SubjectNode } from '@/api/question/index'
 
 const props = withDefaults(
@@ -67,6 +67,37 @@ const isUnmatched = computed<boolean>(
   () => !loading.value && treeData.value.length > 0 && !!selected.value && resolvedTitle.value == null,
 )
 
+// 🔴 自动归位「根治」：递归求选中节点的祖先路径（含自身）id 列表，喂 default-expanded-keys，
+//    让下拉一打开就展开到选中节点那一层（而非收起到根，逼用户手动逐层翻）。
+function findPath(nodes: SubjectNode[], id: string, acc: string[]): string[] | null {
+  for (const n of nodes) {
+    const next = [...acc, String(n.id)]
+    if (String(n.id) === id) return next
+    if (n.children && n.children.length) {
+      const r = findPath(n.children, id, next)
+      if (r) return r
+    }
+  }
+  return null
+}
+const expandedKeys = computed<string[]>(() => {
+  if (!selected.value || treeData.value.length === 0) return []
+  return findPath(treeData.value, selected.value, []) ?? []
+})
+
+// 展开只解决「层已打开」，还要把选中节点滚进可视区中央 = 真·归位。
+// 下拉打开后（popper 异步挂到 body）查带 highlight-current 的 .is-current 节点 scrollIntoView。
+function onVisibleChange(v: boolean) {
+  if (!v || !selected.value) return
+  nextTick(() => {
+    // popper 有挂载 + 展开过渡，给一帧多的时间再定位
+    setTimeout(() => {
+      const el = document.querySelector('.chapter-picker-pop .el-tree-node.is-current')
+      if (el) el.scrollIntoView({ block: 'center' })
+    }, 50)
+  })
+}
+
 async function loadTree() {
   loading.value = true
   try {
@@ -95,9 +126,14 @@ onMounted(loadTree)
     clearable
     filterable
     :render-after-expand="false"
+    :default-expanded-keys="expandedKeys"
+    :current-node-key="selected"
+    highlight-current
+    popper-class="chapter-picker-pop"
     placeholder="选择章节 / 知识点"
     class="chapter-picker"
     @update:model-value="(v: string) => handleChange(v)"
+    @visible-change="onVisibleChange"
   >
     <!-- label 解析逻辑：
          · node-key 在树里命中 → label 有值，正常显节点名。

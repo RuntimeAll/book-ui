@@ -100,6 +100,28 @@ const difficult = ref<number>(0) // 0 = 未设；1-4 星
 // 自由标签（只读展示，编辑态从 detail.freeTags 回填；标签增删走专门的标签管理，本页只呈现）
 const freeTags = ref<FreeTagVo[]>([])
 
+// ── 来源（只读展示，编辑态从 detail 回填；不进 save 提交）──────────────────────
+// BE QuestionDetailVo 已回填 examYear / examPaperName / regionCode / sourceType
+// （QuestionServiceImpl.selectById L215-223）。约 63% 题填充，空字段不显示。
+const examYear = ref<string>('')
+const examPaperName = ref<string>('')
+const regionCode = ref<string>('')
+const sourceType = ref<number>(0) // 0 = 未设；1中考真题/2模拟/3期末/4月考/5单元/6自编/9其他
+const SOURCE_TYPE_LABELS: Record<number, string> = {
+  1: '中考真题',
+  2: '模拟',
+  3: '期末',
+  4: '月考',
+  5: '单元',
+  6: '自编',
+  9: '其他',
+}
+const sourceTypeLabel = computed(() => SOURCE_TYPE_LABELS[sourceType.value] ?? '')
+// 整块是否有任意来源字段（全空则整行隐藏）
+const hasSource = computed(
+  () => !!sourceTypeLabel.value || !!examYear.value || !!regionCode.value || !!examPaperName.value,
+)
+
 // ── 核心数据模型：整题 block 文档 ────────────────────────────────────────────
 const doc = ref<QuestionBlockDoc>(emptyDoc())
 const loading = ref(false)
@@ -120,6 +142,11 @@ async function loadDetail() {
     if (detail?.difficult != null) difficult.value = Number(detail.difficult)
     if (detail?.subjectId != null) subjectId.value = String(detail.subjectId)
     freeTags.value = Array.isArray(detail?.freeTags) ? detail.freeTags : []
+    // 来源只读回填（空字段保持空 ref，模板 v-if 控制不显示）
+    examYear.value = detail?.examYear != null ? String(detail.examYear) : ''
+    examPaperName.value = detail?.examPaperName != null ? String(detail.examPaperName) : ''
+    regionCode.value = detail?.regionCode != null ? String(detail.regionCode) : ''
+    sourceType.value = detail?.sourceType != null ? Number(detail.sourceType) : 0
     // block 文档无损还原（G2 FE 侧）：parseBlockDoc 接受 JSON 字符串
     const parsed = parseBlockDoc(detail?.blockJson)
     if (parsed && parsed.rows.length > 0) {
@@ -608,6 +635,16 @@ watch(questionId, async (newId) => {
             <span class="meta-label">章节</span>
             <ChapterPicker v-model="subjectId" />
           </div>
+          <!-- 来源（只读展示，空字段不显示；整块全空则整行隐藏）-->
+          <div v-if="hasSource" class="meta-item meta-item-source">
+            <span class="meta-label">来源</span>
+            <span class="meta-source-text">
+              <span v-if="sourceTypeLabel" class="meta-source-seg">{{ sourceTypeLabel }}</span>
+              <span v-if="examYear" class="meta-source-seg">{{ examYear }}年</span>
+              <span v-if="regionCode" class="meta-source-seg">{{ regionCode }}</span>
+              <span v-if="examPaperName" class="meta-source-seg">{{ examPaperName }}</span>
+            </span>
+          </div>
           <div class="meta-item meta-item-tags">
             <span class="meta-label">自由标签</span>
             <template v-if="freeTags.length > 0">
@@ -982,6 +1019,22 @@ watch(questionId, async (newId) => {
 }
 .meta-item-chapter :deep(.chapter-picker) {
   width: 240px;
+}
+
+/* 来源只读展示（meta 行风格，跟 meta-label 同色系，纯文本不可编辑） */
+.meta-source-text {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 13px;
+  color: #1d2129;
+}
+/* 段间「·」分隔：靠相邻兄弟选择器加，避免空段留悬空分隔符 */
+.meta-source-seg + .meta-source-seg::before {
+  content: '·';
+  margin-right: 6px;
+  color: #c9cdd4;
 }
 
 /* 自由标签可换行 */
