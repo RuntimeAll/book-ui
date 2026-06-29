@@ -21,7 +21,7 @@ declare module 'vue-router' {
 
 // 无需登录即可访问的白名单
 // U 卡 段⑧ — /register 加入白名单（注册时不能强制登录）
-const PUBLIC_ROUTES = new Set<string>(['/login', '/register'])
+const PUBLIC_ROUTES = new Set<string>(['/login', '/register', '/geo-engine-test'])
 
 // 无权限时的重定向落点（已登录但角色不匹配 meta.roles）
 const NO_PERMISSION_REDIRECT = '/question/index'
@@ -194,6 +194,12 @@ const router = createRouter({
       path: '/register',
       name: 'Register',
       component: () => import('@/views/register/index.vue'),
+    },
+    // PRD-C-110 B1 — geo-engine 引擎自检页（无 layout，免登录；懒加载，prod 不打进首屏 chunk）
+    {
+      path: '/geo-engine-test',
+      name: 'GeoEngineTest',
+      component: () => import('@/views/dev/GeoEngineTest.vue'),
     },
   ],
 })
