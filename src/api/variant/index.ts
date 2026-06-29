@@ -1892,6 +1892,75 @@ export async function composeVariantFigure(
   }
 }
 
+/** compose_variant + format=dsl 返回（PRD-C-110 B2·渲染切：客户端渲活图）。 */
+export interface ComposeFigureDslResult {
+  ok: boolean
+  /**
+   * 🔴 中性几何 JSON DSL（合 geo-engine schema）：{bbox,axis,objects:[...]}。
+   *   FE 用 geoEngine.renderDSL 渲成 SVG 活图（红点可拖、派生联动）；入库时 exportPNG 出 PNG 上 OSS。
+   *   needs_figure=true / 不合 schema 时为 null（→ ⚠待补图，不静默无图）。
+   */
+  dsl: Record<string, unknown> | null
+  /** 本变式是否需要配图（true 但无 dsl → ⚠待补图） */
+  needsFigure: boolean
+  /** 文案，外显给老师 */
+  reason: string | null
+  /** schema 校验错误（降级时 BE 可带，调试/透明用） */
+  schemaErrs: string[] | null
+  /** 🔴 配图主动引导（缺省 false）：本应有图却没产出 DSL → 引导补描述。 */
+  needUserDesc: boolean
+}
+
+/**
+ * compose_variant + format=dsl：为某道变式造**中性 DSL**（客户端渲活图，替代服务端无头出 PNG）。
+ * 与 composeVariantFigure 同端点/同入参，只多传 format:'dsl'；返回 dsl 而非 png_base64。
+ * @param correctionPrompt 可选，老师对上一版图的修正提示词（图片重生时传）。
+ */
+export async function composeVariantFigureDsl(
+  threadId: string,
+  ruoyiToken: string,
+  params: {
+    stem: string
+    answer?: string
+    itemId: number | string
+    correctionPrompt?: string
+  }
+): Promise<ComposeFigureDslResult> {
+  const res = await fetch('/agent/variant/compose-figure', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      mode: 'compose_variant',
+      format: 'dsl',
+      thread_id: threadId,
+      ruoyi_token: ruoyiToken,
+      stem: params.stem,
+      answer: params.answer,
+      item_id: params.itemId == null ? undefined : String(params.itemId),
+      correction_prompt: params.correctionPrompt,
+    }),
+  })
+  if (!res.ok) {
+    const detail = await res.json().then(readableDetail).catch(() => '')
+    throw new Error(detail || `/variant/compose-figure(dsl) ${res.status}`)
+  }
+  const d = (await res.json()) as Record<string, unknown>
+  const dsl =
+    d.dsl && typeof d.dsl === 'object' && !Array.isArray(d.dsl)
+      ? (d.dsl as Record<string, unknown>)
+      : null
+  const errsRaw = d.schema_errs ?? d.schemaErrs
+  const schemaErrs = Array.isArray(errsRaw) ? errsRaw.map((e) => String(e)) : null
+  return {
+    ok: d.ok === true && !!dsl,
+    dsl,
+    needsFigure: d.needs_figure === true || d.needsFigure === true,
+    reason: str0(d.reason),
+    schemaErrs,
+    needUserDesc: d.need_user_desc === true || d.needUserDesc === true,
+  }
+}
+
 /**
  * PRD-C-100 B3-配图：把后端错误体（FastAPI {detail} / 自定义 {error}）摊成可读字符串，
  * 避免数组/对象 detail 被直接拼进 Error 变成 `[object Object]`。
