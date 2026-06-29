@@ -359,6 +359,13 @@ function ensureVariantFigure(index: number): VariantFigureState {
  *     不卡其余题（老师可手动重切单题）。
  */
 function maybeAutoFirstFigures(a: VariantArtifact | null) {
+  // 🔴 BUG-B（PRD-C-107 收尾）·配图代码闸：母题经 toolkit 代码判定**确无图形**（mother_has_figure=false）
+  //   → 母题/变式都天然纯文本，整条配图链不触发（不调 compose-figure、不耗 token、不撞无鉴权 401）。
+  //   判据 = motherCard.motherHasFigure（toolkit 母题卡帧 mother_has_figure，代码判非 LLM 每次判）；
+  //   null（旧后端/专帧缺/未知）或 true → 不拦，保留原自动配图行为（向后兼容）。
+  //   优先读本帧 a 的母题卡（避免 computed motherCard 滞后一 tick），a 为空回退响应式 motherCard。
+  const mhf = (a ? pickMotherCard(a)?.motherHasFigure : undefined) ?? motherCard.value?.motherHasFigure
+  if (mhf === false) return
   // 母题切图（裁图便宜，没理由 gate；母题原图在即可，partial/定稿都可）
   if (!autoCropMotherDone && motherImg.value && !motherFigurePng.value && !motherFigureLoading.value) {
     autoCropMotherDone = true
@@ -2290,7 +2297,12 @@ async function restoreSession(id: string) {
     //   恢复时若不重切则母题卡回来了但「图形」区空白。这里补一次自动切图（与 maybeAutoFirstFigures
     //   的母题切图分支同条件/同去重）。变式配图已由上方 figure_url 回填 ossUrl，不在此重造。
     //   纯文本母题（无图形区）crop 自返 needs_figure，无害。
-    if (!autoCropMotherDone && motherImg.value && !motherFigurePng.value && !motherFigureLoading.value) {
+    //   🔴 BUG-B·配图代码闸：母题代码判定确无图（mother_has_figure=false）→ 恢复时也不触发切图
+    //     （不调 compose-figure、不撞 401）；null/true 维持原按需切行为。
+    if (
+      motherCard.value?.motherHasFigure !== false &&
+      !autoCropMotherDone && motherImg.value && !motherFigurePng.value && !motherFigureLoading.value
+    ) {
       autoCropMotherDone = true
       void onCropMotherFigure()
     }

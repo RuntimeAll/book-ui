@@ -823,6 +823,12 @@ export interface VariantMotherCard {
   motherQuestionId: string | null
   /** 🔴 PRD-A-018 A-22：母题已入库标记（有 motherQuestionId 或 BE 显式 persisted=true）。 */
   persisted: boolean
+  /**
+   * 🔴 BUG-B（PRD-C-107 收尾）：母题是否真含图形（toolkit mother_card.mother_has_figure）。
+   *   配图触发的代码闸（不靠 LLM 每次判）：纯文本母题（false）→ 变式天然纯文本，跳过整条
+   *   配图链（不调 compose-figure、不耗 token/不撞 401）。缺/旧后端 → null（向后兼容，按"未知"放行原行为）。
+   */
+  motherHasFigure: boolean | null
 }
 
 /** 从 artifact 解出母题卡（① header.mother_card 专帧优先；② items[0].dna 兜底拼） */
@@ -882,6 +888,13 @@ export function pickMotherCard(a: VariantArtifact | null): VariantMotherCard | n
         o.mother_persisted === true ||
         str(o.mother_question_id) != null ||
         str(o.motherQuestionId) != null,
+      // 🔴 BUG-B：母题含图标记（toolkit mother_has_figure；兼容驼峰）。明确布尔才取，缺→null（未知放行）。
+      motherHasFigure:
+        o.mother_has_figure === true || o.motherHasFigure === true
+          ? true
+          : o.mother_has_figure === false || o.motherHasFigure === false
+            ? false
+            : null,
     }
   }
   // 路②：从首个变式 item.dna 兜底拼（变式继承母题，组级共享维）
@@ -905,6 +918,7 @@ export function pickMotherCard(a: VariantArtifact | null): VariantMotherCard | n
     needAnchorReview: false, // 兜底路径无此信号，保守不标
     motherQuestionId: null, // 兜底路径（items[0] 拼）无母题入库态信号
     persisted: false,
+    motherHasFigure: null, // 兜底路径无母题含图信号 → null（未知，按原行为放行）
   }
 }
 
