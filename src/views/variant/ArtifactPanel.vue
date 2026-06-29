@@ -19,6 +19,8 @@ import VariantCard from './VariantCard.vue'
 // 🔴 PRD-C-100 B6：单卡配图态（按题 index 1-based）。宿主 variantFigures 透传，缺省 = 未配图。
 interface VariantFigureState {
   png: string | null
+  /** 🔴 PRD-C-110 B2·渲染切：中性几何 DSL（非空 → 客户端 geoEngine 渲活图；缺省 → png/ossUrl <img> 兜底） */
+  dsl?: Record<string, unknown> | null
   /** 🔴 PRD-A-018 bug#2：已入库配图的持久 OSS url（恢复会话/切 tab 时回填，无 base64 时回退显示） */
   ossUrl?: string | null
   loading: boolean
@@ -134,6 +136,8 @@ const emit = defineEmits<{
   (e: 'compose-figure', payload: { index: number; correctionPrompt?: string }): void
   /** 🔴 PRD-A-018：方向待确认——老师确认方向没问题 → 宿主清该题 directionReview */
   (e: 'confirm-direction', index: number): void
+  /** 🔴 PRD-C-110 B2·渲染切：活图渲成后客户端 exportPNG 回传 base64（宿主回写 png → 复用 OSS/持久化链路） */
+  (e: 'dsl-png-ready', payload: { index: number; pngBase64: string }): void
   /** 🔴 PRD-C-100 B6：点开看大图（含切图 / 配图 data URL；宿主弹大图遮罩） */
   (e: 'preview', url: string): void
   /** 🔴 PRD-C-100 BC3：已入库变式「手动排版」（宿主标印记 + 跳 A-015 网格编辑器） */
@@ -574,6 +578,7 @@ function regenAll() {
             :persisting="persistingIndex === it.index"
             :basketing="basketingIndex === it.index"
             :regenerating="!!(regeneratingIndexes && regeneratingIndexes.includes(it.index))"
+            :figure-dsl="variantFigures?.[it.index]?.dsl ?? null"
             :figure-png="variantFigures?.[it.index]?.png ?? null"
             :figure-oss-url="variantFigures?.[it.index]?.ossUrl ?? null"
             :figure-loading="!!variantFigures?.[it.index]?.loading"
@@ -593,6 +598,7 @@ function regenAll() {
             @edit-models="(p) => emit('edit-models', p)"
             @compose-figure="(p) => emit('compose-figure', p)"
             @confirm-direction="(i: number) => emit('confirm-direction', i)"
+            @dsl-png-ready="(p) => emit('dsl-png-ready', p)"
             @preview="(u: string) => emit('preview', u)"
             @manual-layout="(i: number) => emit('manual-layout', i)"
           />

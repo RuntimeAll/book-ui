@@ -14,8 +14,9 @@
 // gene 徽章只保留正面（pass → 平行度 ✓）；warn 沉默（双闸低已由 ⚠ 承担）。
 // persisted=true → 已收录（入库后 BE 重发快照帧驱动）。
 // ---------------------------------------------------------------------------
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import { renderDSL, exportPNG, type GeoBoard } from '@/utils/geoEngine'
 import {
   EXAM_TYPES,
   QTYPE_OPTIONS,
@@ -72,6 +73,12 @@ const props = defineProps<{
   /** PRD-C-015 批5：本卡正在重生（regen 待重生集合命中本题）→ 卡片 loading + 重生按钮转圈 */
   regenerating?: boolean
   // ----- 🔴 PRD-C-100 B6 带图展示 + 图片重生（宿主调 compose_variant 后回填）-----
+  /**
+   * 🔴 PRD-C-110 B2·渲染切：本变式配图的中性几何 DSL（{bbox,axis,objects:[...]}，合 geo-engine schema）。
+   *   非空 → 用客户端 geoEngine.renderDSL 渲成 **SVG 活图**（红点可拖、派生联动），替代死图 PNG。
+   *   缺省（旧数据/降级/批量入库 OSS 图）→ 退回 figurePng/figureOssUrl 的 <img> 兜底（向后兼容）。
+   */
+  figureDsl?: Record<string, unknown> | null
   /** 本变式配图 PNG base64（无损；data:image/png;base64,... 渲染） */
   figurePng?: string | null
   /**
@@ -144,6 +151,12 @@ const emit = defineEmits<{
   (e: 'compose-figure', payload: { index: number; correctionPrompt?: string }): void
   /** 🔴 PRD-C-100 B6：点开看大图（含切图 / 配图的 data URL） */
   (e: 'preview', url: string): void
+  /**
+   * 🔴 PRD-C-110 B2·渲染切：活图（DSL）渲成后客户端 exportPNG 出的 PNG base64（不含 data: 前缀）。
+   *   宿主据此回写 variantFigures[index].png → 复用既有 OSS 上传 / state 持久化 / 切 tab 恢复链路
+   *   （入库存的仍是 OSS url，与 PNG 兜底路径一字不差）。失败/无活图不 emit。
+   */
+  (e: 'dsl-png-ready', payload: { index: number; pngBase64: string }): void
   /** 🔴 PRD-A-018：方向待确认徽章——老师确认方向没问题 → 宿主清该题 directionReview（消徽章，不再一直待确认） */
   (e: 'confirm-direction', index: number): void
   /** 🔴 PRD-C-100 BC3：已入库变式「手动排版」（宿主标印记 + 跳 A-015 网格编辑器 round-trip blockJson） */
@@ -208,13 +221,98 @@ const figureNotNeeded = computed(
 const figureSrc = computed<string | null>(() =>
   props.figurePng ? `data:image/png;base64,${props.figurePng}` : props.figureOssUrl || null
 )
-const hasFigure = computed(() => !!figureSrc.value)
+// 🔴 PRD-C-110 B2·渲染切：有 DSL → 客户端渲活图（优先）；无 DSL 但有 png/ossUrl → <img> 兜底。
+//   hasFigure = 「能展示出图」的统一判据：DSL 或 PNG 任一在即算有图（驱动配图区显示/按钮文案）。
+const hasDsl = computed(() => {
+  const d = props.figureDsl
+  return !!d && Array.isArray((d as Record<string, unknown>).objects) &&
+    ((d as { objects: unknown[] }).objects.length > 0)
+})
+const hasFigure = computed(() => hasDsl.value || !!figureSrc.value)
 const showFigureZone = computed(
   () =>
     hasFigure.value ||
     !!props.figureLoading ||
     (!!props.figureNeedsFigure && !figureReasonSaysNotNeeded.value && !figureReasonIsInfra.value)
 )
+
+// ---------------------------------------------------------------------------
+// 🔴 PRD-C-110 B2·客户端活图渲染（geoEngine.renderDSL → SVG，红点可拖、派生联动）。
+//   DSL 变更 → 重渲（懒加载引擎，首次带图才下 ~1MB）。渲染失败不炸卡片：清空容器 + 落 dslRenderFail
+//   → 模板退回 <img> 兜底（若有 png/ossUrl），否则随配图区其它态。
+//   入库出图 = exportDslPng()：从当前画板 exportPNG → 宿主上 OSS（复用既有 uploadMotherImage 链路）。
+// ---------------------------------------------------------------------------
+const geoBoardEl = ref<HTMLElement | null>(null)
+const dslRenderFail = ref(false)
+let geoBoard: GeoBoard | null = null
+// 🔴 用 DSL 的 JSON 序列做渲染指纹：同一份 DSL 不重复渲（避免 reactive 抖动反复重建画板）。
+let lastDslKey = ''
+
+/** 活图是否真正在场（DSL 在且渲染没失败）→ 决定渲 SVG 容器还是退 <img>。 */
+const showLiveFigure = computed(() => hasDsl.value && !dslRenderFail.value)
+
+async function renderGeoFigure(): Promise<void> {
+  const d = props.figureDsl
+  if (!hasDsl.value || !d) {
+    geoBoard = null
+    lastDslKey = ''
+    return
+  }
+  const key = JSON.stringify(d)
+  if (key === lastDslKey && geoBoard) return // 同一份 DSL 已渲，跳过
+  dslRenderFail.value = false
+  await nextTick() // 等容器挂载（showLiveFigure 触发 v-if 后）
+  const el = geoBoardEl.value
+  if (!el) return
+  try {
+    el.innerHTML = '' // 清旧画板（重渲/换图）
+    const { board } = await renderDSL(el, d as Record<string, unknown>)
+    geoBoard = board
+    lastDslKey = key
+    // 🔴 渲成后立即 exportPNG 回传宿主 → 复用既有 OSS 上传 / state 持久化 / 切 tab 恢复链路。
+    //   best-effort：导出失败不影响活图展示（入库时再无 png 则该题无 image 块，同纯文本变式）。
+    void exportPNG(board, 2)
+      .then((url) => {
+        const b64 = url.startsWith('data:') ? url.slice(url.indexOf(',') + 1) : url
+        if (b64) emit('dsl-png-ready', { index: props.item.index, pngBase64: b64 })
+      })
+      .catch((e) => console.warn('[variant] 活图 exportPNG 回传失败:', e))
+  } catch (e) {
+    // 渲染失败（脏 DSL 漏过闸 / 引擎加载异常）→ 退兜底，不炸卡片
+    dslRenderFail.value = true
+    geoBoard = null
+    lastDslKey = ''
+    console.warn('[variant] DSL 活图渲染失败，退 PNG 兜底:', e)
+  }
+}
+
+watch(
+  () => props.figureDsl,
+  () => {
+    void renderGeoFigure()
+  },
+  { immediate: true, deep: false }
+)
+
+onBeforeUnmount(() => {
+  geoBoard = null
+})
+
+/**
+ * 🔴 入库出图：把当前活图导出 PNG dataURL（client-side exportPNG），供宿主上 OSS 入库。
+ *   无活图（纯 PNG 兜底题 / 未渲）→ 返 null（宿主用既有 figurePng）。失败 → null（不阻塞入库）。
+ */
+async function exportDslPng(): Promise<string | null> {
+  if (!geoBoard) return null
+  try {
+    return await exportPNG(geoBoard, 2)
+  } catch (e) {
+    console.warn('[variant] 活图 exportPNG 失败:', e)
+    return null
+  }
+}
+
+defineExpose({ exportDslPng })
 
 // ---------------------------------------------------------------------------
 // 内容编辑（傻瓜式）：编辑态把 stem/answer/solution 各显示为 textarea + 实时 MarkdownMath
@@ -1032,9 +1130,14 @@ function saveFieldEdit() {
       <!-- 🔴 PRD-A-017 polish Fix-B：纯文本/不需配图题整区收起（无 ⚠待补图 噪音、无矛盾 reason），
            只有有图 / 确需配图但缺 / 进行中 才渲染配图区。 -->
       <div v-if="showFigureZone" class="vc-figure-zone">
-        <!-- 已造出的配图（base64 无损）或已入库的持久图（ossUrl），点开看大图 -->
+        <!-- 🔴 PRD-C-110 B2·客户端活图（有 DSL 且渲染没失败）：geoEngine 渲 SVG，红点可拖、派生联动。
+             懒加载引擎（首次带图才下 ~1MB）。容器须有非零宽高（JSXGraph 按容器尺寸建板）。 -->
+        <div v-if="showLiveFigure" class="vc-figure vc-figure-live" title="变式配图 · 活图（红点可拖微调）">
+          <div ref="geoBoardEl" class="vc-geo-board"></div>
+        </div>
+        <!-- 兜底：无 DSL（旧数据/降级/已入库 OSS 图）或活图渲染失败 → <img> 死图，点开看大图 -->
         <div
-          v-if="hasFigure"
+          v-else-if="figureSrc"
           class="vc-figure"
           title="变式配图 · 点开看大图"
           @click="figureSrc && emit('preview', figureSrc)"
@@ -1898,6 +2001,16 @@ function saveFieldEdit() {
   max-width: 100%;
   max-height: 260px;
   height: auto;
+}
+/* 🔴 PRD-C-110 B2·活图容器：JSXGraph 按容器尺寸建板 → 必须有非零宽高（否则 SVG 空）。
+   活图可交互（拖红点），故不用 zoom-in 光标。 */
+.vc-figure-live {
+  cursor: default;
+}
+.vc-geo-board {
+  width: 320px;
+  max-width: 100%;
+  height: 280px;
 }
 .vc-figure-warn {
   font-size: 12px;

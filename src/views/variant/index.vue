@@ -4,7 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/store/user'
 import {
-  composeVariantFigure,
+  composeVariantFigureDsl,
   cropMotherFigure,
   editVariantDna,
   editVariantItem,
@@ -253,6 +253,13 @@ const motherFigureOssUrl = ref<string | null>(null)
 // 变式图态：按题 index（1-based）存。{png, loading, needs, reason, ossUrl, commands}
 interface VariantFigureState {
   png: string | null
+  /**
+   * 🔴 PRD-C-110 B2·渲染切：本图的中性几何 DSL（compose 走 format=dsl 时回填）。
+   *   非空 → VariantCard 用客户端 geoEngine 渲活图（红点可拖、派生联动）；活图渲成后 exportPNG
+   *   回传 base64 写回 png（→ 复用既有 OSS 上传 / state 持久化 / 切 tab 恢复链路，入库存 OSS url）。
+   *   缺省（旧数据/降级/批量 OSS 图）→ 退 png/ossUrl 的 <img> 兜底。
+   */
+  dsl?: Record<string, unknown> | null
   loading: boolean
   needs: boolean
   reason: string | null
@@ -272,15 +279,6 @@ interface VariantFigureState {
   directionReview?: boolean
 }
 
-// 🔴 PRD-C-100 C：把 compose 返回的 commands（unknown）规整成 string[]（每条命令字符串）；非数组/空 → []。
-function normalizeCommands(raw: unknown): string[] {
-  if (!Array.isArray(raw)) return []
-  const out: string[] = []
-  for (const c of raw) {
-    if (typeof c === 'string' && c.trim()) out.push(c)
-  }
-  return out
-}
 const variantFigures = reactive<Record<number, VariantFigureState>>({})
 
 // 🔴 修1（图串台 root cause）：variantFigures 按「裸 1-based index」缓存，而 index 在「换一批」/
@@ -378,7 +376,8 @@ function maybeAutoFirstFigures(a: VariantArtifact | null) {
       .filter((it) => {
         if (autoComposedIndexes.has(it.index)) return false
         const st = variantFigures[it.index]
-        return !(st && st.png) && !(st && st.loading)
+        // 🔴 PRD-C-110 B2：有 DSL（活图）或有 png 均算「已有图」，不重复自动配图。
+        return !(st && (st.dsl || st.png)) && !(st && st.loading)
       })
       .sort((x, y) => x.index - y.index)
     if (pending.length) {
@@ -536,50 +535,44 @@ async function onComposeVariantFigure(payload: { index: number; correctionPrompt
   const stageKey = figureStageKey(payload.index)
   upsertFigureStage(stageKey, 'running', `第 ${payload.index} 题`)
   try {
-    const res = await composeVariantFigure(threadId.value, userStore.accessToken, {
+    // 🔴 PRD-C-110 B2·渲染切：配图走 format=dsl → opus 直出中性几何 DSL（过 schema 闸），
+    //   VariantCard 拿 DSL 用客户端 geoEngine 渲 SVG 活图（红点可拖、派生联动），不再服务端无头出 PNG。
+    //   入库出图：活图渲成后 VariantCard exportPNG 回传 base64（onDslPngReady 写回 st.png）→ 走既有
+    //   OSS 上传 / state 持久化链路。旧 composeVariantFigure（GeoGebra→PNG）保留作批量兜底，本路径不调。
+    const res = await composeVariantFigureDsl(threadId.value, userStore.accessToken, {
       stem: item.stem,
       answer: item.answer || undefined,
       itemId: item.seq || item.index,
       correctionPrompt: payload.correctionPrompt,
-      // 🔴 PRD-C-100 C：图片重生（带 correctionPrompt）时把上一版命令透传 → BE 在其基础上增量改图。
-      //   首次造图（无 correctionPrompt）或没存到上一版（st.commands 空）则不传，BE 退原行为。
-      prevCommands: payload.correctionPrompt ? st.commands : undefined,
     })
-    // 🔴 PRD-C-100 P7：成功（有 png）才覆盖图；失败（needs_figure/无 png）只更原因，保留上一版好图，
+    // 🔴 P7：成功（有 dsl）才覆盖图；失败（needs_figure/无 dsl）只更原因，保留上一版好图，
     //   不让一次失败的重造把已有好图清成 ⚠待补图（UX 退步）。
-    if (res.pngBase64) {
-      const changed = st.png !== res.pngBase64
-      st.png = res.pngBase64
+    if (res.dsl) {
+      const changed = JSON.stringify(st.dsl) !== JSON.stringify(res.dsl)
+      st.dsl = res.dsl
       st.needs = false
       st.needUserDesc = false // 成功出图 → 不再催补描述
-      // 🔴 方向待确认：成功出图但含方向元素 → 标徽章（图照常展示，引导确认方向）。
-      st.directionReview = res.directionReview
-      // 🔴 PRD-A-021 R2b·U1：图变了（重新配图/图片重生产出新图）→ 旧 OSS url 已失配，作废它，
-      //   让入库时 flushFigureToOss 重新上传新图（否则 flush 会复用旧 url 把旧图当新图入库）。
-      if (changed) st.ossUrl = null
-      // 成功时存住本版命令（供下次图片重生作增量基准）；BE 没回命令则保留上一版 commands。
-      const cmds = normalizeCommands(res.commands)
-      if (cmds.length) st.commands = cmds
-      // 🔴 PRD-A-021 R2b·U1：配图生成并渲出（老师认账即此刻）→ 立即把 base64 回写 state 持久化，
-      //   刷新/恢复会话从 state 取回（不再只活 FE 内存）。不阻塞 UI（fire-and-forget，内部已容错）。
-      void persistFigureBase64(payload.index, res.pngBase64)
-      // 单元1：成功 → 灯 done
+      st.directionReview = false // DSL 路径方向元素由活图直观呈现，不再走 PNG 期的方向徽章
+      // 🔴 图变了（重新配图/图片重生产出新 DSL）→ 旧 png/OSS url 已失配，作废，待活图重渲后 exportPNG 重传。
+      if (changed) {
+        st.png = null
+        st.ossUrl = null
+      }
+      // 🔴 DSL 暂存 FE 内存（活图当场渲）；恢复会话/切 tab 的持久化走「活图 exportPNG → png/OSS」
+      //   兜底（onDslPngReady → persistFigureBase64/flushFigureToOss），与旧 PNG 路径同链路。
+      //   DSL 全量入 state/blockJson = 本卡范围外（PRD §1⑤ stretch/后续卡）。
+      // 单元1：成功 → 灯 done（活图 exportPNG 回传后才有 png，但渲染态即算配图成功）
       upsertFigureStage(stageKey, 'done', `第 ${payload.index} 题`)
     } else {
-      // 失败/降级：旧图（若有）保留，仅当本来就没图时才标 ⚠待补图。
-      st.needs = res.needsFigure && !st.png
-      // 🔴 主动引导：BE 标 needUserDesc（画不准/画不出且本应有图）→ FE 提示补描述（无旧图时才催，避免对已有好图误催）。
-      st.needUserDesc = res.needUserDesc && !st.png
-      st.directionReview = false
-      // 🔴 PRD-A-018 C2(A-11)：区分「本就无需配图(needs_figure=false，纯文本/纯代数变式)」与「本应有图却没产出」。
-      //   前者 = 跳过(done)，不让纯文本变式把配图节点污染成「异常·待补图」、不挂住题组就绪；
-      //   后者(本应有图却没产出且无旧图)才 ⚠待补图(warn)。
-      const skipNoFigure = !st.png && !res.needsFigure
-      // 单元1：有旧图→done(沿用)；本就无需图→done(跳过)；本应有图却缺→warn(待补图)
+      // 失败/降级：旧图（DSL 或 png）若有则保留，仅当本来就没图时才标 ⚠待补图。
+      const hadFig = !!st.dsl || !!st.png
+      st.needs = res.needsFigure && !hadFig
+      st.needUserDesc = res.needUserDesc && !hadFig
+      const skipNoFigure = !hadFig && !res.needsFigure
       upsertFigureStage(
         stageKey,
-        st.png ? 'done' : skipNoFigure ? 'done' : 'warn',
-        st.png
+        hadFig ? 'done' : skipNoFigure ? 'done' : 'warn',
+        hadFig
           ? `第 ${payload.index} 题·沿用上一版图`
           : skipNoFigure
             ? `第 ${payload.index} 题·无需配图`
@@ -588,15 +581,28 @@ async function onComposeVariantFigure(payload: { index: number; correctionPrompt
     }
     st.reason = res.reason
   } catch (e) {
-    // 🔴 PRD-C-100 B3-配图：失败时错误可读（API 已把 422 结构化 detail 摊成 message，不再 [object Object]）。
-    //   🔴 P7：仅当本来无图时才落「⚠待补图」徽章；已有好图保留（重造失败不抹旧图）。
-    st.needs = !st.png
+    // 🔴 失败错误可读（API 已把 422 结构化 detail 摊成 message）。仅当本来无图时才落「⚠待补图」。
+    st.needs = !st.dsl && !st.png
     st.reason = `配图失败：${e instanceof Error ? e.message : String(e)}`
-    // 单元1：异常 → 灯 warn
     upsertFigureStage(stageKey, 'warn', `第 ${payload.index} 题·配图失败`)
   } finally {
     st.loading = false
   }
+}
+
+/**
+ * 🔴 PRD-C-110 B2·渲染切：VariantCard 活图渲成后客户端 exportPNG 回传 base64 → 写回 st.png，
+ *   并立即上 OSS（flushFigureToOss）+ 回写 state（persistFigureBase64）。这样入库存的仍是 OSS url，
+ *   且切 tab/恢复会话有 png/ossUrl 兜底显示，与旧 PNG 路径一字不差（不改入库/持久化下游）。
+ *   best-effort：失败仅告警（活图本地仍在，入库时无 png 则该题无 image 块=同纯文本变式）。
+ */
+function onDslPngReady(payload: { index: number; pngBase64: string }): void {
+  const st = variantFigures[payload.index]
+  if (!st || !payload.pngBase64) return
+  if (st.png === payload.pngBase64) return // 同一张图已存，跳过（防重复上传）
+  st.png = payload.pngBase64
+  st.ossUrl = null // 新图 → 作废旧 OSS url，待重传
+  void persistFigureBase64(payload.index, payload.pngBase64)
 }
 
 /**
@@ -2888,6 +2894,7 @@ onBeforeUnmount(() => {
       @regen-all="onRegenAll"
       @compose-figure="onComposeFigureFromUser"
       @confirm-direction="onConfirmDirection"
+      @dsl-png-ready="onDslPngReady"
       @preview="(u: string) => (previewUrl = u)"
       @manual-layout="onManualLayout"
     >
