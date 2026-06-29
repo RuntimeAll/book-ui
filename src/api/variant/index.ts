@@ -45,6 +45,13 @@ export interface VariantRequest {
    */
   startVariants?: boolean
   /**
+   * 🔴 PRD-C-109 B3·确认收口（A3/AC4）：老师明确背书母题（用户确认 > 代码硬锚）→ 经
+   * agent_config(config.configurable.mother_endorsed=true) 回传 toolkit。toolkit lift 进 state（终态）
+   * → mother_in_doubt 恒 False、锚定降级闸一律放行、多确认闸收口成一个（确认一次即终、不反复弹）。
+   * 老师点「开始举一反三」(startVariants) / 确认年级章(confirmedChapterId) 这两个「确认动作」自动带上它。
+   */
+  motherEndorsed?: boolean
+  /**
    * 🔴 PRD-C-017 B5·年级册人话名（老师确认面亲选的 grade_book name，如「七年级上」）：
    * 经 agent_config(config.configurable.grade_book_name) 回传，省 toolkit 一次树查、同步年级显示。
    */
@@ -1159,6 +1166,8 @@ export function streamVariant(
   if (payload.confirmedGradeBookId) agentConfig.confirmed_grade_book_id = payload.confirmedGradeBookId
   // 🔴 PRD-C-017 B5：母题硬停 resume 信号 + 年级册人话名（接 B5-toolkit 契约）
   if (payload.startVariants) agentConfig.start_variants = true
+  // 🔴 PRD-C-109 B3·确认收口：老师背书母题 → toolkit override mother_in_doubt（确认即终、不反复弹·AC4）。
+  if (payload.motherEndorsed) agentConfig.mother_endorsed = true
   if (payload.gradeBookName) agentConfig.grade_book_name = payload.gradeBookName
   // 🔴 思考过程开关：进 config.configurable.thinking_stream → toolkit _ainvoke_text 据它路由 aigeek
   //   + 开 extended-thinking + 挂 on_reasoning 外显（关时不传，BE 维持默认便宜路径）。

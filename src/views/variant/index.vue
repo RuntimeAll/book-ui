@@ -1115,6 +1115,9 @@ function dispatch(
     confirmedGradeBookId?: string
     gradeBookName?: string
     startVariants?: boolean
+    // 🔴 PRD-C-109 B3·确认收口：老师明确背书母题（点确认/开始）→ 经 agent_config 回传 toolkit
+    //   override mother_in_doubt（确认一次即终、不反复弹·AC4）。
+    motherEndorsed?: boolean
   }
 ) {
   if (sending.value) return
@@ -1163,6 +1166,8 @@ function dispatch(
       confirmedGradeBookId: confirmCtx?.confirmedGradeBookId,
       gradeBookName: confirmCtx?.gradeBookName,
       startVariants: confirmCtx?.startVariants,
+      // 🔴 PRD-C-109 B3·确认收口：背书信号透传 toolkit（确认即终·AC4）。
+      motherEndorsed: confirmCtx?.motherEndorsed,
       // 🔴 思考过程开关：开 → BE 路由 aigeek + 开 extended-thinking，reasoning 流式外显（付费）。
       thinkingStream: thinkingStream.value,
       // 🔴 PRD-A-021 B5：仅首轮 + 老师选了才透传预设年级/章（任一非空即生效）；没选则两键皆 undefined →
@@ -1457,6 +1462,8 @@ function onConfirmGradeChapter(value: {
     confirmedChapterId: value.chapterId,
     confirmedGradeBookId: value.gradeBookId,
     gradeBookName: value.gradeBookName,
+    // 🔴 PRD-C-109 B3·确认收口：老师亲选章确认 = 对锚定范围的背书 → toolkit 不再反复弹（AC4）。
+    motherEndorsed: true,
   })
 }
 
@@ -1496,6 +1503,9 @@ async function onStartVariants() {
   if (!(await confirmTokenSpend('「开始举一反三」会调用 AI 生成整组变式、消耗 token。'))) return
   dispatch('开始举一反三，按确认的年级册与章生成变式', '▶ 开始举一反三', undefined, {
     startVariants: true,
+    // 🔴 PRD-C-109 B3·确认收口：点「开始举一反三」= 老师看过母题卡、决定就用它 = 隐式背书 →
+    //   toolkit override mother_in_doubt（确认一次即终、不反复弹·AC4）。
+    motherEndorsed: true,
     // 顺带回传确认章/年级册名（toolkit resume 时不丢锚定上下文）
     gradeBookName: confirmedGradeBookName.value || undefined,
   })
