@@ -213,6 +213,27 @@ const analysisText = computed(() => props.motherCard?.analysis || '')
 // 🔴 PRD-C-017 B5「开始举一反三」按钮：母题卡出来、尚无变式（toolkit 硬停 awaiting_mother_review）
 //   → 显示主按钮，老师点了才生成变式；已有变式则不再显示（避免重复触发）。
 const showStartBtn = computed(() => props.hasVariants === false && hasCard.value)
+// ---------------------------------------------------------------------------
+// 🔴 PRD-C-108 B3a·母题存疑停等的 UI 态（AC2/§6②/§3「母题存疑停等」）。
+//   FE 确定性派生「母题存疑」（与 toolkit intent.mother_in_doubt 的 ②③ 同口径，只读已有数据、不引新契约）：
+//     ② 解法骨架 + 答案皆空（解题没成型 = 母题没立住）；
+//     ③ 锚定待人审（need_anchor_review：主考点未锚到章内叶子，留待人工核对）。
+//   存疑 → 母题卡不再把「开始举一反三」呈现成「已就绪可点」，而是显式提示老师【先回话确认/补充】，
+//   让老师知道该先答复（与决策表「母题存疑→停在母题卡等确认，绝不自动 generate」对齐）。即便点了，
+//   toolkit B1 也会硬停 await_review、不抢跑 generate（后端兜底），FE 只是把这层「在等你」诚实显出来。
+//   note：① 锚未定死（pinned=False）这一条在 FE 表现为母题卡尚未 ready（走确认弹窗 needConfirm），
+//          故母题卡已出时主要靠 ②③ 两条判存疑（与后端在「已有 mother_dna」语境下的判据一致）。
+const motherInDoubt = computed(() => {
+  if (!hasCard.value) return false
+  const mc = props.motherCard
+  // ③ 锚定待人审
+  if (mc?.needAnchorReview) return true
+  // ② 解法骨架 + 答案皆空（任一有内容即视为已立住）
+  const skeleton = (mc?.solutionSkeleton || dna.value?.skeleton || '').trim()
+  const answer = (mc?.answer || mc?.solvedAnswer || '').trim()
+  if (!skeleton && !answer) return true
+  return false
+})
 function onStart() {
   if (isBusy.value) return
   emit('start-variants')
@@ -352,19 +373,32 @@ const hasFigureCol = computed(
       <span v-if="motherCard?.needAnchorReview" class="mc-review-flag" title="主考点未锚到章内叶子，留待人工核对">
         锚定待人审
       </span>
+      <!-- 🔴 PRD-C-108 B3a·母题存疑停等：母题还没立住（解法/锚定未定死）→ 显式「在等你确认」状态标，
+           让老师知道该先回话补充，而非把母题卡呈现成「已就绪可直接开始」（决策表「母题存疑→停等确认」）。 -->
+      <span
+        v-if="showStartBtn && motherInDoubt"
+        class="mc-doubt-flag"
+        title="母题还有存疑（解法/锚定未完全定死）——请先在下方对话框确认或补充，再开始举一反三"
+      >
+        在等你确认
+      </span>
       <!-- 🔴 B3.6 母题脏标记（守恒维改了、下游待按新基准重生） -->
       <span v-if="motherDirty" class="mc-dirty-flag" title="母题考点已改，下游变式待按新基准重生">
         待重生
       </span>
       <span class="mc-spacer" />
-      <!-- 🔴 PRD-C-017 B5「开始举一反三」主按钮（母题硬停 → 老师点了才生成变式；生成中 loading） -->
+      <!-- 🔴 PRD-C-017 B5「开始举一反三」主按钮（母题硬停 → 老师点了才生成变式；生成中 loading）。
+           🔴 PRD-C-108 B3a：母题存疑时按钮降为 plain（不抢「已就绪」的主视觉），老师仍可点（后端会硬停
+           await_review、不抢跑），但视觉 + 上方「在等你确认」标 + 下方提示一致地告诉老师「先回话」。 -->
       <el-button
         v-if="showStartBtn"
         size="small"
         class="mc-start"
         type="primary"
+        :plain="motherInDoubt"
         :loading="sending"
         :disabled="isBusy"
+        :title="motherInDoubt ? '母题还有存疑，建议先在对话框确认/补充后再开始' : ''"
         @click="onStart"
       >
         {{ sending ? '生成中…' : '▶ 开始举一反三' }}
@@ -635,6 +669,12 @@ const hasFigureCol = computed(
           </span>
         </div>
 
+        <!-- 🔴 PRD-C-108 B3a·母题存疑停等提示条：母题还没立住时引导老师【先回话确认/补充】，
+             而不是直接开始（与决策表「母题存疑→停等确认」一致；后端亦硬停 await_review 兜底）。 -->
+        <p v-if="showStartBtn && motherInDoubt" class="mc-doubt-hint">
+          母题还有存疑（解法 / 锚定未完全定死）。建议先在下方对话框确认或补充
+          （如「考的是含参一元一次方程」「按判别式法解」「重新解一下」），我会据此重锚母题；确认无误后再点「开始举一反三」。
+        </p>
         <!-- 🔴 B3.6 母题脏提示条（守恒维改了、下游待重生 → 引导点重生） -->
         <p v-if="motherDirty && hasVariants" class="mc-dirty-hint">
           母题考点已改 → 下游变式已标「待重生」，点右上「重生下游变式」按新基准重出。
@@ -831,6 +871,16 @@ const hasFigureCol = computed(
   color: var(--red);
   background: var(--red-50);
   border: 1px solid var(--red-line);
+  border-radius: var(--r-xs);
+  padding: 1px 8px;
+  font-weight: 700;
+}
+/* 🔴 PRD-C-108 B3a·母题存疑「在等你确认」标（violet=AI 在等老师回话，非告警红、非脏拦红） */
+.mc-doubt-flag {
+  font-size: 11px;
+  color: var(--violet-700);
+  background: var(--violet-50);
+  border: 1px solid var(--violet-line);
   border-radius: var(--r-xs);
   padding: 1px 8px;
   font-weight: 700;
@@ -1203,6 +1253,17 @@ const hasFigureCol = computed(
   color: var(--amber);
   background: var(--amber-50);
   border: 1px solid var(--amber-line);
+  border-radius: var(--r-sm);
+  padding: 6px 10px;
+  line-height: 1.5;
+}
+/* 🔴 PRD-C-108 B3a·母题存疑停等提示条（violet=AI 在等老师回话；与脏拦琥珀区分） */
+.mc-doubt-hint {
+  margin: 10px 0 0;
+  font-size: 11.5px;
+  color: var(--violet-700);
+  background: var(--violet-50);
+  border: 1px solid var(--violet-line);
   border-radius: var(--r-sm);
   padding: 6px 10px;
   line-height: 1.5;
