@@ -692,6 +692,12 @@ export interface VariantNeedConfirm {
   chapterCandidates: VariantConfirmCandidate[]
   /** nano 置信度（仅展示，0~1） */
   confidence: number | null
+  /**
+   * 🔴 PRD-C-107 B4·确认带原因：toolkit `_build_confirm_payload` 在既有 needConfirm 契约上增量加的
+   *   人话原因（「为什么要老师确认年级章」，如「置信0.62<0.80；2个强候选章歧义」）。低置信弹窗端给老师看。
+   *   旧 toolkit 不带该键 → 解析为空串，弹窗不渲染原因行（向后兼容）。
+   */
+  reason: string
 }
 
 /** reject 事件载荷（toolkit _emit_reject payload，G13 带图打回） */
@@ -739,6 +745,8 @@ function pickNeedConfirm(msg: ToolkitChatMessage): VariantNeedConfirm | null {
     gradeCandidates: pickCandidates(o.grade_candidates ?? o.gradeCandidates),
     chapterCandidates: pickCandidates(o.chapter_candidates ?? o.chapterCandidates),
     confidence: Number.isFinite(conf) ? conf : null,
+    // 🔴 PRD-C-107 B4：端出 toolkit 的人话 reason（缺键 → 空串，弹窗不渲染原因行，向后兼容）
+    reason: str(o.reason) ?? '',
   }
 }
 

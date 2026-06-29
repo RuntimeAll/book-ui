@@ -172,6 +172,13 @@ function onConfirm() {
       选对了出的题才不会跑偏。
     </p>
 
+    <!-- 🔴 PRD-C-107 B4·确认带原因：低置信时端出 toolkit 的人话 reason（为什么要老师确认）。
+         reason 为空（老师已给信息 / 高置信被跳过、或旧 toolkit 不带键）→ 不渲染本行（向后兼容）。 -->
+    <p v-if="payload && payload.reason" class="gc-reason" data-testid="variant-confirm-reason">
+      <span class="gc-reason-icon">💡</span>
+      <span class="gc-reason-text">需要你确认的原因：{{ payload.reason }}</span>
+    </p>
+
     <!-- nano 候选参考（仅展示，提醒老师人工核对） -->
     <div v-if="payload" class="gc-nano">
       <span class="gc-nano-k">AI 初判（仅供参考，可能版本/编号不符，请以下方手选为准）：</span>
@@ -237,6 +244,25 @@ function onConfirm() {
 }
 .gc-intro b {
   color: #0f6e6e;
+}
+/* 🔴 PRD-C-107 B4·确认带原因行（蓝色信息条，区别于下方 nano 黄色参考条） */
+.gc-reason {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  background: #eef6ff;
+  border: 1px solid #b6d8f7;
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin: 0 0 12px;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.gc-reason-icon {
+  flex: 0 0 auto;
+}
+.gc-reason-text {
+  color: #1f5d99;
 }
 .gc-nano {
   background: #fdf4e3;
