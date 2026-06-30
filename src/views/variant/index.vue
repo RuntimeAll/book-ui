@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/store/user'
 import {
+  composeVariantFigure,
   composeVariantFigureDsl,
   cropMotherFigure,
   editVariantDna,
@@ -563,23 +564,58 @@ async function onComposeVariantFigure(payload: { index: number; correctionPrompt
       //   DSL 全量入 state/blockJson = 本卡范围外（PRD §1⑤ stretch/后续卡）。
       // 单元1：成功 → 灯 done（活图 exportPNG 回传后才有 png，但渲染态即算配图成功）
       upsertFigureStage(stageKey, 'done', `第 ${payload.index} 题`)
+      st.reason = res.reason
+    } else if (res.needsFigure) {
+      // 🔴 Bug④-①：opus 没给有效 DSL 但本题确需配图 → 回退 GeoGebra→PNG 兜底（旧路径），别直接 ⚠待补图，
+      //   也别把「objects 缺失/未给有效 DSL」这类 BE 技术 reason 露给老师。PNG 出图则走 <img> 兜底显示。
+      let pngFallbackOk = false
+      try {
+        const pngRes = await composeVariantFigure(threadId.value, userStore.accessToken, {
+          stem: item.stem,
+          answer: item.answer || undefined,
+          itemId: item.seq || item.index,
+          correctionPrompt: payload.correctionPrompt,
+        })
+        if (pngRes.pngBase64) {
+          st.png = pngRes.pngBase64
+          st.ossUrl = null
+          st.dsl = null // PNG 兜底 → 无活图 DSL，走 <img>
+          st.needs = false
+          st.needUserDesc = false
+          st.directionReview = pngRes.directionReview
+          pngFallbackOk = true
+          upsertFigureStage(stageKey, 'done', `第 ${payload.index} 题`)
+          // 🔴 Bug④-①：PNG 已出图 → 不把 DSL 路的技术 reason（objects 缺失/未给有效 DSL）露给老师。
+          st.reason = null
+        }
+      } catch (e) {
+        console.warn('[variant] DSL 为空，PNG 兜底也失败:', e)
+      }
+      if (!pngFallbackOk) {
+        // DSL + PNG 都没出 → 旧图若有则沿用，否则真 ⚠待补图。
+        const hadFig = !!st.dsl || !!st.png
+        st.needs = !hadFig
+        st.needUserDesc = res.needUserDesc && !hadFig
+        upsertFigureStage(
+          stageKey,
+          hadFig ? 'done' : 'warn',
+          hadFig ? `第 ${payload.index} 题·沿用上一版图` : `第 ${payload.index} 题·待补图`
+        )
+        // 兜底也没图：reason 经 VariantCard 的 REASON_IS_INFRA/REASON_NOT_NEEDED 过滤再露（去技术噪音）。
+        st.reason = res.reason
+      }
     } else {
-      // 失败/降级：旧图（DSL 或 png）若有则保留，仅当本来就没图时才标 ⚠待补图。
+      // 不需配图（res.needsFigure=false）：旧图若有则保留，否则静默无需配图态（不标 ⚠待补图）。
       const hadFig = !!st.dsl || !!st.png
-      st.needs = res.needsFigure && !hadFig
-      st.needUserDesc = res.needUserDesc && !hadFig
-      const skipNoFigure = !hadFig && !res.needsFigure
+      st.needs = false
+      st.needUserDesc = false
       upsertFigureStage(
         stageKey,
-        hadFig ? 'done' : skipNoFigure ? 'done' : 'warn',
-        hadFig
-          ? `第 ${payload.index} 题·沿用上一版图`
-          : skipNoFigure
-            ? `第 ${payload.index} 题·无需配图`
-            : `第 ${payload.index} 题·待补图`
+        'done',
+        hadFig ? `第 ${payload.index} 题·沿用上一版图` : `第 ${payload.index} 题·无需配图`
       )
+      st.reason = res.reason
     }
-    st.reason = res.reason
   } catch (e) {
     // 🔴 失败错误可读（API 已把 422 结构化 detail 摊成 message）。仅当本来无图时才落「⚠待补图」。
     st.needs = !st.dsl && !st.png

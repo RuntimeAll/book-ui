@@ -205,7 +205,9 @@ const figureReasonSaysNotNeeded = computed(
 )
 // 🔴 PRD-A-017 polish2：配图基建缺失（doclayout_yolo/torch/cv2/权重）回的原始 Python 异常文案
 //   是 infra 噪音（老师看不懂、无法处置）→ 当「配图不可用」收起，不漏 ⚠待补图/异常给老师（真失败留 BUG-02）。
-const REASON_IS_INFRA = /no module|modulenotfound|importerror|traceback|配图失败|切图失败|无法加载|errno|exception|\bError\b/i
+// 🔴 Bug④-①：DSL 路技术 reason（objects 缺失 / 未给有效 DSL / 不合 schema / schema 校验失败）同属
+//   老师看不懂的内部噪音 → 一并收起，不把 opus DSL 生成失败的技术原因露给老师（通常已回退 PNG 出图）。
+const REASON_IS_INFRA = /no module|modulenotfound|importerror|traceback|配图失败|切图失败|无法加载|errno|exception|\bError\b|objects\s*缺失|未给有效\s*dsl|不合\s*schema|schema\s*校验|有效\s*dsl/i
 const figureReasonIsInfra = computed(
   () => !!props.figureReason && REASON_IS_INFRA.test(props.figureReason)
 )
@@ -1278,8 +1280,9 @@ function saveFieldEdit() {
           </div>
         </div>
 
-        <!-- 🔴 Fix-B：reason 仅在配图相关时显（不需配图态已整区收起，这里再兜底排除矛盾文案） -->
-        <p v-if="figureReason && !figureNotNeeded" class="vc-figure-reason">{{ figureReason }}</p>
+        <!-- 🔴 Fix-B：reason 仅在配图相关时显（不需配图态已整区收起，这里再兜底排除矛盾文案）。
+             🔴 Bug④-①：infra/DSL 技术噪音（objects 缺失/未给有效 DSL/异常）也收起，不露给老师。 -->
+        <p v-if="figureReason && !figureNotNeeded && !figureReasonIsInfra" class="vc-figure-reason">{{ figureReason }}</p>
       </div>
 
       <!-- ============ 🧬 题目 DNA（G13 ③：默认收起 = 图标 chip；点开展开全维，逐维可改） ============ -->
