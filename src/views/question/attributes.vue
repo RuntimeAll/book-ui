@@ -176,6 +176,26 @@ const hasTechDna = computed(() => {
   return !!(t.dnaType || t.verifyKind || t.parametricSlots || t.variationProfile)
 })
 
+// ── 解题模型（BE select 回填 models：biz_question_model JOIN biz_solution_model）──
+// 类型在本页本地声明（不动共享 api/question 类型文件）；只读展示主/辅模型。
+interface QuestionModel {
+  modelId: string
+  name: string
+  category?: string | null
+  difficultyTier?: number | null
+  freqBand?: number | null
+  isGold?: number | null
+  isPrimary?: number | null
+  role?: string | null
+  source?: string | null
+}
+const models = computed<QuestionModel[]>(() => {
+  const m = (detail.value as (QuestionDetail & { models?: QuestionModel[] }) | null)?.models
+  return Array.isArray(m) ? m : []
+})
+const primaryModels = computed(() => models.value.filter((m) => m.isPrimary === 1))
+const auxModels = computed(() => models.value.filter((m) => m.isPrimary !== 1))
+
 // ── 数组维（难点/标签）按行编辑：computed 字符串代理（一行一条，读写互转） ──
 function arrayLineProxy(key: 'hardPoints' | 'tags') {
   return computed<string>({
@@ -466,6 +486,44 @@ watch(questionId, async () => {
         </div>
       </el-card>
 
+      <!-- ══ 解题模型（命中的解法基因，只读）══ -->
+      <el-card v-if="models.length" class="attr-card" shadow="never">
+        <template #header>
+          <span class="card-title">解题模型</span>
+          <span class="card-hint">命中的解法基因 · 只读</span>
+        </template>
+        <div class="field-list">
+          <div class="field-row field-row-top">
+            <span class="field-label">主模型</span>
+            <div class="field-control">
+              <template v-if="primaryModels.length">
+                <div v-for="m in primaryModels" :key="m.modelId" class="model-row">
+                  <span class="model-name">{{ m.name }}</span>
+                  <el-tag v-if="m.category" size="small" type="info" class="dna-chip">{{ m.category }}</el-tag>
+                  <el-tag v-if="m.isGold === 1" size="small" type="warning" class="dna-chip">金标</el-tag>
+                  <span class="model-id">{{ m.modelId }}</span>
+                </div>
+              </template>
+              <span v-else class="field-value dna-muted">无</span>
+            </div>
+          </div>
+          <div class="field-row field-row-top">
+            <span class="field-label">辅助模型</span>
+            <div class="field-control">
+              <template v-if="auxModels.length">
+                <div v-for="m in auxModels" :key="m.modelId" class="model-row">
+                  <span class="model-name">{{ m.name }}</span>
+                  <el-tag v-if="m.category" size="small" type="info" class="dna-chip">{{ m.category }}</el-tag>
+                  <el-tag v-if="m.isGold === 1" size="small" type="warning" class="dna-chip">金标</el-tag>
+                  <span class="model-id">{{ m.modelId }}</span>
+                </div>
+              </template>
+              <span v-else class="field-value dna-muted">无</span>
+            </div>
+          </div>
+        </div>
+      </el-card>
+
       <!-- ══ 来源 / 血缘（可编辑）══ -->
       <el-card class="attr-card" shadow="never">
         <template #header>
@@ -723,6 +781,29 @@ watch(questionId, async () => {
   white-space: pre-wrap;
   word-break: break-all;
   max-width: 520px;
+}
+
+/* 解题模型行 */
+.model-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  width: 100%;
+  margin-bottom: 6px;
+}
+.model-row:last-child {
+  margin-bottom: 0;
+}
+.model-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1d2129;
+}
+.model-id {
+  font-size: 11px;
+  color: #a8acb3;
+  font-family: var(--mono, ui-monospace, Menlo, Consolas, monospace);
 }
 
 /* 技术 DNA 折叠 */
