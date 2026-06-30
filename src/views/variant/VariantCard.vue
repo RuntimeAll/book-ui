@@ -2218,7 +2218,7 @@ function saveFieldEdit() {
   color: var(--teal-700);
 }
 .choice-content :deep(.md-math) {
-  font-size: var(--md-font-size, 14px);
+  font-size: 16px;
 }
 .choice-content :deep(p) {
   margin: 0;

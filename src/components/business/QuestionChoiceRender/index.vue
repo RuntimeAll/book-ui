@@ -35,10 +35,10 @@ const html = computed<string>(() => renderRichText(props.stem || ''))
 </template>
 
 <style scoped>
-/* 🔴 与 QuestionContent.qc-richtext 对齐（题库基准）：字号走 --md-font-size（useFontScale 注入，
-   与题库列表卡 / 变式编辑器同源），未设处回落 14px；行高/换行同题库。 */
+/* 🔴 与 QuestionContent.qc-richtext 对齐（题库基准）：题面基准字号固定 16px
+   （原「小/中/大」字号档 2026-06-30 废除）；行高/换行同题库。 */
 .qcr-root {
-  font-size: var(--md-font-size, 14px);
+  font-size: 16px;
   line-height: 1.6;
   color: var(--el-text-color-primary, #1d2129);
   word-break: break-word;

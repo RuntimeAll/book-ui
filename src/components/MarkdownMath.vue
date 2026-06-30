@@ -32,9 +32,8 @@ const rendered = computed(() => md.render(normalizeMath(props.content || '')))
 
 <style scoped>
 .md-math {
-  /* 字号走 --md-font-size（useFontScale 注入），未设变量处回落 14px（聊天气泡等不受影响）。
-     标题/code/katex 等用 em 相对此基准，整体随档位等比缩放。 */
-  font-size: var(--md-font-size, 14px);
+  /* 题面基准字号固定 16px（原「小/中/大」字号档 2026-06-30 废除）；标题/code/katex 用 em 相对此基准。 */
+  font-size: 16px;
   line-height: 1.7;
   color: #1d2129;
   word-break: break-word;

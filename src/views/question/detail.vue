@@ -38,12 +38,8 @@ import QuestionBlockRender from '@/components/business/QuestionBlockRender/index
 import { parseBlockDoc } from '@/utils/blockSchema'
 import { useDictStore, DICT_QUESTION_TYPE, DICT_QUESTION_DIFFICULTY } from '@/store/dict'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
-import { useFontScale } from '@/composables/useFontScale'
 import { useUserStore } from '@/store/user'
 import { getCurrentUser } from '@/api/user'
-
-// 题面展示字号（小/中/大）—— 与变式编辑器共用同一状态，注入 --md-font-size 级联给 MarkdownMath
-const { cssVars: fontVars } = useFontScale()
 
 // ── 路由 ────────────────────────────────────────────────────
 const route = useRoute()
@@ -357,7 +353,7 @@ watch(questionId, async () => {
 </script>
 
 <template>
-  <div class="detail-page" :style="fontVars">
+  <div class="detail-page">
     <!-- 顶部导航栏 -->
     <div class="detail-topbar">
       <el-button link @click="goBack" class="back-btn">
@@ -838,7 +834,7 @@ watch(questionId, async () => {
   display: block;
 }
 
-/* 字号由 MarkdownMath 的 --md-font-size 驱动（随字号档位缩放）；markdown 自带换行，去掉 pre-wrap */
+/* 字号由 MarkdownMath 固定 16px 基准驱动；markdown 自带换行，去掉 pre-wrap */
 .stem-text {
   line-height: 1.7;
   color: #1d2129;
