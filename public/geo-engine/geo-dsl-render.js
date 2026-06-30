@@ -78,8 +78,14 @@
         case 'segment':
           g = b.create('segment', [P(o.points[0]), P(o.points[1])], attr(o, { withLabel: false })); break;
         case 'line':
+          // 🔴 Bug⑤（防御，配合 toolkit prompt 侧）：line 默认按有限段渲，不撑满 bbox（直线无限延伸炸图）。
+          //    仅当显式 straight:true 或显式 straightFirst/straightLast:true 才两端延伸。segment/ray 行为不变。
           g = b.create('line', [P(o.points[0]), P(o.points[1])],
-            attr(o, { withLabel: false, straightFirst: o.straightFirst !== false, straightLast: o.straightLast !== false })); break;
+            attr(o, {
+              withLabel: false,
+              straightFirst: o.straightFirst === true || o.straight === true,
+              straightLast: o.straightLast === true || o.straight === true
+            })); break;
         case 'ray':
           g = b.create('line', [P(o.points[0]), P(o.points[1])],
             attr(o, { withLabel: false, straightFirst: false, straightLast: true, lastArrow: false })); break;
