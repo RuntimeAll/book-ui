@@ -27,6 +27,7 @@ import {
   type VariantArtifactItem,
 } from '@/api/variant'
 import { tagsByKp as fetchTagsByKp } from '@/api/question'
+import { useDictStore, DICT_QUESTION_DIFFICULTY } from '@/store/dict'
 import MarkdownMath from '@/components/MarkdownMath.vue'
 import InlineMath from '@/components/InlineMath.vue'
 import QuestionChoiceRender from '@/components/business/QuestionChoiceRender/index.vue'
@@ -684,11 +685,12 @@ function onManualLayout() {
 const dnaOpen = ref(false)
 const dna = computed(() => props.item.dna)
 
-// 难度档位中文统一回字典 biz_question_difficulty（1基础/2中等/3较难/4压轴，超管为准）— 星级旁不再放层级文字（G13 ④）
-const DIFFICULTY_LABEL = ['', '基础', '中等', '较难', '压轴']
+// 难度档位中文真读字典 biz_question_difficulty（超管改字典即生效）— 星级旁不再放层级文字（G13 ④）
+const dict = useDictStore()
+dict.load(DICT_QUESTION_DIFFICULTY)
 function difficultyLabel(n: number): string {
   const r = Math.round(n)
-  return r >= 1 && r <= 4 ? DIFFICULTY_LABEL[r] : ''
+  return r >= 1 && r <= 4 ? dict.label(DICT_QUESTION_DIFFICULTY, r) : ''
 }
 
 // 题型/考察类型枚举（DNA 面板下拉）

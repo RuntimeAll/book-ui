@@ -39,6 +39,7 @@ import {
 import MarkdownMath from '@/components/MarkdownMath.vue'
 import InlineMath from '@/components/InlineMath.vue'
 import QuestionChoiceRender from '@/components/business/QuestionChoiceRender/index.vue'
+import { useDictStore, DICT_QUESTION_DIFFICULTY } from '@/store/dict'
 import KpTreeDialog from './KpTreeDialog.vue'
 
 const props = defineProps<{
@@ -193,14 +194,15 @@ const hardPoints = computed(() => dna.value?.hardPoints ?? [])
 //   仍由父透传备用，不再在本卡 chip 中消费。
 
 // 🔴 PRD-C-017 B5 难度：1-4 星级（与变式卡同风格）+ 档位文案
-// 档位文案统一回字典 biz_question_difficulty（1基础/2中等/3较难/4压轴，超管为准）
-const DIFFICULTY_LABEL = ['', '基础', '中等', '较难', '压轴']
+// 档位文案真读字典 biz_question_difficulty（超管改字典即生效）
+const dict = useDictStore()
+dict.load(DICT_QUESTION_DIFFICULTY)
 const difficulty = computed(() => {
   const d = props.motherCard?.difficulty
   return typeof d === 'number' && d > 0 ? Math.round(d) : 0
 })
 const difficultyLabel = computed(() =>
-  difficulty.value >= 1 && difficulty.value <= 4 ? DIFFICULTY_LABEL[difficulty.value] : ''
+  difficulty.value >= 1 && difficulty.value <= 4 ? dict.label(DICT_QUESTION_DIFFICULTY, difficulty.value) : ''
 )
 
 // 🔴 PRD-C-017 B5 答案：标准答案 answer 优先，回退 solvedAnswer

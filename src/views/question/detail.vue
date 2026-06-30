@@ -37,6 +37,7 @@ import QuestionContent from '@/components/business/QuestionContent/index.vue'
 // PRD-A-015 — 结构化网格块统一渲染（题干 blockJson 非空时优先用它，否则回落 QuestionContent）
 import QuestionBlockRender from '@/components/business/QuestionBlockRender/index.vue'
 import { parseBlockDoc } from '@/utils/blockSchema'
+import { useDictStore, DICT_QUESTION_DIFFICULTY } from '@/store/dict'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
 import { useFontScale } from '@/composables/useFontScale'
 import { useUserStore } from '@/store/user'
@@ -285,10 +286,12 @@ function lineageTypeLabel(type: number | null): string {
   const map: Record<number, string> = { 1: '选择', 4: '填空', 5: '解答' }
   return type != null && map[type] ? map[type] : '—'
 }
-// 难度档文案统一回字典 biz_question_difficulty（1基础/2中等/3较难/4压轴，超管为准）
-const DIFFICULTY_LABELS = ['', '基础', '中等', '较难', '压轴']
+// 难度档文案真读字典 biz_question_difficulty（超管改字典即生效，缓存未命中回落码值）
+const dict = useDictStore()
+dict.load(DICT_QUESTION_DIFFICULTY)
 function lineageDifficultyLabel(d: number | null): string {
-  return d != null && d >= 1 && d <= 4 ? `${DIFFICULTY_LABELS[d]}（${d}）` : '—'
+  if (d == null || d < 1 || d > 4) return '—'
+  return `${dict.label(DICT_QUESTION_DIFFICULTY, d) || d}（${d}）`
 }
 // 跳到血缘条目对应题详情（id 全程 String，防精度）
 function goToLineageNode(node: LineageNode) {

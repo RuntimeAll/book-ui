@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'v
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/store/user'
+import { useDictStore, DICT_QUESTION_DIFFICULTY } from '@/store/dict'
 import {
   composeVariantFigure,
   composeVariantFigureDsl,
@@ -48,6 +49,12 @@ import GradeChapterConfirmDialog from './GradeChapterConfirmDialog.vue'
 
 // 登录老师身份：入库 owner 走透传 token（agent_config.ruoyi_token），落老师本人个人题库。
 const userStore = useUserStore()
+// 目标难度档下拉真读字典 biz_question_difficulty（超管改字典即生效；选项 = L{码} {字典名}）。
+const dict = useDictStore()
+dict.load(DICT_QUESTION_DIFFICULTY)
+const difficultyOptions = computed(() =>
+  dict.list(DICT_QUESTION_DIFFICULTY).map((d) => ({ value: Number(d.dictValue), label: `L${d.dictValue} ${d.dictLabel}` })),
+)
 // PRD-C-014 T2：试题篮（全局 singleton composable，与库内列表共用计数/LS）—— 透明入库后加篮、计数+1。
 const basket = useQuestionBasket()
 // PRD-C-100 BC3：手动排版跳 A-015 网格编辑器全页路由（/question/editor/:id）。
@@ -2805,10 +2812,12 @@ onBeforeUnmount(() => {
                 data-testid="knob-difficulty"
               >
                 <el-option label="不变(母题档)" value="keep" />
-                <el-option label="L1 基础" :value="1" />
-                <el-option label="L2 中等" :value="2" />
-                <el-option label="L3 较难" :value="3" />
-                <el-option label="L4 压轴" :value="4" />
+                <el-option
+                  v-for="opt in difficultyOptions"
+                  :key="opt.value"
+                  :label="opt.label"
+                  :value="opt.value"
+                />
               </el-select>
               <el-tooltip
                 placement="top"
