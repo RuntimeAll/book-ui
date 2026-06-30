@@ -3,15 +3,13 @@
 // 唯一差异 = pageParams 恒带 mine:true（owner 由后端 LoginHelper 定）+ 进入默认无 subject 过滤
 // （老师自己的题跨多章节，默认选首节点会几乎空 → 改为先全量展示自己的题，点树仍可过滤）。
 // 血缘展示（母题关系等）暂不做（QuestionCard 列表本就不展示血缘，无需额外隐藏）。
-import { ref, reactive, onMounted, computed, watch, nextTick } from 'vue'
+import { ref, reactive, onMounted, computed } from 'vue'
 import { useDictStore, DICT_QUESTION_TYPE, DICT_QUESTION_DIFFICULTY } from '@/store/dict'
 import { ElMessage } from 'element-plus'
 import { Search, Document, Plus, ArrowDown, Crop, Upload } from '@element-plus/icons-vue'
 import {
-  lazyTree,
   questionPage,
   removeFavorite,
-  type SubjectNode,
   type QuestionItem,
   type QuestionPageParams,
   type QuestionPageResult,
@@ -20,11 +18,11 @@ import { useRouter } from 'vue-router'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
 import { useAbortableRequest } from '@/composables/useAbortableRequest'
 import FavoriteFolderDrawer from '@/components/FavoriteFolderDrawer/index.vue'
-import ContentWrap from '@/components/ContentWrap/index.vue'
 import SearchWrap from '@/components/SearchWrap/index.vue'
 import QuestionCard from '@/components/business/QuestionCard/index.vue'
 import SketchPad from '@/components/business/SketchPad/index.vue'
 import BatchUploadDialog from '@/views/ingest/components/BatchUploadDialog.vue'
+import SubjectDirectory from '@/components/business/SubjectDirectory/index.vue'
 
 // ── 路由 ────────────────────────────────────────────────────
 const router = useRouter()
@@ -32,50 +30,11 @@ const router = useRouter()
 // ── 试题栏（全局 singleton composable，FAB+dialog 由 AppLayout 挂的 <QuestionBasket /> 渲染） ──
 const basket = useQuestionBasket()
 
-// ── 教材选择 ──────────────────────────────────────────────────
-const TEXTBOOK_OPTIONS = [
-  { label: '浙教新版', value: 'zhejiao-new' },
-]
-const selectedTextbook = ref('zhejiao-new')
-
-// ── 章节树 filter ───────────────────────────────────────────
-const treeFilterKeyword = ref('')
-const treeRef = ref()
-
-function filterTreeNode(value: string, data: SubjectNode) {
-  if (!value) return true
-  return (data.title ?? '').includes(value)
-}
-
-watch(treeFilterKeyword, (val) => {
-  treeRef.value?.filter(val)
-})
-
-// ── 章节树 ──────────────────────────────────────────────────
-const treeData = ref<SubjectNode[]>([])
-const treeLoading = ref(false)
-
-async function loadTree() {
-  treeLoading.value = true
-  try {
-    // mine=true：个人题库目录树过滤 mine_visible='0'（V21 显隐字段，全局生效）
-    const result = await lazyTree(0, true)
-    if (Array.isArray(result)) {
-      treeData.value = result
-    } else if (result && typeof result === 'object') {
-      treeData.value = [result as unknown as SubjectNode]
-    }
-    // 🔴 我的题库与题库页不同：不默认选首节点（老师的题跨章节，默认选首节点会几乎空）。
-    // 树仅作可选过滤器；首屏由 onMounted 直接 fetchQuestions（mine:true 全量自己的题）。
-  } catch (e) {
-    console.warn('[my-question][tree] lazyTree failed', e)
-  } finally {
-    treeLoading.value = false
-  }
-}
-
-function handleNodeClick(data: SubjectNode) {
-  pageParams.subjectId = data.id
+// ── 题库目录（SubjectDirectory 收放筛选组件，mine + 默认全部）──
+// mine=true：目录树过滤 mine_visible；autoSelect=false：默认「全部我的题」不按教材过滤
+// （老师的题跨章节，默认落某教材会几乎空）。用户点教材/章节 emit subjectId 才过滤；点「全部」回 null。
+function onDirSelect(subjectId: string | null) {
+  pageParams.subjectId = subjectId ?? undefined
   pageParams.pageIndex = 1
   fetchQuestions()
 }
@@ -139,8 +98,7 @@ function onReset() {
   pageParams.keyWord = undefined
   pageParams.subjectId = undefined
   pageParams.pageIndex = 1
-  // 树高亮一并清掉，回到「全部自己的题」语义
-  treeRef.value?.setCurrentKey(null)
+  // subjectId 置空即回到「全部自己的题」（目录面板状态由 SubjectDirectory 自管，重置只清查询过滤）
   fetchQuestions()
 }
 
@@ -268,10 +226,9 @@ function handleDetail(q: QuestionItem) {
 }
 
 // ── 初始化 ───────────────────────────────────────────────────
-// 🔴 与题库页不同：并行加载树 + 首屏直接拉「全部自己的题」（mine:true，无 subject 过滤）。
-onMounted(async () => {
-  loadTree()
-  await nextTick()
+// 首屏直接拉「全部自己的题」（mine:true，无 subject 过滤）；目录树由 <SubjectDirectory> 自管，
+// 默认「全部」不 emit，用户点教材/章节才过滤。
+onMounted(() => {
   fetchQuestions()
 })
 </script>
@@ -280,51 +237,9 @@ onMounted(async () => {
   <div class="question-page">
     <el-container style="height: 100%; min-height: calc(100vh - 60px);">
 
-      <!-- ══ 左侧目录树（可选过滤器，默认不选） ══ -->
+      <!-- ══ 左侧题库目录（可选过滤器，默认「全部我的题」）══ -->
       <el-aside width="280px" class="tree-aside">
-        <ContentWrap title="题库目录" class="tree-content-wrap">
-          <el-select
-            v-model="selectedTextbook"
-            placeholder="选择教材"
-            class="textbook-select"
-            size="default"
-          >
-            <el-option
-              v-for="opt in TEXTBOOK_OPTIONS"
-              :key="opt.value"
-              :label="opt.label"
-              :value="opt.value"
-            />
-          </el-select>
-
-          <el-input
-            v-model="treeFilterKeyword"
-            placeholder="输入关键字筛选"
-            clearable
-            class="tree-filter-input"
-            size="default"
-          >
-            <template #prefix>
-              <el-icon><Search /></el-icon>
-            </template>
-          </el-input>
-
-          <div v-if="treeLoading" class="tree-loading">
-            <el-skeleton :rows="8" animated />
-          </div>
-          <el-tree
-            v-else
-            ref="treeRef"
-            :data="treeData"
-            :props="{ label: 'title', children: 'children' }"
-            node-key="id"
-            highlight-current
-            :expand-on-click-node="false"
-            :filter-node-method="filterTreeNode"
-            @node-click="(data: SubjectNode) => handleNodeClick(data)"
-            class="subject-tree"
-          />
-        </ContentWrap>
+        <SubjectDirectory :mine="true" :auto-select="false" @select="onDirSelect" />
       </el-aside>
 
       <!-- ══ 右侧内容区 ══ -->

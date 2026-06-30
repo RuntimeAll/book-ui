@@ -1,13 +1,11 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, computed, watch, nextTick } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import { useDictStore, DICT_QUESTION_TYPE, DICT_QUESTION_DIFFICULTY, DICT_QUESTION_LABEL_STATUS } from '@/store/dict'
 import { ElMessage } from 'element-plus'
 import { Search, Document } from '@element-plus/icons-vue'
 import {
-  lazyTree,
   questionPage,
   removeFavorite,
-  type SubjectNode,
   type QuestionItem,
   type QuestionPageParams,
   type QuestionPageResult,
@@ -16,10 +14,10 @@ import { useRouter } from 'vue-router'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
 import { useAbortableRequest } from '@/composables/useAbortableRequest'
 import FavoriteFolderDrawer from '@/components/FavoriteFolderDrawer/index.vue'
-import ContentWrap from '@/components/ContentWrap/index.vue'
 import SearchWrap from '@/components/SearchWrap/index.vue'
 import QuestionCard from '@/components/business/QuestionCard/index.vue'
 import SketchPad from '@/components/business/SketchPad/index.vue'
+import SubjectDirectory from '@/components/business/SubjectDirectory/index.vue'
 
 // ── 路由 ────────────────────────────────────────────────────
 const router = useRouter()
@@ -27,57 +25,11 @@ const router = useRouter()
 // ── 试题栏（全局 singleton composable，FAB+dialog 由 AppLayout 挂的 <QuestionBasket /> 渲染） ──
 const basket = useQuestionBasket()
 
-// ── 教材选择（子任务 A）──────────────────────────────────────
-// TODO: 待接 misikt 真接口端点 /teacher/textbook/list 或类似
-// playwright 抓取结果：未登录状态无法抓到，hardcode 单选项
-const TEXTBOOK_OPTIONS = [
-  { label: '浙教新版', value: 'zhejiao-new' },
-]
-const selectedTextbook = ref('zhejiao-new')
-
-// ── 章节树 filter（子任务 A）────────────────────────────────
-const treeFilterKeyword = ref('')
-const treeRef = ref()
-
-function filterTreeNode(value: string, data: SubjectNode) {
-  if (!value) return true
-  return (data.title ?? '').includes(value)
-}
-
-watch(treeFilterKeyword, (val) => {
-  treeRef.value?.filter(val)
-})
-
-// ── 章节树 ──────────────────────────────────────────────────
-const treeData = ref<SubjectNode[]>([])
-const treeLoading = ref(false)
-
-async function loadTree() {
-  treeLoading.value = true
-  try {
-    const result = await lazyTree(0)
-    if (Array.isArray(result)) {
-      treeData.value = result
-    } else if (result && typeof result === 'object') {
-      treeData.value = [result as unknown as SubjectNode]
-    }
-    // 树数据就绪后，默认选中第一个节点并触发筛选查询
-    if (treeData.value.length > 0) {
-      const firstNode = treeData.value[0]
-      handleNodeClick(firstNode)
-      // 等 DOM 渲染完成后设置树高亮（highlight-current 需要 setCurrentKey）
-      await nextTick()
-      treeRef.value?.setCurrentKey(firstNode.id)
-    }
-  } catch (e) {
-    console.warn('[tree] lazyTree failed', e)
-  } finally {
-    treeLoading.value = false
-  }
-}
-
-function handleNodeClick(data: SubjectNode) {
-  pageParams.subjectId = data.id
+// ── 题库目录（SubjectDirectory 收放筛选组件）──────────────────
+// 组件解析教材根名 → 学科/学段/版本/年级/册筛选 + 章节树，选中后 emit subjectId（null=全部）。
+// 题库页 autoSelect 默认 true：组件挂载即落到一本教材并 emit → 触发首屏查询。
+function onDirSelect(subjectId: string | null) {
+  pageParams.subjectId = subjectId ?? undefined
   pageParams.pageIndex = 1
   fetchQuestions()
 }
@@ -284,67 +236,16 @@ function handleDetail(q: QuestionItem) {
 }
 
 // ── 初始化 ───────────────────────────────────────────────────
-// loadTree() 内部在数据就绪后会自动选中第一个节点并触发 fetchQuestions，
-// 此处不再单独并行调 fetchQuestions（避免首屏发出一次全量无筛选查询）。
-// 空树兜底：loadTree 内部判断 treeData.length > 0 才选中，空树时不触发查询。
-onMounted(async () => {
-  await loadTree()
-})
+// 首屏由 <SubjectDirectory> 挂载后 emit('select') 驱动（autoSelect 默认落第一本教材 → onDirSelect → fetchQuestions）。
 </script>
 
 <template>
   <div class="question-page">
     <el-container style="height: 100%; min-height: calc(100vh - 60px);">
 
-      <!-- ══ 左侧目录树（子任务 A）- ContentWrap 包裹，sticky 280px ══ -->
+      <!-- ══ 左侧题库目录（学科/学段/版本/年级/册 收放筛选 + 章节树）══ -->
       <el-aside width="280px" class="tree-aside">
-        <ContentWrap title="题库目录" class="tree-content-wrap">
-          <!-- 教材选择 dropdown -->
-          <!-- TODO: 待接 /teacher/textbook/list 教材列表接口（playwright 未登录无法抓取，hardcode 占位） -->
-          <el-select
-            v-model="selectedTextbook"
-            placeholder="选择教材"
-            class="textbook-select"
-            size="default"
-          >
-            <el-option
-              v-for="opt in TEXTBOOK_OPTIONS"
-              :key="opt.value"
-              :label="opt.label"
-              :value="opt.value"
-            />
-          </el-select>
-
-          <!-- 关键字筛选 input -->
-          <el-input
-            v-model="treeFilterKeyword"
-            placeholder="输入关键字筛选"
-            clearable
-            class="tree-filter-input"
-            size="default"
-          >
-            <template #prefix>
-              <el-icon><Search /></el-icon>
-            </template>
-          </el-input>
-
-          <!-- 章节树 -->
-          <div v-if="treeLoading" class="tree-loading">
-            <el-skeleton :rows="8" animated />
-          </div>
-          <el-tree
-            v-else
-            ref="treeRef"
-            :data="treeData"
-            :props="{ label: 'title', children: 'children' }"
-            node-key="id"
-            highlight-current
-            :expand-on-click-node="false"
-            :filter-node-method="filterTreeNode"
-            @node-click="(data: SubjectNode) => handleNodeClick(data)"
-            class="subject-tree"
-          />
-        </ContentWrap>
+        <SubjectDirectory @select="onDirSelect" />
       </el-aside>
 
       <!-- ══ 右侧内容区 ══ -->
