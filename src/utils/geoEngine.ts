@@ -26,8 +26,16 @@ export interface GeoReg {
   obj: Record<string, unknown>
   exp: Record<string, () => [number, number]>
 }
+/** 渲染选项（🔴 Bug③-b：editable=true → 几何点可拖编辑模式；默认静态查看）。 */
+export interface GeoRenderOpts {
+  editable?: boolean
+}
 export interface GeoEngineGlobal {
-  render(containerId: string | HTMLElement, spec: GeoSpec): { board: GeoBoard; reg: GeoReg }
+  render(
+    containerId: string | HTMLElement,
+    spec: GeoSpec,
+    opts?: GeoRenderOpts
+  ): { board: GeoBoard; reg: GeoReg }
   exportState(reg: GeoReg): Record<string, [number, number]>
   exportPNG(board: GeoBoard, scale?: number): Promise<string>
 }
@@ -113,13 +121,15 @@ export function ensureGeoEngine(): Promise<GeoEngineGlobal> {
 /**
  * 渲染一份中性 DSL 到容器（id 字符串或 HTMLElement）。返回 { board, reg }。
  * 容器须先有非零宽高（JSXGraph 按容器尺寸建板）。
+ * 🔴 Bug③-b：opts.editable=true → 几何点可拖（编辑模式）；默认（不传）静态查看，不冒泡可拖圆点。
  */
 export async function renderDSL(
   container: string | HTMLElement,
-  spec: GeoSpec
+  spec: GeoSpec,
+  opts?: GeoRenderOpts
 ): Promise<{ board: GeoBoard; reg: GeoReg }> {
   const engine = await ensureGeoEngine()
-  return engine.render(container, spec)
+  return engine.render(container, spec, opts)
 }
 
 /** 导出当前画板 → PNG dataURL（客户端出图，可上 OSS 当题图）。 */

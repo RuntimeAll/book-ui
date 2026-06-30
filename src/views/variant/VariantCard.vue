@@ -244,8 +244,12 @@ const showFigureZone = computed(
 // ---------------------------------------------------------------------------
 const geoBoardEl = ref<HTMLElement | null>(null)
 const dslRenderFail = ref(false)
+// 🔴 Bug③-b：配图「编辑模式」开关。默认 false = 纯静态查看（点全 fixed、缩小不喧宾夺主）；
+//   点「编辑图」→ true，以 editable:true 重渲（几何点可拖微调），「保存」出 PNG 入库后退回 view。
+const editingFigure = ref(false)
 let geoBoard: GeoBoard | null = null
-// 🔴 用 DSL 的 JSON 序列做渲染指纹：同一份 DSL 不重复渲（避免 reactive 抖动反复重建画板）。
+// 🔴 用 DSL 的 JSON 序列 + 编辑模式做渲染指纹：同一份 DSL + 同模式不重复渲（避免 reactive 抖动反复重建画板）；
+//   模式切换（view⇄edit）指纹变 → 触发重渲。
 let lastDslKey = ''
 
 /** 活图是否真正在场（DSL 在且渲染没失败）→ 决定渲 SVG 容器还是退 <img>。 */
@@ -256,27 +260,32 @@ async function renderGeoFigure(): Promise<void> {
   if (!hasDsl.value || !d) {
     geoBoard = null
     lastDslKey = ''
+    editingFigure.value = false
     return
   }
-  const key = JSON.stringify(d)
-  if (key === lastDslKey && geoBoard) return // 同一份 DSL 已渲，跳过
+  const editable = editingFigure.value
+  const key = JSON.stringify(d) + (editable ? '|edit' : '|view')
+  if (key === lastDslKey && geoBoard) return // 同一份 DSL + 同模式已渲，跳过
   dslRenderFail.value = false
   await nextTick() // 等容器挂载（showLiveFigure 触发 v-if 后）
   const el = geoBoardEl.value
   if (!el) return
   try {
-    el.innerHTML = '' // 清旧画板（重渲/换图）
-    const { board } = await renderDSL(el, d as Record<string, unknown>)
+    el.innerHTML = '' // 清旧画板（重渲/换图/切模式）
+    const { board } = await renderDSL(el, d as Record<string, unknown>, { editable })
     geoBoard = board
     lastDslKey = key
     // 🔴 渲成后立即 exportPNG 回传宿主 → 复用既有 OSS 上传 / state 持久化 / 切 tab 恢复链路。
     //   best-effort：导出失败不影响活图展示（入库时再无 png 则该题无 image 块，同纯文本变式）。
-    void exportPNG(board, 2)
-      .then((url) => {
-        const b64 = url.startsWith('data:') ? url.slice(url.indexOf(',') + 1) : url
-        if (b64) emit('dsl-png-ready', { index: props.item.index, pngBase64: b64 })
-      })
-      .catch((e) => console.warn('[variant] 活图 exportPNG 回传失败:', e))
+    //   🔴 Bug③-b：仅 view 模式自动回传；edit 模式下点会被拖动，等老师点「保存」再出图（saveFigureEdit）。
+    if (!editable) {
+      void exportPNG(board, 2)
+        .then((url) => {
+          const b64 = url.startsWith('data:') ? url.slice(url.indexOf(',') + 1) : url
+          if (b64) emit('dsl-png-ready', { index: props.item.index, pngBase64: b64 })
+        })
+        .catch((e) => console.warn('[variant] 活图 exportPNG 回传失败:', e))
+    }
   } catch (e) {
     // 渲染失败（脏 DSL 漏过闸 / 引擎加载异常）→ 退兜底，不炸卡片
     dslRenderFail.value = true
@@ -309,6 +318,33 @@ async function exportDslPng(): Promise<string | null> {
   } catch (e) {
     console.warn('[variant] 活图 exportPNG 失败:', e)
     return null
+  }
+}
+
+// 🔴 Bug③-b：进入配图编辑模式（几何点可拖）→ editable:true 重渲。
+function enterFigureEdit(): void {
+  if (!showLiveFigure.value) return // 仅活图（有 DSL）可编辑；死图 <img> 不进
+  editingFigure.value = true
+  void renderGeoFigure()
+}
+
+// 🔴 Bug③-b：保存配图编辑——出当前（拖动后）画板的 PNG 走 dsl-png-ready 入库，退回 view 模式重渲（静态）。
+const savingFigure = ref(false)
+async function saveFigureEdit(): Promise<void> {
+  if (savingFigure.value) return
+  savingFigure.value = true
+  try {
+    if (geoBoard) {
+      const url = await exportPNG(geoBoard, 2)
+      const b64 = url.startsWith('data:') ? url.slice(url.indexOf(',') + 1) : url
+      if (b64) emit('dsl-png-ready', { index: props.item.index, pngBase64: b64 })
+    }
+  } catch (e) {
+    console.warn('[variant] 保存配图编辑出图失败:', e)
+  } finally {
+    savingFigure.value = false
+    editingFigure.value = false
+    await renderGeoFigure() // 退回 view 模式（点静态化）
   }
 }
 
@@ -1132,7 +1168,7 @@ function saveFieldEdit() {
       <div v-if="showFigureZone" class="vc-figure-zone">
         <!-- 🔴 PRD-C-110 B2·客户端活图（有 DSL 且渲染没失败）：geoEngine 渲 SVG，红点可拖、派生联动。
              懒加载引擎（首次带图才下 ~1MB）。容器须有非零宽高（JSXGraph 按容器尺寸建板）。 -->
-        <div v-if="showLiveFigure" class="vc-figure vc-figure-live" title="变式配图 · 活图（红点可拖微调）">
+        <div v-if="showLiveFigure" class="vc-figure vc-figure-live" :title="editingFigure ? '变式配图 · 编辑中（拖红点微调）' : '变式配图 · 活图（点「编辑图」可微调）'">
           <div ref="geoBoardEl" class="vc-geo-board"></div>
         </div>
         <!-- 兜底：无 DSL（旧数据/降级/已入库 OSS 图）或活图渲染失败 → <img> 死图，点开看大图 -->
@@ -1182,7 +1218,40 @@ function saveFieldEdit() {
           >
             图歪了？重新生成
           </el-button>
+          <!-- 🔴 Bug③-b：活图（DSL）显式编辑模式——进入才可拖点微调；查看态纯静态。 -->
+          <el-button
+            v-if="showLiveFigure && !editingFigure"
+            text
+            size="small"
+            :disabled="isBusy || figureLoading"
+            @click="enterFigureEdit"
+          >
+            ✏️ 编辑图
+          </el-button>
+          <template v-if="showLiveFigure && editingFigure">
+            <el-button
+              text
+              size="small"
+              type="primary"
+              :loading="savingFigure"
+              :disabled="savingFigure"
+              @click="saveFigureEdit"
+            >
+              ✅ 保存
+            </el-button>
+            <el-button
+              text
+              size="small"
+              :disabled="savingFigure"
+              @click="editingFigure = false; renderGeoFigure()"
+            >
+              取消
+            </el-button>
+          </template>
         </div>
+        <p v-if="showLiveFigure && editingFigure" class="vc-figure-edit-hint">
+          编辑模式：拖动图上红点微调位置，满意后点「保存」入库
+        </p>
 
         <div v-if="figFixOpen" class="vc-fig-fix">
           <el-input
@@ -2022,6 +2091,12 @@ function saveFieldEdit() {
   width: 320px;
   max-width: 100%;
   height: 280px;
+}
+/* 🔴 Bug③-b：配图编辑模式提示条 */
+.vc-figure-edit-hint {
+  margin: 4px 0 0;
+  font-size: 11.5px;
+  color: var(--violet-700);
 }
 .vc-figure-warn {
   font-size: 12px;

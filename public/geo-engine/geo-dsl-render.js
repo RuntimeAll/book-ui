@@ -20,21 +20,26 @@
   function deg(a) { return a * Math.PI / 180; }
 
   // 统一样式：把 DSL 的 style 翻成 JSXGraph attr
-  function attr(o, extra) {
+  // 🔴 Bug③-a/b（C-109/110）：默认全 fixed（静态查看，不冒泡可拖圆点）；
+  //    仅当「编辑模式 editable=true」且对象未显式 draggable:false 时才解锁可拖。
+  //    单点显式 draggable:true 也解锁（DSL 主动声明的活点，保留旧能力）。
+  function attr(o, extra, editable) {
     var s = o.style || {};
+    var canDrag = (editable === true && o.draggable !== false) || o.draggable === true;
     var a = {
       strokeColor: s.color || BLK,
       strokeWidth: s.width != null ? s.width : 1.2,
       fillColor: s.fill || s.color || BLK,
       fillOpacity: s.fillOpacity != null ? s.fillOpacity : 0,
       dash: s.dash ? 2 : 0,
-      fixed: o.draggable === false,
+      fixed: !canDrag,
       name: o.label != null ? o.label : (o.id || ''),
       withLabel: o.label !== '' && o.id !== undefined ? (o.showLabel !== false) : (o.label != null),
       size: s.size != null ? s.size : 3,
       label: { offset: s.labelOffset || [6, 6], fontSize: s.fontSize || 14 }
     };
-    if (o.draggable === true) { a.fillColor = s.color || '#e11'; a.strokeColor = s.color || '#e11'; }
+    // 可拖点高亮红，让老师看清能拖哪个；静态点保持中性色、缩小不喧宾夺主。
+    if (canDrag) { a.fillColor = s.color || '#e11'; a.strokeColor = s.color || '#e11'; }
     return Object.assign(a, extra || {});
   }
 
@@ -61,13 +66,15 @@
   }
 
   // 核心翻译：spec.objects → JSXGraph 对象（reg = id -> 对象 + 取值器）
-  function buildObjects(b, objects, reg, exportable) {
+  // 🔴 Bug③-b：editable 仅作用于 point/glider/midpoint（可拖几何点）；其余对象恒静态。
+  function buildObjects(b, objects, reg, exportable, editable) {
     (objects || []).forEach(function (o) {
       var g = null;
       var P = function (id) { return reg.obj[id]; };
       switch (o.type) {
         case 'point':
-          g = b.create('point', o.coords, attr(o, { size: o.style && o.style.size || 4 })); break;
+          // 🔴 Bug③-a：默认点更小（2.5）不喧宾夺主；DSL 显式 style.size 优先。
+          g = b.create('point', o.coords, attr(o, { size: o.style && o.style.size || 2.5 }, editable)); break;
         case 'segment':
           g = b.create('segment', [P(o.points[0]), P(o.points[1])], attr(o, { withLabel: false })); break;
         case 'line':
@@ -85,7 +92,7 @@
             borders: { strokeColor: (o.style && o.style.color) || BLK, strokeWidth: 1.2 },
             vertices: { visible: false }, withLabel: false }); break;
         case 'midpoint':
-          g = b.create('midpoint', [P(o.points[0]), P(o.points[1])], attr(o, { size: 3 })); break;
+          g = b.create('midpoint', [P(o.points[0]), P(o.points[1])], attr(o, { size: 2.5 }, editable)); break;
         case 'circle':
           g = o.through != null
             ? b.create('circle', [P(o.center), P(o.through)], attr(o, { withLabel: false }))
@@ -102,11 +109,25 @@
         case 'intersection':
           g = b.create('intersection', [P(o.of[0]), P(o.of[1]), o.which || 0], attr(o, { size: 2 })); break;
         case 'angle':
-          g = b.create('angle', [P(o.points[0]), P(o.points[1]), P(o.points[2])],
-            o.right ? { radius: o.radius || 0.45, type: 'square', fillOpacity: 0, strokeColor: BLK, name: '' }
-                    : { radius: o.radius || 0.6, name: o.label || '', strokeColor: BLK }); break;
+          // 🔴 Bug③-c：直角保留小方块（题面常见，清晰）；非直角不再画 angle 弧（圆弧泛滥），
+          //    改在顶点附近标文字（∠ABC 或度数 label），更贴近教材标注习惯。
+          if (o.right) {
+            g = b.create('angle', [P(o.points[0]), P(o.points[1]), P(o.points[2])],
+              { radius: o.radius || 0.45, type: 'square', fillOpacity: 0, strokeColor: BLK, name: '' });
+          } else {
+            var vtx = P(o.points[1]);
+            // 文字内容：优先 DSL label；否则按三点名拼 ∠ABC。
+            var aName = (o.points[0] && o.points[1] && o.points[2]) ? ('∠' + o.points[0] + o.points[1] + o.points[2]) : '∠';
+            var aTxt = o.label != null && o.label !== '' ? o.label : aName;
+            g = b.create('text',
+              [function () { return vtx.X() + (o.labelOffsetX != null ? o.labelOffsetX : 0.25); },
+               function () { return vtx.Y() + (o.labelOffsetY != null ? o.labelOffsetY : 0.25); },
+               aTxt],
+              { fontSize: (o.style && o.style.fontSize) || 13, color: BLK, anchorX: 'left', anchorY: 'middle', fixed: true });
+          }
+          break;
         case 'glider':
-          g = b.create('glider', [o.coords[0], o.coords[1], P(o.on)], attr(o, { size: 4 })); break;
+          g = b.create('glider', [o.coords[0], o.coords[1], P(o.on)], attr(o, { size: 3 }, editable)); break;
         case 'tangent':
           g = b.create('tangent', [P(o.at)], { strokeColor: (o.style && o.style.color) || BLK, strokeWidth: 1.3, withLabel: false }); break;
         case 'functiongraph':
@@ -171,9 +192,15 @@
   }
 
   var GeoEngine = {
-    /** 在容器里渲染一份 DSL，返回 { board, reg }。reg.exp 可拖动点的取值器。 */
-    render: function (containerId, spec) {
+    /**
+     * 在容器里渲染一份 DSL，返回 { board, reg }。reg.exp 可拖动点的取值器。
+     * 🔴 Bug③-b：opts.editable=true → 几何点（point/glider/midpoint）解锁可拖（编辑模式）；
+     *    默认（view）全静态 fixed，不冒泡可拖圆点。
+     */
+    render: function (containerId, spec, opts) {
       spec = spec || {};
+      opts = opts || {};
+      var editable = opts.editable === true;
       var board = JXG.JSXGraph.initBoard(containerId, {
         boundingbox: spec.bbox || [-5, 5, 6, -3],
         axis: spec.axis || false, grid: spec.grid || false,
@@ -182,7 +209,7 @@
       });
       var reg = { obj: {}, exp: {} };
       if (spec.solid3d) { build3d(board, spec.solid3d); }
-      buildObjects(board, spec.objects, reg, spec.exportable !== false);
+      buildObjects(board, spec.objects, reg, spec.exportable !== false, editable);
       return { board: board, reg: reg };
     },
     /** 导出拖动后的几何状态（这份 JSON 就是存进 blockJson 的内容）。 */
