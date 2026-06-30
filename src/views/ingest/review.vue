@@ -180,11 +180,10 @@ const editing = reactive<Record<string, boolean>>({})
 const drafts = reactive<Record<string, EditDraft>>({})
 const savingEdit = reactive<Record<string, boolean>>({})
 
-const QTYPE_OPTIONS = [
-  { label: '选择', value: 1 },
-  { label: '填空', value: 2 },
-  { label: '解答', value: 5 },
-]
+// 题型下拉走字典 SSOT（biz_question_type，含全 8 类）；修旧硬编码「填空=2」错值（字典填空=4）。
+const QTYPE_OPTIONS = computed(() =>
+  dict.list(DICT_QUESTION_TYPE).map((d) => ({ label: d.dictLabel, value: Number(d.dictValue) })),
+)
 
 function startEdit(it: IngestJobItem) {
   const k = String(it.id)
