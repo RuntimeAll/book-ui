@@ -126,13 +126,8 @@ const router = createRouter({
           name: 'Home',
           component: () => import('@/views/home/index.vue'),
         },
-        // 🔴 AI 助手 = 老师 vibe 聊天入口（PRD-C-004/005）。双栏：左对话流（SSE 逐字看思路）+ 右组卷画布，
-        //    调 ai-orchestrator :8092 /chat（vite proxy /ai）。原占 /home，2026-06-05 让位真首页下移至此。
-        {
-          path: '/ai-assistant',
-          name: 'AiAssistant',
-          component: () => import('@/views/ai-compose/index.vue'),
-        },
+        // AI 助手（/ai-assistant，原 PRD-C-004/005 vibe 聊天入口）2026-06-30 移除：
+        //   功能暂废，菜单项 + 本路由 + views/ai-compose + api/chat 一并清。
         // 🔴 举一反三（PRD-C-009）= 图片变式 agent 入口。拍题 → 贴 OSS 图链 → 自动出代表性变式
         //    （2 普通 1 难）→ 对话式编辑 → 入个人题库。调 toolkit :8093 variant agent（vite proxy /agent）。
         {

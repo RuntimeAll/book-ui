@@ -32,7 +32,6 @@ import {
 import FreeTagList from '@/components/business/FreeTagList/index.vue'
 import SketchPad from '@/components/business/SketchPad/index.vue'
 import DetailSidebar from './components/DetailSidebar.vue'
-import FontSizeSwitch from '@/components/business/FontSizeSwitch/index.vue'
 import QuestionContent from '@/components/business/QuestionContent/index.vue'
 // PRD-A-015 — 结构化网格块统一渲染（题干 blockJson 非空时优先用它，否则回落 QuestionContent）
 import QuestionBlockRender from '@/components/business/QuestionBlockRender/index.vue'
@@ -367,7 +366,6 @@ watch(questionId, async () => {
       </el-button>
       <span class="topbar-title">题目详情</span>
       <span class="topbar-spacer" />
-      <FontSizeSwitch />
     </div>
 
     <div v-if="loading" class="detail-loading">

@@ -54,7 +54,7 @@ interface MenuItem {
 
 const allMenuItems: MenuItem[] = [
   { label: '首页', path: '/home' },
-  { label: 'AI 助手', path: '/ai-assistant' },                  // 🔴 PRD-C-004/005 老师 vibe 聊天入口（2026-06-05 让位真首页后从 /home 下移至此）
+  // AI 助手（vibe 聊天入口）2026-06-30 移除：功能暂废，菜单 + 路由 + 页面一并清。
   { label: '举一反三', path: '/ai-variant' },                   // 🔴 PRD-C-009 图片变式 agent 入口（toolkit :8093）
   { label: '我的工作台', path: '/workspace' },                  // U-3 教师工作台聚合页
   { label: '卷库', path: '/papers/index' },
