@@ -257,6 +257,16 @@ export interface VariantDna {
    */
   models: VariantModel[]
   /**
+   * 🔴 Bug②（C-109/110 终审）—— 通用模型（待录入）。
+   *   opus 总结出但本地库没录的通用模型，BE 透传 dna.temp_models = [{name, is_new:true}]，
+   *   表示「待管理员审核录入」。展示语义（三态）：
+   *     models 非空 → 显正式模型；
+   *     models 空但 tempModels 非空 → 显「通用模型(待录入)」+ 待录入徽章；
+   *     两者都空 → 才显「无考模型」。
+   *   BE 缺该键（旧后端/旧线程）→ []。
+   */
+  tempModels: VariantTempModel[]
+  /**
    * 🔴 PRD-C-106 B4③c·诚实三态：BE 去 M00 兜底后，真无考模型 → model_flag="no_model"。
    *   FE 据此把模型行渲染「无考模型」明示态（非空白/非「未标」/非 M00）。有模型 → null（出真模型）。
    *   BE 缺该键（旧后端/旧线程）→ null；此时若 models 为空，noModel 由派生逻辑兜底判（见 pickDna）。
@@ -342,6 +352,17 @@ export function regenClassOf(field: string): RegenClass {
 export interface VariantModel {
   id: string
   name: string
+}
+
+/**
+ * 🔴 Bug②（C-109/110 终审）—— 通用模型（待录入）。
+ * opus 总结出但本地库没录、待管理员审核录入的模型。BE dna.temp_models 元素 = {name, is_new:true}。
+ */
+export interface VariantTempModel {
+  /** 模型名（opus 总结） */
+  name: string
+  /** 是否新提议（待录入），缺省按 true */
+  isNew: boolean
 }
 
 /** artifact 快照 — 单题（契约与 BE _artifact_payload 严格一致） */
@@ -590,6 +611,8 @@ function pickDna(o: Record<string, unknown>): VariantDna {
     scene: str(d.scene) ?? str(d.scenario),
     // PRD-C-015 块②：models 维（[{id,name}]；兼容嵌套 d.models 或散键，缺失 → []）
     models: pickModels(d.models),
+    // 🔴 Bug②：通用模型（待录入）—— 兼容 snake_case temp_models / camelCase tempModels，缺失 → []
+    tempModels: pickTempModels(d.temp_models ?? d.tempModels),
     // 🔴 PRD-C-106 B4③c·诚实三态：model_flag 透传（BE mother_card.dna.model_flag / _item_dna）。
     //   缺键 → null。noModel 派生：flag==="no_model" 显式无模型；或 无 flag 但 models 空 → 兜底视作无模型态。
     modelFlag: str(d.model_flag) ?? str(d.modelFlag),
@@ -631,6 +654,28 @@ function pickModels(v: unknown): VariantModel[] {
       const id = o.id === null || o.id === undefined ? '' : String(o.id)
       const name = str(o.name) ?? str(o.model_name) ?? id
       if (name) out.push({ id: id || name, name })
+    }
+  }
+  return out
+}
+
+/**
+ * 🔴 Bug② — 从原始值解出 temp_models（[{name,is_new}] / 纯名字符串 / null；缺失 → []）。
+ * 兼容 snake_case is_new 与 camelCase isNew；缺 is_new 默认 true（待录入语义）。
+ */
+function pickTempModels(v: unknown): VariantTempModel[] {
+  if (!Array.isArray(v)) return []
+  const out: VariantTempModel[] = []
+  for (const x of v) {
+    if (typeof x === 'string' && x.trim()) {
+      out.push({ name: x.trim(), isNew: true })
+    } else if (x && typeof x === 'object') {
+      const o = x as Record<string, unknown>
+      const name = str(o.name) ?? str(o.model_name)
+      if (name) {
+        const isNew = o.is_new === false || o.isNew === false ? false : true
+        out.push({ name, isNew })
+      }
     }
   }
   return out

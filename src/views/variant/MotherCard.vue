@@ -641,6 +641,17 @@ const hasFigureCol = computed(
             <template v-if="dna?.models.length">
               <span v-for="m in dna.models" :key="m.id" class="mc-model"><InlineMath :content="m.name || m.id" /></span>
             </template>
+            <!-- 🔴 Bug②：models 空但 temp_models 非空 → opus 总结的通用模型「待录入」，明示 + 待录入徽章。 -->
+            <template v-else-if="dna?.tempModels.length">
+              <span
+                v-for="(m, i) in dna.tempModels"
+                :key="'tm-' + i"
+                class="mc-temp-model"
+                title="通用模型：opus 已总结，本地题库暂未收录，待管理员审核录入"
+              >
+                <InlineMath :content="m.name" /><span class="mc-temp-badge">待录入</span>
+              </span>
+            </template>
             <!-- 🔴 PRD-C-106 B4③c·诚实三态：真无考模型（BE model_flag=no_model）→ 明示「无考模型」，
                  非空白 / 非「未标」 / 非 M00 占位。有模型走上面真模型 chips；旧线程无 flag 且 models 空亦视无模型。 -->
             <span v-else-if="dna?.noModel" class="mc-no-model" title="这道题没有对应的考试解题模型（不硬凑 M00 占位）">无考模型</span>
@@ -1142,6 +1153,27 @@ const hasFigureCol = computed(
   border: 1px solid var(--violet-line);
   border-radius: 999px;
   padding: 1px 9px;
+}
+/* 🔴 Bug②：通用模型（待录入）—— 橙底，区别于正式模型 violet chips；附「待录入」小徽章 */
+.mc-temp-model {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  background: #fff7ed;
+  color: #c2620c;
+  border: 1px solid #fed7aa;
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.mc-temp-badge {
+  font-size: 9.5px;
+  line-height: 1.4;
+  color: #fff;
+  background: #f59e0b;
+  border-radius: 999px;
+  padding: 0 5px;
+  font-weight: 600;
 }
 /* 🔴 PRD-C-106 B4③c·诚实三态「无考模型」明示态（灰中性，区别于真模型 violet chips、不报错不空白） */
 .mc-no-model {

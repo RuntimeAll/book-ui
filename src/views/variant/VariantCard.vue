@@ -1382,6 +1382,17 @@ function saveFieldEdit() {
               <template v-if="dna.models.length">
                 <span v-for="m in dna.models" :key="m.id" class="model-pill"><InlineMath :content="m.name || m.id" /></span>
               </template>
+              <!-- 🔴 Bug②：models 空但 temp_models 非空 → opus 总结的通用模型「待录入」明示 + 待录入徽章。 -->
+              <template v-else-if="dna.tempModels.length">
+                <span
+                  v-for="(m, i) in dna.tempModels"
+                  :key="'tm-' + i"
+                  class="temp-model-pill"
+                  title="通用模型：opus 已总结，本地题库暂未收录，待管理员审核录入"
+                >
+                  <InlineMath :content="m.name" /><span class="temp-model-badge">待录入</span>
+                </span>
+              </template>
               <!-- 🔴 PRD-C-106 B4③c·诚实三态：真无考模型 → 明示「无考模型」（非空白/非 M00 占位） -->
               <span v-else-if="dna.noModel" class="no-model-pill" title="这道题没有对应的考试解题模型（不硬凑 M00）">无考模型</span>
               <span v-else class="dna-muted">未标</span>
@@ -2339,6 +2350,27 @@ function saveFieldEdit() {
 }
 .model-pill.is-chosen {
   cursor: pointer;
+}
+/* 🔴 Bug②：通用模型（待录入）药丸（橙系，区别正式 violet chip）+ 待录入小徽章 */
+.temp-model-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  background: #fff7ed;
+  color: #c2620c;
+  border: 1px solid #fed7aa;
+  border-radius: 999px;
+  padding: 2px 9px;
+}
+.temp-model-badge {
+  font-size: 10px;
+  line-height: 1.4;
+  color: #fff;
+  background: #f59e0b;
+  border-radius: 999px;
+  padding: 0 5px;
+  font-weight: 600;
 }
 /* 🔴 PRD-C-106 B4③c·诚实三态「无考模型」明示态（灰中性虚线，区别真模型 violet 实 chip） */
 .no-model-pill {
