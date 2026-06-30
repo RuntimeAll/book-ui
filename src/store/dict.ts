@@ -89,3 +89,9 @@ export const DICT_QUESTION_SOURCE = 'biz_question_source'
 // 🔴 biz_question.source_type 列专用字典（1中考真题/2模拟/3期末/4月考/5单元/6自编/9其他）。
 //    注意与上面 DICT_QUESTION_SOURCE(biz_question_source) 是两套不同约定，别混（source_type 列只认这个）。
 export const DICT_QUESTION_SOURCE_TYPE = 'biz_question_source_type'
+// biz_question.label_status 打标状态（0未标/1AI已标/2已审核/3争议）
+export const DICT_QUESTION_LABEL_STATUS = 'biz_question_label_status'
+// biz_question.annotate_status 标注完成度（0未标/1已标全/2部分）
+export const DICT_QUESTION_ANNOTATE_STATUS = 'biz_question_annotate_status'
+// 题目考察类型 dim2（概念辨析/直接计算/…，string 码 = label）
+export const DICT_QUESTION_ASSESSMENT_TYPE = 'biz_question_assessment_type'

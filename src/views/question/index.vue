@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, computed, watch, nextTick } from 'vue'
-import { useDictStore, DICT_QUESTION_TYPE, DICT_QUESTION_DIFFICULTY } from '@/store/dict'
+import { useDictStore, DICT_QUESTION_TYPE, DICT_QUESTION_DIFFICULTY, DICT_QUESTION_LABEL_STATUS } from '@/store/dict'
 import { ElMessage } from 'element-plus'
 import { Search, Document } from '@element-plus/icons-vue'
 import {
@@ -91,6 +91,7 @@ function handleNodeClick(data: SubjectNode) {
 const dict = useDictStore()
 dict.load(DICT_QUESTION_TYPE)
 dict.load(DICT_QUESTION_DIFFICULTY)
+dict.load(DICT_QUESTION_LABEL_STATUS)
 const QUESTION_TYPES = computed(() => [
   { label: '全部题型', value: '' as number | '' },
   ...dict.list(DICT_QUESTION_TYPE).map((d) => ({ label: d.dictLabel, value: Number(d.dictValue) })),
@@ -101,12 +102,10 @@ const DIFFICULTY_OPTIONS = computed(() => [
   ...dict.list(DICT_QUESTION_DIFFICULTY).map((d) => ({ label: d.dictLabel, value: Number(d.dictValue) })),
 ])
 
-const LABEL_STATUS_OPTIONS = [
-  { label: '全部', value: '' },
-  { label: '未标', value: 0 },
-  { label: 'AI已标', value: 1 },
-  { label: '已审核', value: 2 },
-]
+const LABEL_STATUS_OPTIONS = computed(() => [
+  { label: '全部', value: '' as number | '' },
+  ...dict.list(DICT_QUESTION_LABEL_STATUS).map((d) => ({ label: d.dictLabel, value: Number(d.dictValue) })),
+])
 
 const filter = reactive({
   questionType: '' as number | '',

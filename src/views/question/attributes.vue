@@ -23,7 +23,7 @@ import {
   type UpdateAttrsPayload,
 } from '@/api/question/index'
 import ChapterPicker from '@/components/business/ChapterPicker/index.vue'
-import { useDictStore, DICT_QUESTION_SOURCE_TYPE } from '@/store/dict'
+import { useDictStore, DICT_QUESTION_SOURCE_TYPE, DICT_QUESTION_LABEL_STATUS, DICT_QUESTION_ANNOTATE_STATUS, DICT_QUESTION_ASSESSMENT_TYPE } from '@/store/dict'
 import { useUserStore } from '@/store/user'
 import { getCurrentUser } from '@/api/user'
 
@@ -48,30 +48,27 @@ const canEdit = computed(() => {
   return uid != null && owner != null && String(owner) === String(uid)
 })
 
-// ── 受控词表 ────────────────────────────────────────────────────────────────
+// ── 受控词表 ──────────────────────────────────────────────────────────────
 // 🔴 C-100 B-converge 方案B：dim3（思维方法）随 BE V905 DROP 列剥除，METHOD_OPTIONS 一并删（属性编辑页 C 线预期降级）。
-const LABEL_STATUS_OPTIONS = [
-  { label: '未标', value: 0 },
-  { label: 'AI 已标', value: 1 },
-  { label: '已审核', value: 2 },
-  { label: '争议', value: 3 },
-]
-// 来源下拉走字典 SSOT（biz_question_source_type，超管可维护）；选项 = 字典全量。
+// 全部走字典 SSOT（超管可维护）：label_status / annotate_status / source_type / assessment_type(dim2)。
 const dict = useDictStore()
+dict.load(DICT_QUESTION_LABEL_STATUS)
+dict.load(DICT_QUESTION_ANNOTATE_STATUS)
 dict.load(DICT_QUESTION_SOURCE_TYPE)
+dict.load(DICT_QUESTION_ASSESSMENT_TYPE)
+const LABEL_STATUS_OPTIONS = computed(() =>
+  dict.list(DICT_QUESTION_LABEL_STATUS).map((d) => ({ label: d.dictLabel, value: Number(d.dictValue) })),
+)
 const SOURCE_TYPE_OPTIONS = computed(() =>
   dict.list(DICT_QUESTION_SOURCE_TYPE).map((d) => ({ label: d.dictLabel, value: Number(d.dictValue) })),
 )
-const ANNOTATE_STATUS_OPTIONS = [
-  { label: '未标', value: 0 },
-  { label: '已标全', value: 1 },
-  { label: '部分', value: 2 },
-]
-// PRD-C-204：考察类型闭集 10（与 22-题目维度 SSOT / EXAM_TYPES 一致）
-const ASSESSMENT_TYPE_OPTIONS = [
-  '概念辨析', '直接计算', '公式套用', '性质判定', '证明推理',
-  '应用建模', '作图', '探究归纳', '阅读理解迁移', '纠错',
-]
+const ANNOTATE_STATUS_OPTIONS = computed(() =>
+  dict.list(DICT_QUESTION_ANNOTATE_STATUS).map((d) => ({ label: d.dictLabel, value: Number(d.dictValue) })),
+)
+// 考察类型 dim2（string 码 = label）；与 22-题目维度 SSOT / 变式 EXAM_TYPES 同源（字典为准）。
+const ASSESSMENT_TYPE_OPTIONS = computed(() =>
+  dict.list(DICT_QUESTION_ASSESSMENT_TYPE).map((d) => d.dictLabel),
+)
 
 // ── PRD-C-204 — JSON 串字段 try-parse（红线：解析失败原样字符串显示，绝不崩） ─────────────
 /** 把 JSON 数组串解析成 string[]；解析失败 / 非数组 → 原串包成单元素数组（友好显示，不崩） */

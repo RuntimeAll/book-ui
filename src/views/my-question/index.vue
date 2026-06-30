@@ -4,7 +4,7 @@
 // （老师自己的题跨多章节，默认选首节点会几乎空 → 改为先全量展示自己的题，点树仍可过滤）。
 // 血缘展示（母题关系等）暂不做（QuestionCard 列表本就不展示血缘，无需额外隐藏）。
 import { ref, reactive, onMounted, computed, watch, nextTick } from 'vue'
-import { useDictStore, DICT_QUESTION_TYPE } from '@/store/dict'
+import { useDictStore, DICT_QUESTION_TYPE, DICT_QUESTION_DIFFICULTY } from '@/store/dict'
 import { ElMessage } from 'element-plus'
 import { Search, Document, Plus, ArrowDown, Crop, Upload } from '@element-plus/icons-vue'
 import {
@@ -105,18 +105,17 @@ function handleIngestCommand(command: string) {
 // PRD-C-204：题型读字典 SSOT（biz_question_type），不再硬编码
 const dict = useDictStore()
 dict.load(DICT_QUESTION_TYPE)
+dict.load(DICT_QUESTION_DIFFICULTY)
 const QUESTION_TYPES = computed(() => [
   { label: '全部题型', value: '' as number | '' },
   ...dict.list(DICT_QUESTION_TYPE).map((d) => ({ label: d.dictLabel, value: Number(d.dictValue) })),
 ])
 
-const DIFFICULTY_OPTIONS = [
-  { label: '全部难度', value: '' },
-  { label: '1星', value: 1 },
-  { label: '2星', value: 2 },
-  { label: '3星', value: 3 },
-  { label: '4星', value: 4 },
-]
+// 难度过滤走字典 SSOT（biz_question_difficulty，基础/中等/较难/压轴），不再硬编码「N星」
+const DIFFICULTY_OPTIONS = computed(() => [
+  { label: '全部难度', value: '' as number | '' },
+  ...dict.list(DICT_QUESTION_DIFFICULTY).map((d) => ({ label: d.dictLabel, value: Number(d.dictValue) })),
+])
 
 const filter = reactive({
   questionType: '' as number | '',
