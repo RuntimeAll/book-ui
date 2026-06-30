@@ -26,6 +26,7 @@ import AddFromBasketDialog from './components/AddFromBasketDialog.vue'
 import QuestionContent from '@/components/business/QuestionContent/index.vue'
 import QuestionBlockRender from '@/components/business/QuestionBlockRender/index.vue'
 import { parseBlockDoc } from '@/utils/blockSchema'
+import { useDictStore, DICT_QUESTION_TYPE } from '@/store/dict'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
 import { useUserStore } from '@/store/user'
 import { getCurrentUser } from '@/api/user'
@@ -166,10 +167,11 @@ function getQuestionScore(q: PaperSourceQuestion): number | null {
 }
 void getQuestionScore
 
-// ── 题型 ──
+// ── 题型 ── label 走字典 SSOT（biz_question_type，超管可维护，含全 8 类）。
+const dict = useDictStore()
+dict.load(DICT_QUESTION_TYPE)
 function getQuestionTypeLabel(type: number): string {
-  const map: Record<number, string> = { 1: '选择题', 4: '填空题', 5: '简答题' }
-  return map[type] ?? `题型${type}`
+  return dict.label(DICT_QUESTION_TYPE, type) || `题型${type}`
 }
 
 function getQuestionTypeTag(type: number): 'success' | 'warning' | 'info' | 'primary' | 'danger' {

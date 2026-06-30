@@ -2805,9 +2805,9 @@ onBeforeUnmount(() => {
                 data-testid="knob-difficulty"
               >
                 <el-option label="不变(母题档)" value="keep" />
-                <el-option label="L1 送分" :value="1" />
-                <el-option label="L2 巩固" :value="2" />
-                <el-option label="L3 中档" :value="3" />
+                <el-option label="L1 基础" :value="1" />
+                <el-option label="L2 中等" :value="2" />
+                <el-option label="L3 较难" :value="3" />
                 <el-option label="L4 压轴" :value="4" />
               </el-select>
               <el-tooltip

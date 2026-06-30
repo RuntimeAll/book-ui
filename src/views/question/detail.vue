@@ -285,8 +285,8 @@ function lineageTypeLabel(type: number | null): string {
   const map: Record<number, string> = { 1: '选择', 4: '填空', 5: '解答' }
   return type != null && map[type] ? map[type] : '—'
 }
-// 难度档文案（与母题卡对齐：1送分/2常规/3多步综合/4压轴）
-const DIFFICULTY_LABELS = ['', '送分', '常规', '多步综合', '压轴']
+// 难度档文案统一回字典 biz_question_difficulty（1基础/2中等/3较难/4压轴，超管为准）
+const DIFFICULTY_LABELS = ['', '基础', '中等', '较难', '压轴']
 function lineageDifficultyLabel(d: number | null): string {
   return d != null && d >= 1 && d <= 4 ? `${DIFFICULTY_LABELS[d]}（${d}）` : '—'
 }
@@ -307,7 +307,8 @@ function getDifficultyStars(difficult: number | null) {
 // 父组件已不再引用，保留（纯函数、零副作用）未真删避免误伤。
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 function getQuestionTypeLabel(type: number): string {
-  const map: Record<number, string> = { 1: '选择题', 4: '填空题', 5: '简答题' }
+  // 死代码（题型 label 已迁 DetailSidebar 走字典 useDictStore），仅对齐题型5=解答题、保留不删避误伤
+  const map: Record<number, string> = { 1: '选择题', 4: '填空题', 5: '解答题' }
   return map[type] ?? `题型${type}`
 }
 void getQuestionTypeLabel

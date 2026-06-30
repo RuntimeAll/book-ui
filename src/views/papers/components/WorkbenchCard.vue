@@ -17,6 +17,7 @@
  */
 import { Top, Bottom, Delete, InfoFilled, Refresh } from '@element-plus/icons-vue'
 import QuestionContent from '@/components/business/QuestionContent/index.vue'
+import { useDictStore, DICT_QUESTION_TYPE } from '@/store/dict'
 import type { PaperSourceQuestion } from '@/api/question/index'
 
 // EditRow 结构与 workbench.vue 一致（这里只声明用到的本地视图字段）
@@ -45,10 +46,11 @@ const emit = defineEmits<{
   (e: 'detail', row: EditRow): void
 }>()
 
-// ── 题型（纯函数，随题卡迁入；与 workbench.vue 原实现逐字一致）──
+// ── 题型 ── label 走字典 SSOT（biz_question_type，超管可维护，含全 8 类）。
+const dict = useDictStore()
+dict.load(DICT_QUESTION_TYPE)
 function getQuestionTypeLabel(type: number): string {
-  const map: Record<number, string> = { 1: '选择题', 4: '填空题', 5: '简答题', 2: '判断题', 3: '应用题' }
-  return map[type] ?? `题型${type}`
+  return dict.label(DICT_QUESTION_TYPE, type) || `题型${type}`
 }
 
 function getQuestionTypeTag(type: number): string {

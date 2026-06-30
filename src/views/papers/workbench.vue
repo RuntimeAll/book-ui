@@ -42,6 +42,7 @@ import ReplaceQuestionDialog from './components/ReplaceQuestionDialog.vue'
 import WorkbenchCard from './components/WorkbenchCard.vue'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
 import { useUserStore } from '@/store/user'
+import { useDictStore, DICT_QUESTION_TYPE } from '@/store/dict'
 import { getCurrentUser } from '@/api/user'
 
 // ── 路由 ────────────────────────────────────────────────────────────────────
@@ -193,9 +194,11 @@ function cnLabel(i: number) {
   return CN_NUM[i] ?? String(i + 1)
 }
 
+// 题型 label 走字典 SSOT（biz_question_type，超管可维护，含全 8 类）。
+const dict = useDictStore()
+dict.load(DICT_QUESTION_TYPE)
 function getQuestionTypeLabel(type: number): string {
-  const map: Record<number, string> = { 1: '选择题', 4: '填空题', 5: '简答题', 2: '判断题', 3: '应用题' }
-  return map[type] ?? `题型${type}`
+  return dict.label(DICT_QUESTION_TYPE, type) || `题型${type}`
 }
 
 // PRD-A-010 T3：题卡题型彩标已随 WorkbenchCard 迁出（子组件内有同名实现）。

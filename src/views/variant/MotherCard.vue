@@ -193,7 +193,8 @@ const hardPoints = computed(() => dna.value?.hardPoints ?? [])
 //   仍由父透传备用，不再在本卡 chip 中消费。
 
 // 🔴 PRD-C-017 B5 难度：1-4 星级（与变式卡同风格）+ 档位文案
-const DIFFICULTY_LABEL = ['', '送分', '常规', '多步综合', '压轴']
+// 档位文案统一回字典 biz_question_difficulty（1基础/2中等/3较难/4压轴，超管为准）
+const DIFFICULTY_LABEL = ['', '基础', '中等', '较难', '压轴']
 const difficulty = computed(() => {
   const d = props.motherCard?.difficulty
   return typeof d === 'number' && d > 0 ? Math.round(d) : 0

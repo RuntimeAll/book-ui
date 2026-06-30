@@ -403,8 +403,8 @@ watch(questionId, async () => {
           </div>
           <!-- 🔴 C-100 B-converge 方案B：思维方法 (dim3) 随 BE V905 DROP 列剥除（属性编辑页 C 线预期降级） -->
           <div class="field-row">
-            <!-- PRD-C-204 难度档文案与母题卡对齐：1=送分 / 2=常规 / 3=多步综合 / 4=压轴 -->
-            <span class="field-label">难度 (dim4)<span class="field-note">(1送分/2常规/3多步综合/4压轴)</span></span>
+            <!-- 难度档文案统一回字典 biz_question_difficulty：1=基础 / 2=中等 / 3=较难 / 4=压轴 -->
+            <span class="field-label">难度 (dim4)<span class="field-note">(1基础/2中等/3较难/4压轴)</span></span>
             <el-input-number
               v-model="form.dim4Difficulty"
               :disabled="!canEdit"

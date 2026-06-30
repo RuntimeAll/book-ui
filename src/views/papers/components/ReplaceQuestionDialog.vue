@@ -15,6 +15,7 @@ import { ref, watch, computed } from 'vue'
 import { questionPage } from '@/api/question/index'
 import type { QuestionItem } from '@/api/question/index'
 import QuestionContent from '@/components/business/QuestionContent/index.vue'
+import { useDictStore, DICT_QUESTION_TYPE } from '@/store/dict'
 
 // ── props / emits ────────────────────────────────────────────
 // PRD-A-013 T2 — 雪花 ID 全 string
@@ -141,9 +142,11 @@ function handleClose() {
 }
 
 // ── 辅助：题型 / 难度标签 ─────────────────────────────────────
+// 题型 label 走字典 SSOT（biz_question_type，超管可维护，含全 8 类）。
+const dict = useDictStore()
+dict.load(DICT_QUESTION_TYPE)
 function typeLabel(t: number): string {
-  const m: Record<number, string> = { 1: '选择', 4: '填空', 5: '简答', 2: '判断', 3: '应用' }
-  return m[t] ?? `题型${t}`
+  return dict.label(DICT_QUESTION_TYPE, t) || `题型${t}`
 }
 
 function typeTagColor(t: number): string {

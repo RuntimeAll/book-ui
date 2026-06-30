@@ -10,14 +10,20 @@ const props = defineProps<{
 }>()
 
 // ---- 题型映射 ----
+// 🔴 本组件禁网络请求（见顶部铁律），故题型名不走 useDictStore（它会 fetch 字典）。
+//    保留本地镜像，但与字典 biz_question_type 对齐：题型5=解答（旧「简答」已纠），补全 6/7/8。
+//    字典 SSOT 改了须同步这里（短名用于矩阵表，去「题」字省宽）。
 const QUESTION_TYPE_MAP: Record<number, string> = {
   1: '选择',
   2: '判断',
   3: '应用',
   4: '填空',
-  5: '简答',
+  5: '解答',
+  6: '作图',
+  7: '计算',
+  8: '证明',
 }
-const QUESTION_TYPES: number[] = [1, 2, 3, 4, 5]
+const QUESTION_TYPES: number[] = [1, 2, 3, 4, 5, 6, 7, 8]
 const DIFFICULTY_LEVELS: number[] = [1, 2, 3, 4]
 
 // ---- 顶部统计指标 ----

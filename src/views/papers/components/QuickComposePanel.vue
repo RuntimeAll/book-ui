@@ -13,6 +13,7 @@
 import { computed, ref } from 'vue'
 import type { PaperSourceQuestion } from '@/api/question/index'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
+import { useDictStore, DICT_QUESTION_TYPE } from '@/store/dict'
 
 const props = defineProps<{
   questions: PaperSourceQuestion[]
@@ -20,11 +21,12 @@ const props = defineProps<{
 
 const basket = useQuestionBasket()
 
-// ── 题型 label / 圆点颜色（沿用项目既有映射 {1选择 4填空 5简答}）──
-const TYPE_LABEL: Record<number, string> = { 1: '选择题', 4: '填空题', 5: '简答题' }
+// ── 题型 label 走字典 SSOT（biz_question_type，超管可维护，含全 8 类）/ 圆点颜色保留本地 ──
+const dict = useDictStore()
+dict.load(DICT_QUESTION_TYPE)
 const TYPE_DOT: Record<number, string> = { 1: '#1E8A8A', 4: '#2bb673', 5: '#f5a623' }
 function typeLabel(t: number): string {
-  return TYPE_LABEL[t] ?? `题型${t}`
+  return dict.label(DICT_QUESTION_TYPE, t) || `题型${t}`
 }
 function typeDot(t: number): string {
   return TYPE_DOT[t] ?? '#909399'
