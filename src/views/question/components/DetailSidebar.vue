@@ -44,13 +44,8 @@ function getQuestionTypeLabel(type: number): string {
 }
 
 function getQuestionTypeTagType(type: number): 'primary' | 'success' | 'warning' | 'info' {
-  const map: Record<number, 'primary' | 'success' | 'warning'> = {
-    1: 'primary',  // 选择题
-    4: 'success',  // 填空题
-    5: 'warning',  // 解答题
-    7: 'warning',  // 计算题（与 QuestionCard 对齐）
-  }
-  return map[type] ?? 'info'
+  // 徽标颜色走字典 list_class（biz_question_type，超管可维护）
+  return dict.tagType(DICT_QUESTION_TYPE, type, 'info') as 'primary' | 'success' | 'warning' | 'info'
 }
 </script>
 

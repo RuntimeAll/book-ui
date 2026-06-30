@@ -150,8 +150,8 @@ function typeLabel(t: number): string {
 }
 
 function typeTagColor(t: number): string {
-  const m: Record<number, string> = { 1: 'primary', 4: 'success', 5: 'warning', 2: 'info', 3: 'danger' }
-  return m[t] ?? 'info'
+  // 徽标颜色走字典 list_class（biz_question_type，超管可维护）
+  return dict.tagType(DICT_QUESTION_TYPE, t, 'info')
 }
 
 // 是否已在卷中

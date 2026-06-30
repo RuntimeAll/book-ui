@@ -201,15 +201,7 @@ function getQuestionTypeLabel(type: number): string {
   return dict.label(DICT_QUESTION_TYPE, type) || `题型${type}`
 }
 
-// PRD-A-010 T3：题卡题型彩标已随 WorkbenchCard 迁出（子组件内有同名实现）。
-// 父组件题号网格/分组标题不需要彩标色，故此函数父组件已不再引用。
-// 保留（轻量纯函数、零副作用）以备右栏后续若加题型色块复用，未真删避免误伤。
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function getQuestionTypeTag(type: number): string {
-  const map: Record<number, string> = { 1: 'primary', 4: 'success', 5: 'warning', 2: 'info', 3: 'danger' }
-  return map[type] ?? 'info'
-}
-void getQuestionTypeTag
+// 题型彩标死代码（getQuestionTypeTag）已删除：彩标统一走 WorkbenchCard 子组件的 dict.tagType（字典 SSOT）。
 
 // 按题型分组，全局序号按 editRows 原始顺序（第i题 = 序号i+1，跨分组连续）
 const sectionGroups = computed<SectionGroup[]>(() => {

@@ -37,7 +37,7 @@ import QuestionContent from '@/components/business/QuestionContent/index.vue'
 // PRD-A-015 — 结构化网格块统一渲染（题干 blockJson 非空时优先用它，否则回落 QuestionContent）
 import QuestionBlockRender from '@/components/business/QuestionBlockRender/index.vue'
 import { parseBlockDoc } from '@/utils/blockSchema'
-import { useDictStore, DICT_QUESTION_DIFFICULTY } from '@/store/dict'
+import { useDictStore, DICT_QUESTION_TYPE, DICT_QUESTION_DIFFICULTY } from '@/store/dict'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
 import { useFontScale } from '@/composables/useFontScale'
 import { useUserStore } from '@/store/user'
@@ -281,14 +281,14 @@ async function loadLineage() {
   }
 }
 
+// 题型/难度文案真读字典（biz_question_type / biz_question_difficulty，超管改字典即生效）
+const dict = useDictStore()
+dict.load(DICT_QUESTION_TYPE)
+dict.load(DICT_QUESTION_DIFFICULTY)
 // 题型文案（血缘条目用）
 function lineageTypeLabel(type: number | null): string {
-  const map: Record<number, string> = { 1: '选择', 4: '填空', 5: '解答' }
-  return type != null && map[type] ? map[type] : '—'
+  return type == null ? '—' : (dict.label(DICT_QUESTION_TYPE, type) || '—')
 }
-// 难度档文案真读字典 biz_question_difficulty（超管改字典即生效，缓存未命中回落码值）
-const dict = useDictStore()
-dict.load(DICT_QUESTION_DIFFICULTY)
 function lineageDifficultyLabel(d: number | null): string {
   if (d == null || d < 1 || d > 4) return '—'
   return `${dict.label(DICT_QUESTION_DIFFICULTY, d) || d}（${d}）`
@@ -306,23 +306,8 @@ function getDifficultyStars(difficult: number | null) {
   return Array.from({ length: 4 }, (_, i) => i < val)
 }
 
-// PRD-A-010 T3：题型 label/彩标已随 DetailSidebar 子组件迁出（右栏「题目信息」用）；
-// 父组件已不再引用，保留（纯函数、零副作用）未真删避免误伤。
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function getQuestionTypeLabel(type: number): string {
-  // 死代码（题型 label 已迁 DetailSidebar 走字典 useDictStore），仅对齐题型5=解答题、保留不删避误伤
-  const map: Record<number, string> = { 1: '选择题', 4: '填空题', 5: '解答题' }
-  return map[type] ?? `题型${type}`
-}
-void getQuestionTypeLabel
-
-// 题型彩色标签类型（选择=蓝 / 填空=绿 / 简答=橙），右栏「题目信息」用（已迁 DetailSidebar）
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function getQuestionTypeTagType(type: number): 'primary' | 'success' | 'warning' | 'info' {
-  const map: Record<number, 'primary' | 'success' | 'warning'> = { 1: 'primary', 4: 'success', 5: 'warning' }
-  return map[type] ?? 'info'
-}
-void getQuestionTypeTagType
+// 题型 label/彩标的死代码（getQuestionTypeLabel / getQuestionTypeTagType）已删除：
+// 右栏「题目信息」题型展示统一走 DetailSidebar 的 useDictStore（字典 SSOT），父组件不再各写一份。
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 function getKnowledgeTagType(idx: number): 'success' | 'primary' | 'warning' | 'danger' | 'info' {

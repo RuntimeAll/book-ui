@@ -112,8 +112,8 @@ function getQuestionTypeLabel(type: number): string {
 }
 
 function getQuestionTypeTag(type: number): 'success' | 'warning' | 'info' | 'primary' {
-  const map: Record<number, 'primary' | 'success' | 'warning'> = { 1: 'primary', 4: 'success', 5: 'warning', 7: 'warning' }
-  return map[type] ?? 'info'
+  // 徽标颜色走字典 list_class（biz_question_type，超管可维护）
+  return dict.tagType(DICT_QUESTION_TYPE, type, 'info') as 'success' | 'warning' | 'info' | 'primary'
 }
 </script>
 

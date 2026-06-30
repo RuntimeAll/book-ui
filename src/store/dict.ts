@@ -13,6 +13,8 @@ export interface DictItem {
   dictValue: string
   dictLabel: string
   dictSort?: number
+  /** el-tag 类型（RuoYi sys_dict_data.list_class：primary/success/info/warning/danger），驱动徽标颜色 */
+  listClass?: string
 }
 
 export const useDictStore = defineStore('dict', () => {
@@ -32,6 +34,7 @@ export const useDictStore = defineStore('dict', () => {
           dictValue: String(d.dictValue),
           dictLabel: d.dictLabel,
           dictSort: d.dictSort,
+          listClass: d.listClass,
         }))
         cache.value[dictType] = arr
         return arr
@@ -61,7 +64,22 @@ export const useDictStore = defineStore('dict', () => {
     return hit ? hit.dictLabel : String(value)
   }
 
-  return { cache, load, list, label }
+  /**
+   * 取某值的 el-tag 类型（字典 list_class）；缓存未命中 / 字典未配 list_class 回落 fallback。
+   * 徽标颜色统一走字典 SSOT，超管在字典管理里改 list_class 即生效，不再各组件硬编码。
+   */
+  function tagType(
+    dictType: string,
+    value: string | number | null | undefined,
+    fallback = 'info',
+  ): string {
+    if (value === null || value === undefined) return fallback
+    const arr = list(dictType)
+    const hit = arr.find((d) => d.dictValue === String(value))
+    return hit && hit.listClass ? hit.listClass : fallback
+  }
+
+  return { cache, load, list, label, tagType }
 })
 
 // 常用字典 type 常量（与后端 sys_dict_type 对齐）

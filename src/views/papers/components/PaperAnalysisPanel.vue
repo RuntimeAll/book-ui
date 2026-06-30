@@ -2,28 +2,25 @@
 import { computed } from 'vue'
 import type { PaperSourceQuestion } from '@/api/question/index'
 import type { WorkbenchPaper } from '@/composables/useBasketWorkbench'
+import { useDictStore, DICT_QUESTION_TYPE } from '@/store/dict'
 
-// 🔴 本组件 100% 纯前端：禁止任何 fetch / api / 网络请求。所有指标用 computed 从 props 现算。
+// 🔴 本组件统计指标 100% 从 props 现算、不拉分析数据（铁律仍生效）。
+//    例外：题型名走 useDictStore —— 字典是全 App 缓存的小查表（题库/卷库早已加载），
+//    label() 命中缓存即纯查表，不属于「拉分析数据」，故题型名统一回字典 SSOT、不再硬编码。
 const props = defineProps<{
   questions: PaperSourceQuestion[]
   papers: WorkbenchPaper[]
 }>()
 
-// ---- 题型映射 ----
-// 🔴 本组件禁网络请求（见顶部铁律），故题型名不走 useDictStore（它会 fetch 字典）。
-//    保留本地镜像，但与字典 biz_question_type 对齐：题型5=解答（旧「简答」已纠），补全 6/7/8。
-//    字典 SSOT 改了须同步这里（短名用于矩阵表，去「题」字省宽）。
-const QUESTION_TYPE_MAP: Record<number, string> = {
-  1: '选择',
-  2: '判断',
-  3: '应用',
-  4: '填空',
-  5: '解答',
-  6: '作图',
-  7: '计算',
-  8: '证明',
+// ---- 题型 ---- 走字典 SSOT（biz_question_type，超管可维护）。题型集合 = 字典全量（增删题型自动跟）。
+const dict = useDictStore()
+dict.load(DICT_QUESTION_TYPE)
+const QUESTION_TYPES = computed<number[]>(() =>
+  dict.list(DICT_QUESTION_TYPE).map((d) => Number(d.dictValue)),
+)
+function typeLabel(t: number): string {
+  return dict.label(DICT_QUESTION_TYPE, t) || `题型${t}`
 }
-const QUESTION_TYPES: number[] = [1, 2, 3, 4, 5, 6, 7, 8]
 const DIFFICULTY_LEVELS: number[] = [1, 2, 3, 4]
 
 // ---- 顶部统计指标 ----
@@ -72,14 +69,16 @@ const difficultyDist = computed<DistItem[]>(() => {
 
 // ---- 题型分布 ----
 const typeDist = computed<DistItem[]>(() => {
-  const buckets: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }
+  const types = QUESTION_TYPES.value
+  const buckets: Record<number, number> = {}
+  for (const t of types) buckets[t] = 0
   let other = 0
   for (const q of props.questions) {
     if (q.questionType in buckets) buckets[q.questionType]++
     else other++
   }
-  const list: DistItem[] = QUESTION_TYPES.map(t => ({
-    label: QUESTION_TYPE_MAP[t],
+  const list: DistItem[] = types.map(t => ({
+    label: typeLabel(t),
     count: buckets[t],
   }))
   if (other > 0) list.push({ label: '其他', count: other })
@@ -94,14 +93,14 @@ interface MatrixRow {
   total: number
 }
 const typeDifficultyMatrix = computed<MatrixRow[]>(() => {
-  return QUESTION_TYPES.map((t) => {
+  return QUESTION_TYPES.value.map((t) => {
     const cells = DIFFICULTY_LEVELS.map(
       d => props.questions.filter(q => q.questionType === t && q.difficult === d).length,
     )
     const total = props.questions.filter(q => q.questionType === t).length
     return {
       type: t,
-      typeLabel: QUESTION_TYPE_MAP[t],
+      typeLabel: typeLabel(t),
       cells,
       total,
     }
