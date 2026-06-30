@@ -29,6 +29,7 @@ import { uploadMotherImage } from '@/api/variant/index'
 import QuestionBlockRender from '@/components/business/QuestionBlockRender/index.vue'
 import RichTextBlock from '@/components/business/RichTextBlock/index.vue'
 import ChapterPicker from '@/components/business/ChapterPicker/index.vue'
+import { useDictStore, DICT_QUESTION_SOURCE_TYPE } from '@/store/dict'
 import type { FreeTagVo } from '@/api/question/index'
 import {
   emptyDoc,
@@ -106,17 +107,13 @@ const freeTags = ref<FreeTagVo[]>([])
 const examYear = ref<string>('')
 const examPaperName = ref<string>('')
 const regionCode = ref<string>('')
-const sourceType = ref<number>(0) // 0 = 未设；1中考真题/2模拟/3期末/4月考/5单元/6自编/9其他
-const SOURCE_TYPE_LABELS: Record<number, string> = {
-  1: '中考真题',
-  2: '模拟',
-  3: '期末',
-  4: '月考',
-  5: '单元',
-  6: '自编',
-  9: '其他',
-}
-const sourceTypeLabel = computed(() => SOURCE_TYPE_LABELS[sourceType.value] ?? '')
+const sourceType = ref<number>(0) // 0 = 未设；来源码走字典 biz_question_source_type
+// 来源文案走字典 SSOT（biz_question_source_type，超管可维护）；0/未命中 → 空。
+const dict = useDictStore()
+dict.load(DICT_QUESTION_SOURCE_TYPE)
+const sourceTypeLabel = computed(() =>
+  sourceType.value > 0 ? dict.label(DICT_QUESTION_SOURCE_TYPE, sourceType.value) : '',
+)
 // 整块是否有任意来源字段（全空则整行隐藏）
 const hasSource = computed(
   () => !!sourceTypeLabel.value || !!examYear.value || !!regionCode.value || !!examPaperName.value,

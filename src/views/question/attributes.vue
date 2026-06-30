@@ -23,6 +23,7 @@ import {
   type UpdateAttrsPayload,
 } from '@/api/question/index'
 import ChapterPicker from '@/components/business/ChapterPicker/index.vue'
+import { useDictStore, DICT_QUESTION_SOURCE_TYPE } from '@/store/dict'
 import { useUserStore } from '@/store/user'
 import { getCurrentUser } from '@/api/user'
 
@@ -55,15 +56,12 @@ const LABEL_STATUS_OPTIONS = [
   { label: '已审核', value: 2 },
   { label: '争议', value: 3 },
 ]
-const SOURCE_TYPE_OPTIONS = [
-  { label: '中考真题', value: 1 },
-  { label: '模拟', value: 2 },
-  { label: '期末', value: 3 },
-  { label: '月考', value: 4 },
-  { label: '单元', value: 5 },
-  { label: '自编', value: 6 },
-  { label: '其他', value: 9 },
-]
+// 来源下拉走字典 SSOT（biz_question_source_type，超管可维护）；选项 = 字典全量。
+const dict = useDictStore()
+dict.load(DICT_QUESTION_SOURCE_TYPE)
+const SOURCE_TYPE_OPTIONS = computed(() =>
+  dict.list(DICT_QUESTION_SOURCE_TYPE).map((d) => ({ label: d.dictLabel, value: Number(d.dictValue) })),
+)
 const ANNOTATE_STATUS_OPTIONS = [
   { label: '未标', value: 0 },
   { label: '已标全', value: 1 },

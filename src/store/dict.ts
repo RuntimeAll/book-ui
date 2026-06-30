@@ -86,3 +86,6 @@ export const useDictStore = defineStore('dict', () => {
 export const DICT_QUESTION_TYPE = 'biz_question_type'
 export const DICT_QUESTION_DIFFICULTY = 'biz_question_difficulty'
 export const DICT_QUESTION_SOURCE = 'biz_question_source'
+// 🔴 biz_question.source_type 列专用字典（1中考真题/2模拟/3期末/4月考/5单元/6自编/9其他）。
+//    注意与上面 DICT_QUESTION_SOURCE(biz_question_source) 是两套不同约定，别混（source_type 列只认这个）。
+export const DICT_QUESTION_SOURCE_TYPE = 'biz_question_source_type'
