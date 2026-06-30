@@ -11,18 +11,25 @@
  *
  * getQuestionTypeLabel / getQuestionTypeTag / getQuestionScore 是纯函数，随卡迁入。
  */
+import { computed } from 'vue'
 import { Check, ShoppingCart, Edit, Star, InfoFilled } from '@element-plus/icons-vue'
 import FreeTagList from '@/components/business/FreeTagList/index.vue'
 import QuestionContent from '@/components/business/QuestionContent/index.vue'
+import QuestionBlockRender from '@/components/business/QuestionBlockRender/index.vue'
+import { parseBlockDoc } from '@/utils/blockSchema'
 import type { PaperSourceQuestion } from '@/api/question/index'
 
-defineProps<{
+const props = defineProps<{
   q: PaperSourceQuestion
   /** 该题是否已在试题栏（父 basket.basketIds.value.has(q.id)）*/
   inBasket: boolean
   /** 试题栏该题操作 loading（父 basket.isLoading(q.id)）*/
   basketLoading: boolean
 }>()
+
+// PRD-A-015 — 结构化题：blockJson 能解析成非空文档则走 QuestionBlockRender 网格渲染
+// （选项/图片/公式与题库·详情·PDF 四端一致 = 同源渲染组件）；老题（无 blockJson）回落扁平 QuestionContent。
+const parsedBlock = computed(() => parseBlockDoc(props.q.blockJson))
 
 const emit = defineEmits<{
   (e: 'draft'): void
@@ -114,9 +121,14 @@ function getQuestionScore(q: PaperSourceQuestion): number | null {
           {{ getQuestionScore(q) }} 分
         </span>
       </div>
-      <!-- 题干（富文本/图片/占位统一走 QuestionContent） -->
+      <!-- 题干内容：结构化题(blockJson)走 QuestionBlockRender 网格(题干+选项+图)；老题回落 QuestionContent 扁平 -->
       <div class="q-stem-body">
+        <QuestionBlockRender
+          v-if="parsedBlock"
+          :doc="parsedBlock"
+        />
         <QuestionContent
+          v-else
           :text="q.stemText"
           :img-url="q.stemImg"
           alt="题干"

@@ -24,6 +24,8 @@ import FavoriteFolderDrawer from '@/components/FavoriteFolderDrawer/index.vue'
 import PaperSourceCard from './components/PaperSourceCard.vue'
 import AddFromBasketDialog from './components/AddFromBasketDialog.vue'
 import QuestionContent from '@/components/business/QuestionContent/index.vue'
+import QuestionBlockRender from '@/components/business/QuestionBlockRender/index.vue'
+import { parseBlockDoc } from '@/utils/blockSchema'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
 import { useUserStore } from '@/store/user'
 import { getCurrentUser } from '@/api/user'
@@ -596,9 +598,14 @@ watch(paperId, async () => {
                   {{ getQuestionTypeLabel(row.questionType) }}
                 </span>
               </div>
-              <!-- 题干（富文本/图片/占位统一走 QuestionContent） -->
+              <!-- 题干内容：结构化题(blockJson)走 QuestionBlockRender 网格(题干+选项+图)；老题回落 QuestionContent 扁平 -->
               <div class="q-stem-body">
+                <QuestionBlockRender
+                  v-if="parseBlockDoc(row.blockJson)"
+                  :doc="parseBlockDoc(row.blockJson)"
+                />
                 <QuestionContent
+                  v-else
                   :text="row.stemText"
                   :img-url="row.stemImg"
                   alt="题干"
