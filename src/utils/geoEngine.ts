@@ -26,9 +26,10 @@ export interface GeoReg {
   obj: Record<string, unknown>
   exp: Record<string, () => [number, number]>
 }
-/** 渲染选项（🔴 Bug③-b：editable=true → 几何点可拖编辑模式；默认静态查看）。 */
+/** 渲染选项。editable=true → 几何点可拖编辑模式；readonly=true → 只读（藏几何顶点圆点，只留字母=教科书样式）。 */
 export interface GeoRenderOpts {
   editable?: boolean
+  readonly?: boolean
 }
 export interface GeoEngineGlobal {
   render(
@@ -38,23 +39,35 @@ export interface GeoEngineGlobal {
   ): { board: GeoBoard; reg: GeoReg }
   exportState(reg: GeoReg): Record<string, [number, number]>
   exportPNG(board: GeoBoard, scale?: number): Promise<string>
+  exportSVG(board: GeoBoard): string
+  relabel(board: GeoBoard): void
 }
 
-/** 中性几何 DSL（宽松类型——schema 由引擎 switch 在运行期校验；这里只给上层最小约束）。 */
+/** 中性几何 DSL（宽松类型——schema 由引擎 switch 在运行期校验；这里只给上层最小约束）。
+ *  可传低层 DSL（objects）或高层「构件 DSL」（build:[...]，由 window.FigureBuilder 展开）。 */
 export interface GeoSpec {
   bbox?: [number, number, number, number]
   axis?: boolean
   grid?: boolean
   keepAspect?: boolean
   exportable?: boolean
+  readonly?: boolean
   objects?: Array<Record<string, unknown>>
+  /** 高层构件项数组（{ shape|add|mark|transform ... }）；非空则引擎自动经 FigureBuilder 展开成低层 objects。 */
+  build?: Array<Record<string, unknown>>
   solid3d?: Record<string, unknown>
   [k: string]: unknown
+}
+
+/** window.FigureBuilder（figure-builder.js）——高层构件 DSL 展开器，可选依赖。 */
+export interface FigureBuilderGlobal {
+  expand(spec: GeoSpec): GeoSpec
 }
 
 declare global {
   interface Window {
     GeoEngine?: GeoEngineGlobal
+    FigureBuilder?: FigureBuilderGlobal
     JXG?: unknown
   }
 }
@@ -107,7 +120,8 @@ export function ensureGeoEngine(): Promise<GeoEngineGlobal> {
   if (loadPromise) return loadPromise
   loadPromise = (async () => {
     injectCss(`${BASE}/jsxgraph.css`)
-    await injectScript(`${BASE}/jsxgraphcore.js`)
+    await injectScript(`${BASE}/jsxgraphcore.js`) // 保序：core 必须先于 figure-builder / geo-dsl-render
+    await injectScript(`${BASE}/figure-builder.js`) // 高层构件展开器（挂 window.FigureBuilder）
     await injectScript(`${BASE}/geo-dsl-render.js`)
     if (!window.GeoEngine) {
       loadPromise = null // 允许后续重试
@@ -142,4 +156,15 @@ export async function exportPNG(board: GeoBoard, scale = 2): Promise<string> {
 export function exportState(reg: GeoReg): Record<string, [number, number]> {
   if (!window.GeoEngine) throw new Error('geoEngine: 未加载，先 await ensureGeoEngine()')
   return window.GeoEngine.exportState(reg)
+}
+
+/** 导出当前画板 SVG 字符串（矢量图，可存题图/下载）。 */
+export function exportSVG(board: GeoBoard): string {
+  if (!window.GeoEngine) throw new Error('geoEngine: 未加载，先 await ensureGeoEngine()')
+  return window.GeoEngine.exportSVG(board)
+}
+
+/** 重新跑一遍标签避让（拖动元素后手动校位用）。 */
+export function relabel(board: GeoBoard): void {
+  if (window.GeoEngine) window.GeoEngine.relabel(board)
 }
