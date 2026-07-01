@@ -69,7 +69,7 @@ export interface KgCourseResponse {
 }
 
 // ── 开关：true = 用 mock 数据（后端未就绪时），false = 接真实 /teacher/kg/course/{id} ──
-export const USE_MOCK = true
+export const USE_MOCK = false
 
 // ── Mock 数据（1:1 参照 preview_full.html 的课时1 长度、体积的测量） ──────────────
 const MOCK_DATA: KgCourseResponse = {

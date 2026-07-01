@@ -7,8 +7,8 @@ import type { Directive } from 'vue'
 // 禁用: <script>/<iframe>/<object>/<embed>/<form> + 所有 on* 事件属性 + javascript: 协议.
 const config: Config = {
   ALLOWED_TAGS: [
-    'a', 'b', 'br', 'div', 'em', 'i', 'img', 'li', 'ol', 'p', 'span', 'strong', 'sub', 'sup', 'u', 'ul',
-    'table', 'thead', 'tbody', 'tr', 'td', 'th',
+    'a', 'b', 'br', 'div', 'em', 'i', 'img', 'li', 'ol', 'p', 'span', 'strong', 'sub', 'sup', 'u', 'ul', 'mark',
+    'table', 'thead', 'tbody', 'tr', 'td', 'th', 'caption', 'colgroup', 'col',
     // MathML (MathJax 输入端兜底, sanitize 时尚未渲染, 此处冗余防御)
     'math', 'mrow', 'mi', 'mn', 'mo', 'msup', 'msub', 'mfrac', 'mroot', 'msqrt', 'mtext', 'mspace',
     // MathJax 渲染后的 mjx-* 容器(若 sanitize 发生在渲染后)
@@ -17,7 +17,7 @@ const config: Config = {
     'svg', 'g', 'path', 'text', 'use', 'rect', 'circle', 'line', 'polyline', 'polygon', 'tspan',
   ],
   ALLOWED_ATTR: [
-    'href', 'src', 'alt', 'title', 'class', 'style',
+    'href', 'src', 'alt', 'title', 'class', 'style', 'colspan', 'rowspan',
     // SVG attrs
     'd', 'fill', 'stroke', 'stroke-width', 'transform', 'viewBox', 'width', 'height',
     'x', 'y', 'cx', 'cy', 'r', 'x1', 'x2', 'y1', 'y2', 'points',
