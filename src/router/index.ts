@@ -177,6 +177,18 @@ const router = createRouter({
         //   原为 PRD-A-005「页面级权限·按角色显隐」示范页；A 线无真实 admin 业务，故撤。
         //   若将来需页面级权限示范，照 meta.roles 模式挂任意真实页即可，无需复活此占位。
 
+        // 几何画板（GeoBoard）——老师从零画/拖调 + agent 构件出图。draw 主页 + 只读画廊两页。
+        //   引擎 = JSXGraph（@/utils/geoEngine 统一引擎）；构件层 figure-builder（agent 不盲打坐标）。
+        {
+          path: '/geo-board',
+          name: 'GeoBoardStudio',
+          component: () => import('@/views/geo-board/index.vue'),
+        },
+        {
+          path: '/geo-board/gallery',
+          name: 'GeoBoardGallery',
+          component: () => import('@/views/geo-board/gallery.vue'),
+        },
         // 知识点讲义查看页（教辅讲义 1:1 还原：图文/表格/例题/习题/模块练习）
         // GET /teacher/kg/course/:courseId；courseId 先写死 901001002001；USE_MOCK 开关控制真假数据。
         {

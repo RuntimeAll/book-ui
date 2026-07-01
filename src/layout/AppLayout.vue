@@ -56,6 +56,7 @@ const allMenuItems: MenuItem[] = [
   { label: '首页', path: '/home' },
   // AI 助手（vibe 聊天入口）2026-06-30 移除：功能暂废，菜单 + 路由 + 页面一并清。
   { label: '举一反三', path: '/ai-variant' },                   // 🔴 PRD-C-009 图片变式 agent 入口（toolkit :8093）
+  { label: '几何画板', path: '/geo-board' },                    // 🔴 GeoBoard 交互几何画板（老师从零画/拖调 + agent 构件出图，JSXGraph）
   { label: '我的工作台', path: '/workspace' },                  // U-3 教师工作台聚合页
   { label: '卷库', path: '/papers/index' },
   { label: '题库', path: '/question/index' },
