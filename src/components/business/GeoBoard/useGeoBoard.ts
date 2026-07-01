@@ -110,7 +110,7 @@ export function useGeoBoard(container: Ref<HTMLElement | null>, opts: UseGeoBoar
   /* ---------- 坐标 / 命中 ---------- */
   function screenOf(e: Event): XY {
     const abs = JXG().getPosition(e)
-    const c = view!.board.getCoordsTopLeftCorner()
+    const c = (view!.board as any).getCoordsTopLeftCorner()
     return [abs[0] - c[0], abs[1] - c[1]]
   }
   function usrOf(e: Event): XY {
@@ -300,8 +300,9 @@ export function useGeoBoard(container: Ref<HTMLElement | null>, opts: UseGeoBoar
   /* ---------- 拖动回写 ---------- */
   function bindBoard() {
     if (!view) return
-    view.board.on('down', onDown)
-    view.board.on('up', () => {
+    const bd = view.board as any
+    bd.on('down', onDown)
+    bd.on('up', () => {
       if (!view) return
       if (isDraw() && tool.value !== 'select') return
       let dirty = false
@@ -312,7 +313,7 @@ export function useGeoBoard(container: Ref<HTMLElement | null>, opts: UseGeoBoar
           if (nx !== o.coords[0] || ny !== o.coords[1]) { o.coords = [nx, ny]; dirty = true }
         }
       })
-      try { bbox.value = view.board.getBoundingBox().map((v: number) => Math.round(v * 100) / 100) as any } catch { /* noop */ }
+      try { bbox.value = bd.getBoundingBox().map((v: number) => Math.round(v * 100) / 100) as any } catch { /* noop */ }
       if (dirty) void render(); else emitChange()
     })
   }
