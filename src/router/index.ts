@@ -176,6 +176,14 @@ const router = createRouter({
         // 管理控制台 /admin/console：纯占位无业务，用户 2026-06-04 拍板移除（菜单 + 路由一并清）。
         //   原为 PRD-A-005「页面级权限·按角色显隐」示范页；A 线无真实 admin 业务，故撤。
         //   若将来需页面级权限示范，照 meta.roles 模式挂任意真实页即可，无需复活此占位。
+
+        // 知识点讲义查看页（教辅讲义 1:1 还原：图文/表格/例题/习题/模块练习）
+        // GET /teacher/kg/course/:courseId；courseId 先写死 901001002001；USE_MOCK 开关控制真假数据。
+        {
+          path: '/kg-lecture',
+          name: 'KgLecture',
+          component: () => import('@/views/kg-lecture/index.vue'),
+        },
       ],
     },
     // 登录页（无 layout 包裹）
