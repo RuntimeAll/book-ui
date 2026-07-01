@@ -3,7 +3,7 @@
 // 唯一差异 = pageParams 恒带 mine:true（owner 由后端 LoginHelper 定）+ 进入默认无 subject 过滤
 // （老师自己的题跨多章节，默认选首节点会几乎空 → 改为先全量展示自己的题，点树仍可过滤）。
 // 血缘展示（母题关系等）暂不做（QuestionCard 列表本就不展示血缘，无需额外隐藏）。
-import { ref, reactive, onMounted, computed } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import { useDictStore, DICT_QUESTION_TYPE, DICT_QUESTION_DIFFICULTY } from '@/store/dict'
 import { ElMessage } from 'element-plus'
 import { Search, Document, Plus, ArrowDown, Crop, Upload } from '@element-plus/icons-vue'
@@ -226,11 +226,8 @@ function handleDetail(q: QuestionItem) {
 }
 
 // ── 初始化 ───────────────────────────────────────────────────
-// 首屏直接拉「全部自己的题」（mine:true，无 subject 过滤）；目录树由 <SubjectDirectory> 自管，
-// 默认「全部」不 emit，用户点教材/章节才过滤。
-onMounted(() => {
-  fetchQuestions()
-})
+// 首屏由 <SubjectDirectory> 挂载后 emit('select') 驱动（恢复缓存或按页面默认 → onDirSelect → fetchQuestions），
+// 与题库页一致，避免重复请求。
 </script>
 
 <template>

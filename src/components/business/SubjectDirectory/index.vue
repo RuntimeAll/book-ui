@@ -24,13 +24,14 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{ (e: 'select', subjectId: string | null): void }>()
 
 // ── 教材名解析 ──────────────────────────────────────────────
-interface Textbook { subject: string; stage: string; edition: string; grade: number; volume: string; node: SubjectNode }
+// edition = 去掉年份的版本名（浙教2024/浙教2012 → 「浙教」，默认取最新年份的那本）；editionYear 仅用于挑最新。
+interface Textbook { subject: string; stage: string; edition: string; editionYear: number; grade: number; volume: string; node: SubjectNode }
 const GRADE_CN = '一二三四五六七八九'
 const GRADE_LABEL: Record<number, string> = { 1: '一', 2: '二', 3: '三', 4: '四', 5: '五', 6: '六', 7: '七', 8: '八', 9: '九', 10: '高一', 11: '高二', 12: '高三' }
 const STAGE_GRADES: Record<string, number[]> = { 小学: [1, 2, 3, 4, 5, 6], 初中: [7, 8, 9], 高中: [10, 11, 12] }
 const ALL_STAGES = ['小学', '初中', '高中']
 
-/** 「数学七年级上(浙教2024)」→ {subject:数学, grade:7, volume:上, edition:浙教2024, stage:初中} */
+/** 「数学七年级上(浙教2024)」→ {subject:数学, grade:7, volume:上, edition:浙教, editionYear:2024, stage:初中} */
 function parseTextbook(node: SubjectNode): Textbook | null {
   const title = node.title ?? ''
   const m = title.match(/^(.+?)([一二三四五六七八九])年级\s*([上下])\s*[（(](.+?)[)）]\s*$/)
@@ -38,9 +39,12 @@ function parseTextbook(node: SubjectNode): Textbook | null {
   const subject = m[1].trim()
   const grade = GRADE_CN.indexOf(m[2]) + 1
   const volume = m[3]
-  const edition = m[4].trim()
+  const rawEd = m[4].trim()                             // 浙教2024
+  const ym = rawEd.match(/\d{4}/)
+  const editionYear = ym ? parseInt(ym[0], 10) : 0
+  const edition = rawEd.replace(/\s*\d{4}\s*/g, '').trim() || rawEd  // 浙教（年份剥掉，默认全部最新）
   const stage = grade <= 6 ? '小学' : grade <= 9 ? '初中' : '高中'
-  return { subject, stage, edition, grade, volume, node }
+  return { subject, stage, edition, editionYear, grade, volume, node }
 }
 
 // ── 数据 ─────────────────────────────────────────────────────
@@ -64,7 +68,10 @@ function gradesAvail(subject: string, stage: string, edition: string) { return u
 function volsOf(s: Sel) { return uniq(textbooks.value.filter((t) => t.subject === s.subject && t.stage === s.stage && t.edition === s.edition && t.grade === s.grade).map((t) => t.volume)) }
 function resolve(s: Sel | null): Textbook | null {
   if (!s) return null
-  return textbooks.value.find((t) => t.subject === s.subject && t.stage === s.stage && t.edition === s.edition && t.grade === s.grade && t.volume === s.volume) ?? null
+  const matches = textbooks.value.filter((t) => t.subject === s.subject && t.stage === s.stage && t.edition === s.edition && t.grade === s.grade && t.volume === s.volume)
+  if (!matches.length) return null
+  // 同版本同年级同册可能有多个年份（浙教2024/2012）→ 默认取最新年份
+  return matches.reduce((a, b) => (b.editionYear > a.editionYear ? b : a))
 }
 
 const curStages = computed(() => (sel.value ? stagesOf(sel.value.subject) : []))
@@ -75,9 +82,11 @@ const currentRoot = computed(() => resolve(sel.value))
 const chapters = computed<SubjectNode[]>(() => currentRoot.value?.node.children ?? [])
 
 // ── 缓存（localStorage 记住上次选择）──────────────────────
-const CACHE_KEY = 'book-ui:subject-dir-sel'
-function readCache(): Sel | null { try { return JSON.parse(localStorage.getItem(CACHE_KEY) || 'null') } catch { return null } }
-function writeCache(s: Sel | null) { try { if (s) localStorage.setItem(CACHE_KEY, JSON.stringify(s)) } catch { /* 隐私模式忽略 */ } }
+// 题库 / 我的题库 各自独立缓存（不互相污染）；记住 atAll + 具体选择，刷新后原样恢复。
+interface CacheState { atAll: boolean; sel: Sel | null }
+const CACHE_KEY = 'book-ui:subject-dir-sel' + (props.mine ? ':mine' : '')
+function readCache(): CacheState | null { try { return JSON.parse(localStorage.getItem(CACHE_KEY) || 'null') } catch { return null } }
+function persist() { try { localStorage.setItem(CACHE_KEY, JSON.stringify({ atAll: atAll.value, sel: sel.value })) } catch { /* 隐私模式忽略 */ } }
 function firstAvailable(): Sel | null {
   const t = textbooks.value[0]
   return t ? { subject: t.subject, stage: t.stage, edition: t.edition, grade: t.grade, volume: t.volume } : null
@@ -98,12 +107,10 @@ function normalize() {
 
 /** 应用当前选择：emit 教材根 id + 缓存（atAll 时 emit null） */
 function applySelection() {
+  persist()
   if (atAll.value) { emit('select', null); return }
   const root = currentRoot.value
-  if (root) {
-    writeCache(sel.value)
-    emit('select', root.node.id)
-  }
+  if (root) emit('select', root.node.id)
 }
 
 // ── 交互 ─────────────────────────────────────────────────────
@@ -137,7 +144,7 @@ function pickVolume(volume: string) {
   sel.value.volume = volume
   atAll.value = false; applySelection()
 }
-function clearToAll() { atAll.value = true; pickerOpen.value = false; emit('select', null) }
+function clearToAll() { atAll.value = true; pickerOpen.value = false; persist(); emit('select', null) }
 function togglePicker() { pickerOpen.value = !pickerOpen.value }
 
 // ── 章节树（关键字筛选 + 点击）──────────────────────────────
@@ -145,7 +152,7 @@ const treeRef = ref()
 const keyword = ref('')
 function filterNode(value: string, data: SubjectNode) { return !value || (data.title ?? '').includes(value) }
 watch(keyword, (v) => treeRef.value?.filter(v))
-function onChapterClick(data: SubjectNode) { atAll.value = false; emit('select', data.id) }
+function onChapterClick(data: SubjectNode) { atAll.value = false; persist(); emit('select', data.id) }
 
 // ── 展示文案 ─────────────────────────────────────────────────
 const crumbMain = computed(() => {
@@ -167,18 +174,18 @@ onMounted(async () => {
     roots.forEach((r) => { const p = parseTextbook(r); if (p) tb.push(p); else up.push(r) })
     textbooks.value = tb; unparsed.value = up
 
+    // 恢复缓存：sel 落到可用教材（取最新年份），atAll 沿用上次；无缓存则按页面默认
     const cached = readCache()
-    sel.value = resolve(cached) ? cached : firstAvailable()
-    if (props.autoSelect) {
-      atAll.value = false
-      pickerOpen.value = false
-      applySelection()
-    } else {
-      // 我的题库：默认「全部」，不 emit（父组件自管首屏「全部我的题」fetch，且不受 tree 加载成败影响）
-      atAll.value = true
-    }
+    sel.value = cached?.sel && resolve(cached.sel) ? cached.sel : firstAvailable()
+    atAll.value = cached ? !!cached.atAll : !props.autoSelect // 无缓存：题库默认落教材 / 我的题库默认全部
+    pickerOpen.value = false                                   // 进入始终收起（选好年级再展开）
+
+    // SubjectDirectory 统一驱动首屏 fetch（父组件不再自管 onMounted fetch）
+    if (atAll.value || !sel.value) emit('select', null)
+    else applySelection()
   } catch (e) {
     console.warn('[SubjectDirectory] lazyTree failed', e)
+    emit('select', null) // 兜底：树挂了也让父组件拉全量
   } finally {
     loading.value = false
   }
