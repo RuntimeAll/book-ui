@@ -43,6 +43,8 @@ export interface WorkbenchPaper {
   paperId: string
   paperName: string
   questions: PaperSourceQuestion[]
+  /** AI 命题分析（biz_paper.remark）— 试卷分析单卷时展示。PRD-C-1000 */
+  remark?: string | null
 }
 
 export interface UseBasketWorkbench {
@@ -141,6 +143,7 @@ export function useBasketWorkbench(): UseBasketWorkbench {
           paperId,
           paperName: detail.paperName || `试卷 ${paperId}`,
           questions: flat,
+          remark: detail.remark ?? null,
         })
       })
 

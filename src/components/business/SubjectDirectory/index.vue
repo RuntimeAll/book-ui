@@ -2,9 +2,9 @@
 /**
  * 题库目录 · 分层收放筛选（学科 → 学段 → 版本 → 年级 → 册 → 章节）。
  *
- * 替代原「教材 dropdown + 一长条扁平树」。数据驱动：解析 lazyTree 根节点名
- * （如「数学七年级上(浙教2024)」）拆出五维，按真实库存建筛选 + 精确置灰；
- * 选中一本教材后用它的 children 当章节树。纯前端，不依赖新接口。
+ * 替代原「教材 dropdown + 一长条扁平树」。数据驱动：读 lazyTree 根节点的结构化字段码
+ * （subject/stage/grade/volume/edition，2026-07-01 字典化）+ useDictStore 翻标签，按真实库存
+ * 建筛选 + 精确置灰；选中一本教材后用它的 children 当章节树。不再解析节点名。
  *
  * - 题库页：autoSelect=true，默认落到一本教材（缓存上次 > 首本）并 emit 过滤。
  * - 我的题库页：autoSelect=false，默认「全部」不过滤（老师的题跨章节，默认选首节点会几乎空）。
@@ -12,6 +12,12 @@
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { Search, ArrowDown } from '@element-plus/icons-vue'
 import { lazyTree, type SubjectNode } from '@/api/question'
+import {
+  useDictStore,
+  DICT_EDU_SUBJECT, DICT_EDU_STAGE, DICT_EDU_VOLUME, DICT_EDU_EDITION,
+} from '@/store/dict'
+
+const dict = useDictStore()
 
 const props = withDefaults(defineProps<{
   /** 个人题库目录：lazyTree 带 mine=true（过滤 mine_visible） */
@@ -23,28 +29,25 @@ const props = withDefaults(defineProps<{
 /** 选中节点 id（教材根 or 章节）；null = 全部（不按章节过滤） */
 const emit = defineEmits<{ (e: 'select', subjectId: string | null): void }>()
 
-// ── 教材名解析 ──────────────────────────────────────────────
-// edition = 去掉年份的版本名（浙教2024/浙教2012 → 「浙教」，默认取最新年份的那本）；editionYear 仅用于挑最新。
+// ── 教材维度（2026-07-01：读 BE 结构化字段码 + useDictStore 翻标签，不再解析节点名）──
+// 内部 key 仍用中文标签串（学段/版本/册），来源=字典 SSOT；下游派生/模板不变。
 interface Textbook { subject: string; stage: string; edition: string; editionYear: number; grade: number; volume: string; node: SubjectNode }
-const GRADE_CN = '一二三四五六七八九'
 const GRADE_LABEL: Record<number, string> = { 1: '一', 2: '二', 3: '三', 4: '四', 5: '五', 6: '六', 7: '七', 8: '八', 9: '九', 10: '高一', 11: '高二', 12: '高三' }
 const STAGE_GRADES: Record<string, number[]> = { 小学: [1, 2, 3, 4, 5, 6], 初中: [7, 8, 9], 高中: [10, 11, 12] }
 const ALL_STAGES = ['小学', '初中', '高中']
 
-/** 「数学七年级上(浙教2024)」→ {subject:数学, grade:7, volume:上, edition:浙教, editionYear:2024, stage:初中} */
-function parseTextbook(node: SubjectNode): Textbook | null {
-  const title = node.title ?? ''
-  const m = title.match(/^(.+?)([一二三四五六七八九])年级\s*([上下])\s*[（(](.+?)[)）]\s*$/)
-  if (!m) return null
-  const subject = m[1].trim()
-  const grade = GRADE_CN.indexOf(m[2]) + 1
-  const volume = m[3]
-  const rawEd = m[4].trim()                             // 浙教2024
-  const ym = rawEd.match(/\d{4}/)
-  const editionYear = ym ? parseInt(ym[0], 10) : 0
-  const edition = rawEd.replace(/\s*\d{4}\s*/g, '').trim() || rawEd  // 浙教（年份剥掉，默认全部最新）
-  const stage = grade <= 6 ? '小学' : grade <= 9 ? '初中' : '高中'
-  return { subject, stage, edition, editionYear, grade, volume, node }
+/** biz_subject level=1 教材根 → Textbook（字段码经字典翻标签）。非教材根（subject 空）返 null。 */
+function readTextbook(node: SubjectNode): Textbook | null {
+  if (node.subject == null || node.grade == null) return null
+  return {
+    subject: dict.label(DICT_EDU_SUBJECT, node.subject),         // 数学/科学
+    stage: dict.label(DICT_EDU_STAGE, node.stage),               // 小学/初中/高中
+    edition: dict.label(DICT_EDU_EDITION, node.edition),         // 浙教/人教（不含年份）
+    editionYear: node.editionYear ?? 0,
+    grade: node.grade,
+    volume: node.volume === 2 ? '下' : '上',                     // 册码 1上/2下 → 兼容下游 ['上','下']
+    node,
+  }
 }
 
 // ── 数据 ─────────────────────────────────────────────────────
@@ -167,11 +170,16 @@ const isSci = computed(() => sel.value?.subject === '科学')
 onMounted(async () => {
   loading.value = true
   try {
+    // 先备好字典（学科/学段/版本/册 label），readTextbook 才能把码翻成标签作内部 key
+    await Promise.all([
+      dict.load(DICT_EDU_SUBJECT), dict.load(DICT_EDU_STAGE),
+      dict.load(DICT_EDU_VOLUME), dict.load(DICT_EDU_EDITION),
+    ])
     const result = await lazyTree(0, props.mine)
     const roots: SubjectNode[] = Array.isArray(result) ? result : result ? [result as unknown as SubjectNode] : []
     const tb: Textbook[] = []; const up: SubjectNode[] = []
     // 保持 lazyTree 的 biz_subject.sort 原序（数学在前），不二次排序——默认教材与原页面一致
-    roots.forEach((r) => { const p = parseTextbook(r); if (p) tb.push(p); else up.push(r) })
+    roots.forEach((r) => { const p = readTextbook(r); if (p) tb.push(p); else up.push(r) })
     textbooks.value = tb; unparsed.value = up
 
     // 恢复缓存：sel 落到可用教材（取最新年份），atAll 沿用上次；无缓存则按页面默认

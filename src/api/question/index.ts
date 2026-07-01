@@ -14,6 +14,13 @@ export interface SubjectNode {
   level?: number
   sort?: number
   nodeDataSum?: number | null
+  // ── KG 结构化维度（2026-07-01 字典化，仅 level=1 教材根有值；字典码，配 useDictStore 渲染）──
+  subject?: number | null   // biz_edu_subject
+  stage?: number | null     // biz_edu_stage
+  grade?: number | null     // biz_edu_grade
+  volume?: number | null    // biz_edu_volume
+  edition?: number | null   // biz_edu_edition
+  editionYear?: number | null
   children?: SubjectNode[]
 }
 
@@ -524,6 +531,11 @@ export interface PaperDetailVo {
    * owner 判定：String(createBy) === String(userStore.userInfo.id) → 本人卷可编辑；否则公共卷锁死。
    */
   createBy?: string | null
+  /**
+   * AI 命题分析（biz_paper.remark）—— 录入 agent 读透全卷后的教师视角定性总评（markdown）。
+   * PRD-C-1000：与前端现算的难度/题型分布互补；为空（老卷/未打标卷）则不渲染该卡。
+   */
+  remark?: string | null
   sections: PaperSectionVo[]
 }
 

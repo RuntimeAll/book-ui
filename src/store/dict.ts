@@ -95,3 +95,11 @@ export const DICT_QUESTION_LABEL_STATUS = 'biz_question_label_status'
 export const DICT_QUESTION_ANNOTATE_STATUS = 'biz_question_annotate_status'
 // 题目考察类型 dim2（概念辨析/直接计算/…，string 码 = label）
 export const DICT_QUESTION_ASSESSMENT_TYPE = 'biz_question_assessment_type'
+
+// ── 教育域共享维度字典（2026-07-01 KG/卷库枚举字典化，题库目录 + 卷库目录共用）──
+export const DICT_EDU_SUBJECT = 'biz_edu_subject' // 学科 1数学 2科学
+export const DICT_EDU_STAGE = 'biz_edu_stage' // 学段 1小学 2初中 3高中
+export const DICT_EDU_GRADE = 'biz_edu_grade' // 年级 1一年级…9九年级 10高一…
+export const DICT_EDU_VOLUME = 'biz_edu_volume' // 册 1上册 2下册
+export const DICT_EDU_EDITION = 'biz_edu_edition' // 版本 1浙教 2人教（不含年份）
+export const DICT_PAPER_TYPE = 'biz_paper_type' // 卷型 1单元 2月考 3期中 4期末

@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import type { PaperSourceQuestion } from '@/api/question/index'
+import { computed, ref, watch } from 'vue'
+import { ArrowDown, MagicStick } from '@element-plus/icons-vue'
+import { lazyTree, type PaperSourceQuestion, type SubjectNode } from '@/api/question/index'
 import type { WorkbenchPaper } from '@/composables/useBasketWorkbench'
 import { useDictStore, DICT_QUESTION_TYPE } from '@/store/dict'
+import MarkdownMath from '@/components/MarkdownMath.vue'
 
 // 🔴 本组件统计指标 100% 从 props 现算、不拉分析数据（铁律仍生效）。
 //    例外：题型名走 useDictStore —— 字典是全 App 缓存的小查表（题库/卷库早已加载），
@@ -22,6 +24,13 @@ function typeLabel(t: number): string {
   return dict.label(DICT_QUESTION_TYPE, t) || `题型${t}`
 }
 const DIFFICULTY_LEVELS: number[] = [1, 2, 3, 4]
+
+// ---- AI 命题分析（仅单卷时展示该卷的 remark；多卷混合无单一定性，不展示）----
+const reviewOpen = ref(true)
+const singleReview = computed<string>(() => {
+  if (props.papers.length !== 1) return ''
+  return (props.papers[0].remark || '').trim()
+})
 
 // ---- 顶部统计指标 ----
 const totalCount = computed<number>(() => props.questions.length)
@@ -131,6 +140,76 @@ const topKnowledges = computed<DistItem[]>(() => {
     .map(item => ({ label: item.name, count: item.count }))
 })
 
+// ---- 章节分布（知识点归章）----
+// 题的知识点 id 是层级码（如 100002002001002），前 6 位 = 章节节点 id（100002=第2章）。
+// 章节中文名走知识点 lazyTree（按题中出现的学科根逐个拉，扁平成 id→title）。零 BE 新接口。
+const chapterTitle = ref<Map<string, string>>(new Map())
+
+function flattenTree(nodes: SubjectNode[], map: Map<string, string>) {
+  for (const n of nodes) {
+    if (n.id != null) map.set(String(n.id), n.title)
+    if (Array.isArray(n.children) && n.children.length) flattenTree(n.children, map)
+  }
+}
+
+// 题中出现的学科根（知识点 id 前 3 位，如 100/200），逐根拉树建名表
+const subjectRoots = computed<string[]>(() => {
+  const set = new Set<string>()
+  for (const q of props.questions) {
+    for (const k of q.questionKnowledges ?? []) {
+      const id = String(k.knowledgeId ?? '')
+      if (id.length >= 3) set.add(id.slice(0, 3))
+    }
+  }
+  return [...set]
+})
+
+watch(subjectRoots, async (roots) => {
+  if (!roots.length) return
+  const map = new Map<string, string>()
+  for (const root of roots) {
+    try {
+      const tree = await lazyTree(root)
+      if (Array.isArray(tree)) flattenTree(tree, map)
+    } catch (e) {
+      console.warn('[analysis] 章节树拉取失败', root, e)
+    }
+  }
+  chapterTitle.value = map
+}, { immediate: true })
+
+// 每题取首个知识点归章，按**分值**合计（pqScore 优先），分值 desc 排序。
+// 章节考频看的是「这章占多少分」而非「几道题」——分值才是命题人配比的真权重。
+const chapterDist = computed<DistItem[]>(() => {
+  const agg = new Map<string, number>()
+  for (const q of props.questions) {
+    const k = (q.questionKnowledges ?? [])[0]
+    const kid = String(k?.knowledgeId ?? '')
+    if (kid.length < 6) continue
+    const cid = kid.slice(0, 6)
+    const sc = Number(q.pqScore ?? q.score ?? 0) || 0
+    agg.set(cid, (agg.get(cid) ?? 0) + sc)
+  }
+  return [...agg.entries()]
+    .map(([cid, score]) => ({ label: chapterTitle.value.get(cid) || `章节 ${cid}`, count: Math.round(score * 10) / 10 }))
+    .sort((a, b) => b.count - a.count)
+})
+
+// ---- 主观/客观题占比（客观=选择1/判断2/填空4；其余=主观）----
+const OBJECTIVE_TYPES = new Set([1, 2, 4])
+const objectiveSplit = computed<DistItem[]>(() => {
+  let obj = 0
+  let subj = 0
+  for (const q of props.questions) {
+    if (OBJECTIVE_TYPES.has(q.questionType)) obj++
+    else subj++
+  }
+  return [
+    { label: '客观题', count: obj },
+    { label: '主观题', count: subj },
+  ]
+})
+
 // ---- bar 宽度百分比 helper ----
 function barPercent(count: number, list: DistItem[]): number {
   const max = Math.max(...list.map(i => i.count), 0)
@@ -144,6 +223,21 @@ function barPercent(count: number, list: DistItem[]): number {
     <el-empty v-if="totalCount === 0" description="暂无可分析数据" />
 
     <template v-else>
+      <!-- AI 命题分析（单卷时置顶；老师先看定性，再看下方统计图表）-->
+      <div v-if="singleReview" class="ai-review-card">
+        <div class="ai-review-head" @click="reviewOpen = !reviewOpen">
+          <div class="ai-review-head-left">
+            <el-icon class="ai-review-icon"><MagicStick /></el-icon>
+            <span class="ai-review-title">AI 命题分析</span>
+            <span class="ai-review-badge">智能</span>
+          </div>
+          <el-icon class="ai-review-toggle" :class="{ 'is-open': reviewOpen }"><ArrowDown /></el-icon>
+        </div>
+        <div v-show="reviewOpen" class="ai-review-body">
+          <MarkdownMath :content="singleReview" />
+        </div>
+      </div>
+
       <!-- 顶部 4 个统计卡 -->
       <div class="stat-cards">
         <div class="stat-card analysis-total">
@@ -198,6 +292,40 @@ function barPercent(count: number, list: DistItem[]): number {
         </div>
       </div>
 
+      <!-- 章节分布（知识点归章，按分值）-->
+      <div v-if="chapterDist.length > 0" class="analysis-section">
+        <div class="section-title">章节分布（按分值）</div>
+        <div class="bar-list">
+          <div v-for="item in chapterDist" :key="item.label" class="bar-row">
+            <div class="bar-label" :title="item.label">{{ item.label }}</div>
+            <div class="bar-track">
+              <div
+                class="bar-fill bar-fill--chapter"
+                :style="{ width: `${barPercent(item.count, chapterDist)}%` }"
+              />
+            </div>
+            <div class="bar-value">{{ item.count }}分</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 主观 / 客观题占比 -->
+      <div class="analysis-section">
+        <div class="section-title">主观 / 客观题</div>
+        <div class="bar-list">
+          <div v-for="item in objectiveSplit" :key="item.label" class="bar-row">
+            <div class="bar-label">{{ item.label }}</div>
+            <div class="bar-track">
+              <div
+                class="bar-fill bar-fill--objective"
+                :style="{ width: `${barPercent(item.count, objectiveSplit)}%` }"
+              />
+            </div>
+            <div class="bar-value">{{ item.count }}</div>
+          </div>
+        </div>
+      </div>
+
       <!-- 题型 × 难度 矩阵 -->
       <div class="analysis-section">
         <div class="section-title">题型 × 难度</div>
@@ -218,8 +346,8 @@ function barPercent(count: number, list: DistItem[]): number {
         </el-table>
       </div>
 
-      <!-- 各套卷对比 -->
-      <div v-if="paperCompare.length > 0" class="analysis-section">
+      <!-- 各套卷对比（单卷时无意义，多卷才显）-->
+      <div v-if="paperCompare.length > 1" class="analysis-section">
         <div class="section-title">各套卷对比</div>
         <div class="bar-list">
           <div v-for="(item, idx) in paperCompare" :key="idx" class="bar-row">
@@ -258,6 +386,66 @@ function barPercent(count: number, list: DistItem[]): number {
 <style scoped>
 .paper-analysis-panel {
   padding: 12px;
+}
+
+/* AI 命题分析卡 */
+.ai-review-card {
+  background: linear-gradient(180deg, #f6fbfb 0%, #fff 40%);
+  border: 1px solid #d6ecec;
+  border-radius: 10px;
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+
+.ai-review-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.ai-review-head-left {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.ai-review-icon {
+  color: #1E8A8A;
+  font-size: 16px;
+}
+
+.ai-review-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1d2129;
+}
+
+.ai-review-badge {
+  font-size: 11px;
+  font-weight: 600;
+  color: #1E8A8A;
+  background: #e3f4f4;
+  border-radius: 10px;
+  padding: 1px 7px;
+}
+
+.ai-review-toggle {
+  color: #86909c;
+  transition: transform 0.25s ease;
+}
+
+.ai-review-toggle.is-open {
+  transform: rotate(180deg);
+}
+
+.ai-review-body {
+  padding: 2px 14px 14px;
+  border-top: 1px solid #ebf3f3;
+  max-height: 360px;
+  overflow-y: auto;
 }
 
 .stat-cards {
@@ -350,6 +538,14 @@ function barPercent(count: number, list: DistItem[]): number {
 
 .bar-fill--knowledge {
   background: #722ed1;
+}
+
+.bar-fill--chapter {
+  background: #1E8A8A;
+}
+
+.bar-fill--objective {
+  background: #ff7d00;
 }
 
 .bar-value {

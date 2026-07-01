@@ -21,6 +21,8 @@ declare module 'vue' {
     ElButton: typeof import('element-plus/es')['ElButton']
     ElCard: typeof import('element-plus/es')['ElCard']
     ElCheckbox: typeof import('element-plus/es')['ElCheckbox']
+    ElCollapse: typeof import('element-plus/es')['ElCollapse']
+    ElCollapseItem: typeof import('element-plus/es')['ElCollapseItem']
     ElColorPicker: typeof import('element-plus/es')['ElColorPicker']
     ElContainer: typeof import('element-plus/es')['ElContainer']
     ElDialog: typeof import('element-plus/es')['ElDialog']
@@ -60,8 +62,8 @@ declare module 'vue' {
     ElTreeSelect: typeof import('element-plus/es')['ElTreeSelect']
     ElUpload: typeof import('element-plus/es')['ElUpload']
     FavoriteFolderDrawer: typeof import('./src/components/FavoriteFolderDrawer/index.vue')['default']
-    FontSizeSwitch: typeof import('./src/components/business/FontSizeSwitch/index.vue')['default']
     FreeTagList: typeof import('./src/components/business/FreeTagList/index.vue')['default']
+    GeoBoard: typeof import('./src/components/business/GeoBoard/index.vue')['default']
     Highlight: typeof import('./src/components/Highlight/index.vue')['default']
     Icon: typeof import('./src/components/Icon/index.vue')['default']
     IngestFab: typeof import('./src/components/business/IngestFab/index.vue')['default']
@@ -82,6 +84,7 @@ declare module 'vue' {
     SearchBar: typeof import('./src/components/SearchWrap/SearchBar.vue')['default']
     SearchWrap: typeof import('./src/components/SearchWrap/index.vue')['default']
     SketchPad: typeof import('./src/components/business/SketchPad/index.vue')['default']
+    SubjectDirectory: typeof import('./src/components/business/SubjectDirectory/index.vue')['default']
   }
   export interface GlobalDirectives {
     vLoading: typeof import('element-plus/es')['ElLoadingDirective']

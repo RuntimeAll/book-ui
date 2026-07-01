@@ -1,17 +1,16 @@
 <script setup lang="ts">
 /**
- * PaperLibrary — 卷库通用列表组件
+ * PaperLibrary — 卷库通用列表组件（2026-07-01 目录重构，对齐题库目录）
  *
- * scope 由左侧目录树选中节点驱动（内部状态），不再通过 prop 传入。
+ * 左侧目录 = 分层收放筛选：类型(公共试卷/我的卷库) → 学科 → 学段 → 年级卡(+中考专区) → 册 → 卷型。
+ * 全部读 biz_paper_category 结构化字段码（subject/stage/grade/volume/paperType/nodeKind）+ useDictStore
+ * 翻标签，不再解析节点名。选中维度 → 定位到分类节点 id → 走 getPaperPage(subjectId 前缀匹配)。
  *
- * 树末尾追加合成节点「我的卷库」（id='__mine__'），点击时 scope='mine'；
- * 其他真实分类节点 scope='public'。
- *
- * 支持 ?mine=1 query：onMounted 树数据就绪后自动选中「我的卷库」节点。
+ * scope='public'(公共卷) / 'mine'(我的卷)；?mine=1 query 进入自动选「我的卷库」。
  */
-import { ref, reactive, onMounted, nextTick, watch } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Star } from '@element-plus/icons-vue'
+import { Search, Star, ArrowDown } from '@element-plus/icons-vue'
 import { useRouter, useRoute } from 'vue-router'
 import {
   getPaperLazyTree,
@@ -19,320 +18,373 @@ import {
   deletePaper,
   type PaperTreeNode,
   type PaperListItem,
+  type MisiktPageVo,
 } from '@/api/paper/index'
+import {
+  useDictStore,
+  DICT_EDU_SUBJECT, DICT_EDU_STAGE, DICT_EDU_GRADE, DICT_PAPER_TYPE,
+} from '@/store/dict'
 import { useUserStore } from '@/store/user'
 import { getCurrentUser } from '@/api/user'
 import { usePaperBasket } from '@/composables/usePaperBasket'
 import { useAbortableRequest } from '@/composables/useAbortableRequest'
-import type { MisiktPageVo } from '@/api/paper/index'
 
 const router = useRouter()
 const route = useRoute()
 const userStore = useUserStore()
 const basket = usePaperBasket()
+const dict = useDictStore()
 
-// ── 教材选择（占位，不可改 — PRD §2 "其他留空按钮"）────────
-const TEXTBOOK_OPTIONS = [
-  { label: '浙教新版', value: 'zhejiao-new' },
-]
-const selectedTextbook = ref('zhejiao-new')
-
-// ── 左侧目录树关键字筛选（用户 2026-06-04 拍板实现）：watch 关键词 → el-tree 内置 filter，按 title 子串匹配 ──
-const treeFilterKeyword = ref('')
-
-// ── 合成节点常量（id 不与真实分类 id 冲突；title 对齐树 label 字段名）
-// 类型断言为 PaperTreeNode：真实树字段在合成节点无意义，此处只需 id/title/children。
-const MINE_NODE = { id: '__mine__', title: '我的卷库', children: [] } as unknown as PaperTreeNode
-
-// ── 章节树 ──────────────────────────────────────────────────
-const treeData = ref<PaperTreeNode[]>([])
+// ══ 分类树（结构化字段驱动）══════════════════════════════════
+const NO_MATCH = 'NONE' // 空学科/学段兜底 subjectId（前缀匹配不到任何分类 → 0 条）
 const treeLoading = ref(false)
-const paperTreeRef = ref()
+const gradeNodes = ref<PaperTreeNode[]>([]) // nodeKind=grade（年级册节点）
+const examNodes = ref<PaperTreeNode[]>([])  // nodeKind=exam（中考模拟/真题）
+const ptypeNodes = ref<PaperTreeNode[]>([]) // nodeKind=ptype（卷型节点）
 
-// 关键字筛选：filterTreeNode 决定节点显隐（按 title 子串），watch 关键词触发 el-tree 内置 filter
-function filterTreeNode(value: string, data: PaperTreeNode): boolean {
-  if (!value) return true
-  return ((data as { title?: string }).title ?? '').includes(value)
+const GRADE_NUM: Record<number, string> = { 1: '一', 2: '二', 3: '三', 4: '四', 5: '五', 6: '六', 7: '七', 8: '八', 9: '九', 10: '高一', 11: '高二', 12: '高三' }
+const STAGE_GRADES: Record<number, number[]> = { 1: [1, 2, 3, 4, 5, 6], 2: [7, 8, 9], 3: [10, 11, 12] }
+
+// ══ 选择状态 ════════════════════════════════════════════════
+const scope = ref<'public' | 'mine'>('public') // 类型
+const subject = ref(1) // 学科（1数学 2科学）
+const stage = ref(2)   // 学段（1小学 2初中 3高中）
+const gradeCode = ref<number | null>(7) // 选中年级（null=走中考）
+const vol = ref(1)     // 册（1上 2下）
+const examId = ref('') // 选中的中考节点 id（非空=中考态）
+const paperType = ref<number | ''>('') // 卷型（''=该年级全部）
+
+// ══ 维度派生 ════════════════════════════════════════════════
+const uniq = <T,>(a: T[]) => [...new Set(a)]
+const subjectList = computed(() => dict.list(DICT_EDU_SUBJECT))
+const stageList = computed(() => dict.list(DICT_EDU_STAGE))
+const ptypeList = computed(() => dict.list(DICT_PAPER_TYPE))
+
+/** 当前学科+学段下有卷型/年级数据的年级码集合 */
+const gradesAvail = computed(() =>
+  new Set(gradeNodes.value.filter((n) => n.subject === subject.value && n.stage === stage.value).map((n) => n.grade as number)),
+)
+/** 当前学科+学段下的中考节点 */
+const examList = computed(() => examNodes.value.filter((n) => n.subject === subject.value && n.stage === stage.value))
+/** 当前年级下可用的册（有些年级如九年级无上下册） */
+const volsAvail = computed(() => {
+  if (gradeCode.value == null) return new Set<number>()
+  return new Set(
+    gradeNodes.value
+      .filter((n) => n.subject === subject.value && n.stage === stage.value && n.grade === gradeCode.value && n.volume != null)
+      .map((n) => n.volume as number),
+  )
+})
+/** 当前选中的年级册节点（含无册的单节点如九年级） */
+const currentGradeNode = computed<PaperTreeNode | null>(() => {
+  if (gradeCode.value == null) return null
+  const cands = gradeNodes.value.filter((n) => n.subject === subject.value && n.stage === stage.value && n.grade === gradeCode.value)
+  if (!cands.length) return null
+  return cands.find((n) => n.volume === vol.value) ?? cands.find((n) => n.volume == null) ?? cands[0]
+})
+/** 当前年级节点下的卷型集合（paperType 码） */
+const ptypesAvail = computed(() => {
+  const gn = currentGradeNode.value
+  if (!gn) return new Set<number>()
+  return new Set(ptypeNodes.value.filter((n) => n.parentId === gn.id && n.paperType != null).map((n) => n.paperType as number))
+})
+const stageHasData = computed(() => gradesAvail.value.size > 0 || examList.value.length > 0)
+const isExam = computed(() => !!examId.value)
+
+// ══ 收放 + 卡头 ═════════════════════════════════════════════
+const pickerOpen = ref(false)
+function togglePicker() { pickerOpen.value = !pickerOpen.value }
+const isSci = computed(() => subject.value === 2)
+// 卡头只概括「收起的前半截」= 学科·学段（年级往下常驻可见）
+const crumbIco = computed(() => dict.label(DICT_EDU_SUBJECT, subject.value).charAt(0) || '卷')
+const crumbTag = computed(() => (scope.value === 'public' ? '公共试卷' : '我的卷库'))
+const crumbMain = computed(() => `${dict.label(DICT_EDU_SUBJECT, subject.value)}·${dict.label(DICT_EDU_STAGE, stage.value)}`)
+
+// ══ 目标节点解析 → subjectId（前缀匹配）══════════════════════
+function resolveTargetId(): string {
+  if (isExam.value) return examId.value
+  const gn = currentGradeNode.value
+  if (!gn) return NO_MATCH // 没选到具体年级（空学科/学段）→ 0 条，不回退到全部数学卷
+  if (paperType.value !== '') {
+    const pn = ptypeNodes.value.find((n) => n.parentId === gn.id && n.paperType === paperType.value)
+    if (pn) return pn.id
+  }
+  return gn.id
 }
-watch(treeFilterKeyword, (val) => {
-  paperTreeRef.value?.filter(val)
+
+// ══ 面包屑 ══════════════════════════════════════════════════
+const crumb = computed(() => {
+  const parts = [scope.value === 'public' ? '公共试卷' : '我的卷库', dict.label(DICT_EDU_SUBJECT, subject.value), dict.label(DICT_EDU_STAGE, stage.value)]
+  if (isExam.value) {
+    const e = examList.value.find((n) => n.id === examId.value)
+    parts.push(e?.title ?? '中考')
+  } else if (gradeCode.value != null) {
+    const gn = currentGradeNode.value
+    parts.push(`${dict.label(DICT_EDU_GRADE, gradeCode.value)}${gn?.volume != null ? (vol.value === 2 ? '下册' : '上册') : ''}`)
+    if (paperType.value !== '') parts.push(`${dict.label(DICT_PAPER_TYPE, paperType.value)}卷`)
+  }
+  return parts
 })
 
-// ── scope 内部状态（由树选中节点驱动）──────────────────────
-// 'public' → 公共卷（真实分类节点），'mine' → 我的卷库（合成节点）
-const currentScope = ref<'public' | 'mine'>('public')
-const currentSubjectId = ref<string>('')
-
-async function loadTree() {
-  treeLoading.value = true
+// ══ 缓存 ════════════════════════════════════════════════════
+const CACHE_KEY = 'book-ui:paper-dir-sel'
+interface CacheState { scope: 'public' | 'mine'; subject: number; stage: number; gradeCode: number | null; vol: number; examId: string; paperType: number | '' }
+function readCache(): CacheState | null { try { return JSON.parse(localStorage.getItem(CACHE_KEY) || 'null') } catch { return null } }
+function persist() {
   try {
-    const result = await getPaperLazyTree()
-    const realNodes: PaperTreeNode[] = Array.isArray(result) ? result : []
-    // 末尾追加合成节点「我的卷库」
-    treeData.value = [...realNodes, MINE_NODE]
-
-    // 判断是否需要自动选中「我的卷库」（?mine=1 query）
-    const autoMine = route.query.mine === '1'
-
-    if (autoMine) {
-      // 自动选中合成节点
-      handleNodeClick(MINE_NODE)
-      await nextTick()
-      paperTreeRef.value?.setCurrentKey('__mine__')
-    } else if (realNodes.length > 0) {
-      // 默认选中第一个真实分类节点（公共卷库，对齐 misikt 默认进公共试卷）
-      const firstNode = realNodes[0]
-      handleNodeClick(firstNode)
-      await nextTick()
-      paperTreeRef.value?.setCurrentKey(firstNode.id)
-    }
-  } catch (e) {
-    console.warn('[paper-tree] lazyTree failed', e)
-    treeData.value = [MINE_NODE]
-  } finally {
-    treeLoading.value = false
-  }
+    localStorage.setItem(CACHE_KEY, JSON.stringify({ scope: scope.value, subject: subject.value, stage: stage.value, gradeCode: gradeCode.value, vol: vol.value, examId: examId.value, paperType: paperType.value }))
+  } catch { /* 隐私模式忽略 */ }
 }
 
-function handleNodeClick(data: PaperTreeNode) {
-  if (data.id === '__mine__') {
-    // 合成节点：scope=mine，清空 subjectId（看全部自己的，不按分类）
-    currentScope.value = 'mine'
-    currentSubjectId.value = ''
-  } else {
-    // 真实分类节点：scope=public，subjectId=node.id
-    currentScope.value = 'public'
-    currentSubjectId.value = data.id
-  }
-  pageParams.subjectId = currentSubjectId.value
+// ══ 应用筛选 → 拉列表 ═══════════════════════════════════════
+function applyFilter() {
+  persist()
+  pageParams.subjectId = resolveTargetId()
   pageParams.pageIndex = 1
   fetchPapers()
 }
 
-// ── 搜索框（顶部）─────────────────────────────────────────
+// ══ 交互 ════════════════════════════════════════════════════
+function pickScope(s: 'public' | 'mine') { scope.value = s; applyFilter() }
+function pickSubject(code: number) { subject.value = code; normalizeStageGrade(); applyFilter() }
+function pickStage(code: number) { stage.value = code; normalizeStageGrade(); applyFilter(); pickerOpen.value = false } // 选好学段收起前半截
+function pickGrade(g: number) {
+  if (!gradesAvail.value.has(g)) return
+  gradeCode.value = g; examId.value = ''
+  if (!volsAvail.value.has(vol.value)) vol.value = [...volsAvail.value][0] ?? 1
+  paperType.value = ''
+  applyFilter()
+}
+function pickExam(id: string) { examId.value = id; gradeCode.value = null; paperType.value = ''; applyFilter() }
+function pickVol(v: number) { if (!volsAvail.value.has(v)) return; vol.value = v; applyFilter() }
+function pickPtype(pt: number | '') { paperType.value = pt; applyFilter() }
+
+/** 换学科/学段后把年级归一化到可用值（无则清空落中考/空） */
+function normalizeStageGrade() {
+  examId.value = ''
+  paperType.value = ''
+  const avail = gradesAvail.value
+  if (gradeCode.value == null || !avail.has(gradeCode.value)) {
+    gradeCode.value = avail.size ? [...avail].sort((a, b) => a - b)[0] : null
+  }
+  if (gradeCode.value != null && !volsAvail.value.has(vol.value)) vol.value = [...volsAvail.value][0] ?? 1
+}
+
+// ── 顶部搜索框 ─────────────────────────────────────────────
 const searchName = ref('')
 const searchLoading = ref(false)
+function onSearch() { pageParams.name = searchName.value.trim(); pageParams.pageIndex = 1; fetchPapers() }
 
-function onSearch() {
-  pageParams.name = searchName.value.trim()
-  pageParams.pageIndex = 1
-  fetchPapers()
-}
-
-// ── 卷列表 + 分页 ────────────────────────────────────────
+// ══ 卷列表 + 分页（保留原逻辑）══════════════════════════════
 const papers = ref<PaperListItem[]>([])
 const listLoading = ref(false)
 const total = ref(0)
-
-const pageParams = reactive({
-  name: '',
-  subjectId: '',
-  pageIndex: 1,
-  pageSize: 10,
-})
-
-// PRD-A-013 T5 M-10 — 列表请求竞态防护
-// 快速切分类树 / 改搜索 / 翻页时, 旧请求自动 abort, 防止旧 response 覆盖新数据。
+const pageParams = reactive({ name: '', subjectId: '', pageIndex: 1, pageSize: 10 })
 const { run: runAbortable } = useAbortableRequest<MisiktPageVo<PaperListItem>>()
 
 async function fetchPapers() {
-  // scope=mine 时先兜底拉 userInfo（刷新页面后 userInfo 内存态丢失）
-  if (currentScope.value === 'mine' && !userStore.userInfo) {
-    try {
-      const info = await getCurrentUser()
-      if (info) userStore.setUserInfo(info)
-    } catch (e) {
-      console.warn('[PaperLibrary] getCurrentUser 兜底失败', e)
-    }
+  if (scope.value === 'mine' && !userStore.userInfo) {
+    try { const info = await getCurrentUser(); if (info) userStore.setUserInfo(info) } catch (e) { console.warn('[PaperLibrary] getCurrentUser 兜底失败', e) }
   }
-
   listLoading.value = true
   searchLoading.value = true
   try {
-    // PRD-A-013 T5 M-10 — 走 useAbortableRequest 包装, signal 透传到 axios。
-    // 切分类 / 改搜索时上一个请求自动 abort, 返回 null 表示被取消（不更新 UI）。
     const result = await runAbortable((signal) =>
       getPaperPage(
-        {
-          name: pageParams.name || '',
-          subjectId: pageParams.subjectId || '',
-          pageIndex: pageParams.pageIndex,
-          pageSize: pageParams.pageSize,
-          scope: currentScope.value,
-        },
+        { name: pageParams.name || '', subjectId: pageParams.subjectId || '', pageIndex: pageParams.pageIndex, pageSize: pageParams.pageSize, scope: scope.value },
         { signal },
       ),
     )
-    if (result === null) {
-      // 被新一次请求取消, 保持当前 UI（loading 由更新的请求结束时关闭）
-      return
-    }
-    if (result && Array.isArray(result.list)) {
-      papers.value = result.list
-      total.value = result.total ?? 0
-    } else {
-      papers.value = []
-      total.value = 0
-    }
+    if (result === null) return
+    if (result && Array.isArray(result.list)) { papers.value = result.list; total.value = result.total ?? 0 } else { papers.value = []; total.value = 0 }
   } catch (e) {
-    console.warn('[paper-list] page failed', e)
-    papers.value = []
-    total.value = 0
+    console.warn('[paper-list] page failed', e); papers.value = []; total.value = 0
   } finally {
-    listLoading.value = false
-    searchLoading.value = false
+    listLoading.value = false; searchLoading.value = false
   }
 }
+function handlePageChange(p: number) { pageParams.pageIndex = p; fetchPapers() }
+function handleSizeChange(s: number) { pageParams.pageSize = s; pageParams.pageIndex = 1; fetchPapers() }
 
-function handlePageChange(p: number) {
-  pageParams.pageIndex = p
-  fetchPapers()
-}
-
-function handleSizeChange(s: number) {
-  pageParams.pageSize = s
-  pageParams.pageIndex = 1
-  fetchPapers()
-}
-
-// ── 业务动作 ──────────────────────────────────────────────
-function handleView(item: PaperListItem) {
-  router.push(`/papers/source/${item.id}`)
-}
-
-// PRD-A-005 T4 — 进入试卷编辑页（排序/删/增题）
-function handleEdit(item: PaperListItem) {
-  router.push(`/papers/edit/${item.id}`)
-}
-
-// PRD-A-005 收尾 C 段 — owner 判定（公共卷锁死编辑/删除）
-// 本人卷 = item.createUser === 当前登录用户 id（BE PaperListItemVo 字段名是 createUser:Long，不是 createBy）。
-// 非本人 = 公共卷（page scope=public 返的共享卷），不给编辑/删除入口。
+// ── 业务动作（保留原逻辑）─────────────────────────────────
+function handleView(item: PaperListItem) { router.push(`/papers/source/${item.id}`) }
+function handleEdit(item: PaperListItem) { router.push(`/papers/edit/${item.id}`) }
 function isOwner(item: PaperListItem): boolean {
   const uid = userStore.userInfo?.id
   if (uid == null || item.createUser == null) return false
   return String(item.createUser) === String(uid)
 }
-
-// PRD-A-005 收尾 A 段 — 删除试卷（仅本人卷可调；BE 二次 owner 校验兜底）
 async function handleDelete(item: PaperListItem) {
   try {
-    await ElMessageBox.confirm(
-      `确认删除试卷「${item.name}」？删除后不可恢复。`,
-      '删除试卷',
-      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
-    )
-  } catch {
-    return
-  }
-  try {
-    await deletePaper(item.id)
-    ElMessage.success('删除成功')
-    fetchPapers()
-  } catch (e) {
-    console.warn('[PaperLibrary] deletePaper failed', e)
-    ElMessage.error('删除失败')
-  }
+    await ElMessageBox.confirm(`确认删除试卷「${item.name}」？删除后不可恢复。`, '删除试卷', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' })
+  } catch { return }
+  try { await deletePaper(item.id); ElMessage.success('删除成功'); fetchPapers() } catch (e) { console.warn('[PaperLibrary] deletePaper failed', e); ElMessage.error('删除失败') }
 }
-
-function handleNotOpen() {
-  ElMessage.info('暂未开放')
-}
-
-// R 卡段④ — 加入试卷篮（toggle：已在篮内则移出，否则加入）
+function handleNotOpen() { ElMessage.info('暂未开放') }
 async function handleToggleBasket(item: PaperListItem) {
   if (basket.isLoading(item.id)) return
-  if (basket.basketIds.value.has(item.id)) {
-    await basket.remove(item.id)
-  } else {
-    await basket.add(item)
+  if (basket.basketIds.value.has(item.id)) { await basket.remove(item.id) } else { await basket.add(item) }
+}
+
+// ══ 生命周期 ════════════════════════════════════════════════
+async function loadTree() {
+  treeLoading.value = true
+  try {
+    const result = await getPaperLazyTree()
+    const flat: PaperTreeNode[] = []
+    const walk = (ns?: PaperTreeNode[]) => { (ns ?? []).forEach((n) => { flat.push(n); walk(n.children) }) }
+    walk(Array.isArray(result) ? result : [])
+    gradeNodes.value = flat.filter((n) => n.nodeKind === 'grade')
+    examNodes.value = flat.filter((n) => n.nodeKind === 'exam')
+    ptypeNodes.value = flat.filter((n) => n.nodeKind === 'ptype')
+  } catch (e) {
+    console.warn('[paper-tree] lazyTree failed', e)
+  } finally {
+    treeLoading.value = false
   }
 }
 
-// ── 生命周期 ──────────────────────────────────────────────
 onMounted(async () => {
-  // owner 判定（isOwner）依赖 userInfo —— 刷新页面后内存态丢失，先兜底拉一次，
-  // 否则公共/我的卷库都判不出本人卷，编辑/删除入口全隐藏。
   if (!userStore.userInfo) {
-    try {
-      const info = await getCurrentUser()
-      if (info) userStore.setUserInfo(info)
-    } catch (e) {
-      console.warn('[PaperLibrary] getCurrentUser 兜底失败', e)
-    }
+    try { const info = await getCurrentUser(); if (info) userStore.setUserInfo(info) } catch (e) { console.warn('[PaperLibrary] getCurrentUser 兜底失败', e) }
   }
-  // loadTree() 内部在树数据就绪后自动选中节点并触发 fetchPapers。
-  // ?mine=1 时自动选中合成节点「我的卷库」；否则默认第一个真实节点。
+  await Promise.all([dict.load(DICT_EDU_SUBJECT), dict.load(DICT_EDU_STAGE), dict.load(DICT_EDU_GRADE), dict.load(DICT_PAPER_TYPE)])
   await loadTree()
+
+  // 恢复缓存 > 页面默认（数学·初中·七上）
+  const c = readCache()
+  if (c) {
+    scope.value = c.scope; subject.value = c.subject; stage.value = c.stage
+    gradeCode.value = c.gradeCode; vol.value = c.vol; examId.value = c.examId; paperType.value = c.paperType
+    // 缓存的选择在当前数据下若失效则归一化
+    if (!isExam.value) normalizeStageGrade()
+  } else {
+    normalizeStageGrade()
+  }
+  // ?mine=1 进入 → 我的卷库
+  if (route.query.mine === '1') scope.value = 'mine'
+
+  pageParams.subjectId = resolveTargetId()
+  fetchPapers()
 })
 </script>
 
 <template>
   <div class="papers-page">
-    <!-- 左侧目录区 -->
-    <aside class="paper-sidebar">
-      <div class="sidebar-title">卷库目录</div>
-      <!-- 教材选择（占位不可改）-->
-      <el-select
-        v-model="selectedTextbook"
-        class="sidebar-select"
-        size="default"
-        @change="handleNotOpen"
-      >
-        <el-option
-          v-for="opt in TEXTBOOK_OPTIONS"
-          :key="opt.value"
-          :label="opt.label"
-          :value="opt.value"
-        />
-      </el-select>
-      <!-- 关键字筛选（实时筛选目录树，用户 2026-06-04 拍板实现）-->
-      <el-input
-        v-model="treeFilterKeyword"
-        class="sidebar-filter"
-        placeholder="输入关键字筛选"
-        size="default"
-        clearable
-      />
-      <!-- 树（含末尾合成节点「我的卷库」）-->
-      <div v-loading="treeLoading" class="tree-wrap">
-        <el-tree
-          ref="paperTreeRef"
-          :data="treeData"
-          node-key="id"
-          :props="{ children: 'children', label: 'title' }"
-          :filter-node-method="filterTreeNode"
-          highlight-current
-          :expand-on-click-node="false"
-          @node-click="handleNodeClick"
-        />
+    <!-- ══ 左侧卷库目录（对齐题库目录）══ -->
+    <aside class="dir">
+      <div class="dir-head">
+        <div class="t"><span class="bar" /><b>卷库目录</b></div>
+        <span class="n">{{ total }} 卷</span>
+      </div>
+      <div v-loading="treeLoading" class="dir-body">
+        <!-- 当前选择 / 收放开关 -->
+        <div class="crumb" :class="{ open: pickerOpen }" @click="togglePicker">
+          <div class="ico" :class="isSci ? 'sci' : 'math'">{{ crumbIco }}</div>
+          <div class="txt">
+            <div class="l1"><span class="main">{{ crumbMain }}</span><span class="ed">{{ crumbTag }}</span></div>
+            <div class="l2">{{ pickerOpen ? '选好学段自动收起 ▴' : '点此切换 类型·学科·学段 ▾' }}</div>
+          </div>
+          <el-icon class="chev"><ArrowDown /></el-icon>
+        </div>
+
+        <!-- 收放筛选 -->
+        <div class="picker" :class="{ collapsed: !pickerOpen }">
+        <div class="picker-in">
+        <!-- 类型 -->
+        <div class="grp">
+          <div class="grp-lab">类型</div>
+          <div class="seg">
+            <button :class="{ on: scope === 'public' }" @click="pickScope('public')">公共试卷</button>
+            <button :class="{ on: scope === 'mine' }" @click="pickScope('mine')">我的卷库</button>
+          </div>
+        </div>
+        <!-- 学科 -->
+        <div class="grp">
+          <div class="grp-lab">学科</div>
+          <div class="seg">
+            <button v-for="s in subjectList" :key="s.dictValue" :class="{ on: subject === Number(s.dictValue) }" @click="pickSubject(Number(s.dictValue))">{{ s.dictLabel }}</button>
+          </div>
+        </div>
+        <!-- 学段 -->
+        <div class="grp">
+          <div class="grp-lab">学段</div>
+          <div class="seg">
+            <button v-for="st in stageList" :key="st.dictValue" :class="{ on: stage === Number(st.dictValue) }" @click="pickStage(Number(st.dictValue))">{{ st.dictLabel }}</button>
+          </div>
+        </div>
+        </div><!-- /picker-in -->
+        </div><!-- /picker：收放只管 类型/学科/学段 -->
+
+        <!-- 年级/册/卷型：常驻不收（前面半截才收）-->
+        <!-- 年级 大卡 + 中考专区 -->
+        <div class="grp">
+          <div class="grp-lab">年级（点选即定位）</div>
+          <div class="grades">
+            <div
+              v-for="g in (STAGE_GRADES[stage] || [])"
+              :key="g"
+              class="grade"
+              :class="{ on: !isExam && gradeCode === g, dim: !gradesAvail.has(g) }"
+              @click="pickGrade(g)"
+            >
+              <div class="num">{{ GRADE_NUM[g] }}</div>
+              <div class="cn">{{ dict.label(DICT_EDU_GRADE, g) }}</div>
+            </div>
+          </div>
+          <div v-if="examList.length" class="zk">
+            <div v-for="e in examList" :key="e.id" class="chip" :class="{ on: examId === e.id }" @click="pickExam(e.id)">{{ e.title }}</div>
+          </div>
+          <div v-if="!stageHasData" class="stage-empty">该学段暂无卷（分类骨架待补）</div>
+        </div>
+        <!-- 册 -->
+        <div class="grp">
+          <div class="grp-lab">册</div>
+          <div class="seg">
+            <button :disabled="isExam || !volsAvail.has(1)" :class="{ on: !isExam && vol === 1 && volsAvail.has(1) }" @click="pickVol(1)">上册</button>
+            <button :disabled="isExam || !volsAvail.has(2)" :class="{ on: !isExam && vol === 2 && volsAvail.has(2) }" @click="pickVol(2)">下册</button>
+          </div>
+        </div>
+        <!-- 卷型 -->
+        <div class="grp" :class="{ dis: isExam || gradeCode == null }">
+          <div class="grp-lab">卷型（可留空 = 该年级全部）</div>
+          <div class="ptype">
+            <div class="chip" :class="{ on: paperType === '' }" @click="pickPtype('')">全部</div>
+            <div
+              v-for="pt in ptypeList"
+              :key="pt.dictValue"
+              class="chip"
+              :class="{ on: paperType === Number(pt.dictValue), dim: !ptypesAvail.has(Number(pt.dictValue)) }"
+              @click="ptypesAvail.has(Number(pt.dictValue)) && pickPtype(Number(pt.dictValue))"
+            >{{ pt.dictLabel }}</div>
+          </div>
+        </div>
+        <div class="divln" />
+        <div class="search-mini">
+          <el-input v-model="searchName" placeholder="输入试卷名字筛选…" size="small" clearable @keyup.enter="onSearch">
+            <template #prefix><el-icon><Search /></el-icon></template>
+          </el-input>
+        </div>
       </div>
     </aside>
 
-    <!-- 中间主区 -->
+    <!-- ══ 右侧内容区（保留原样）══ -->
     <section class="paper-main">
-      <!-- 顶部搜索条 -->
       <div class="search-bar">
-        <el-input
-          v-model="searchName"
-          placeholder="输入试卷名字"
-          class="search-input"
-          clearable
-          @keyup.enter="onSearch"
-        />
+        <el-input v-model="searchName" placeholder="输入试卷名字" class="search-input" clearable @keyup.enter="onSearch" />
         <el-button type="primary" :loading="searchLoading" class="search-btn" @click="onSearch">
-          <el-icon><Search /></el-icon>
-          <span>查询</span>
+          <el-icon><Search /></el-icon><span>查询</span>
         </el-button>
       </div>
+      <div class="crumbbar">
+        <template v-for="(c, i) in crumb" :key="i">
+          <span v-if="i === 0" class="pill">{{ c }}</span>
+          <span v-else class="seg-crumb"><span class="sep">/</span>{{ c }}</span>
+        </template>
+      </div>
 
-      <!-- 卷列表 -->
       <div v-loading="listLoading" class="paper-list">
-        <div
-          v-for="item in papers"
-          :key="item.id"
-          class="paper-card"
-        >
+        <div v-for="item in papers" :key="item.id" class="paper-card">
           <div class="paper-card-row1">
             <div class="paper-card-title-area">
               <el-icon class="paper-star" @click="handleNotOpen"><Star /></el-icon>
@@ -340,15 +392,9 @@ onMounted(async () => {
             </div>
             <div class="paper-card-actions">
               <el-link type="primary" :underline="false" @click="handleView(item)">查看</el-link>
-              <!-- C 段：编辑/删除仅本人卷可见，公共卷锁死 -->
               <el-link v-if="isOwner(item)" type="primary" :underline="false" @click="handleEdit(item)">编辑</el-link>
               <el-link v-if="isOwner(item)" type="danger" :underline="false" @click="handleDelete(item)">删除</el-link>
-              <el-link
-                :type="basket.basketIds.value.has(item.id) ? 'danger' : 'primary'"
-                :underline="false"
-                :disabled="basket.isLoading(item.id)"
-                @click="handleToggleBasket(item)"
-              >
+              <el-link :type="basket.basketIds.value.has(item.id) ? 'danger' : 'primary'" :underline="false" :disabled="basket.isLoading(item.id)" @click="handleToggleBasket(item)">
                 {{ basket.basketIds.value.has(item.id) ? '移出试卷篮' : '加入试卷篮' }}
               </el-link>
             </div>
@@ -363,7 +409,6 @@ onMounted(async () => {
         <el-empty v-if="!listLoading && papers.length === 0" description="暂无试卷" />
       </div>
 
-      <!-- 分页器 -->
       <div class="pagination-wrap">
         <el-pagination
           background
@@ -381,195 +426,85 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.papers-page {
-  display: flex;
-  /* 固定满高、自身不滚 —— 左侧目录与顶部搜索锁死，只让 table 列表内部滚（对齐题库交互） */
-  height: 100%;
-  background: #f0f2f5;
-  position: relative;
-  overflow: hidden;
-}
+.papers-page { display: flex; height: 100%; background: #f0f2f5; position: relative; overflow: hidden; gap: 14px; padding: 14px; }
 
-/* ── 左侧目录 ─────────────────────────────── */
-.paper-sidebar {
-  width: 300px;
-  flex-shrink: 0;
-  height: 100%;
-  background: #ffffff;
-  padding: 16px 12px;
-  border-right: 1px solid #ebeef5;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
+/* ── 左侧卷库目录（题库目录同构）─────────────────── */
+.dir { width: 300px; flex-shrink: 0; background: #fff; border: 1px solid #eef1f1; border-radius: 10px; box-shadow: 0 1px 3px rgba(22, 36, 42, .05); display: flex; flex-direction: column; overflow: hidden; }
+.dir-head { padding: 13px 14px; border-bottom: 1px solid #eef2f2; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+.dir-head .t { display: flex; align-items: center; gap: 8px; }
+.dir-head .bar { width: 3px; height: 15px; border-radius: 2px; background: #7b6cf0; }
+.dir-head b { font-size: 14px; font-weight: 700; color: #16242a; }
+.dir-head .n { font-size: 10.5px; color: #a8b2b6; }
+.dir-body { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 10px 10px; }
 
-.sidebar-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: #303133;
-  padding: 0 4px;
-  margin-bottom: 4px;
-}
+/* 卡头 + 收放（对齐题库目录） */
+.crumb { padding: 8px 9px; border: 1px solid #e3e9e9; border-radius: 9px; background: #fafdfd; cursor: pointer; display: flex; align-items: center; gap: 7px; transition: .15s; margin-bottom: 11px; }
+.crumb:hover { border-color: #cfe0e0; background: #f3faf9; }
+.crumb .ico { width: 26px; height: 26px; border-radius: 7px; flex-shrink: 0; display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 12.5px; }
+.crumb .ico.math { background: linear-gradient(135deg, #2ba3a3, #176e6e); }
+.crumb .ico.sci { background: linear-gradient(135deg, #8f86f4, #6357d6); }
+.crumb .txt { flex: 1; min-width: 0; }
+.crumb .l1 { font-size: 12px; font-weight: 700; color: #16242a; line-height: 1.25; display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+.crumb .l1 .main { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.crumb .l2 { font-size: 10px; color: #7c8a90; margin-top: 1px; }
+.crumb .ed { font-size: 9.5px; font-weight: 600; padding: 1px 5px; border-radius: 4px; background: #efeefe; color: #7b6cf0; flex-shrink: 0; }
+.crumb .chev { color: #a8b2b6; transition: .25s; flex-shrink: 0; font-size: 13px; }
+.crumb.open .chev { transform: rotate(180deg); }
+.picker { max-height: 520px; overflow: hidden; transition: max-height .3s cubic-bezier(.4, 0, .2, 1); }
+.picker.collapsed { max-height: 0; }
 
-.sidebar-select {
-  width: 100%;
-}
+.grp { margin-bottom: 12px; }
+.grp.dis { opacity: .5; pointer-events: none; }
+.grp-lab { font-size: 10px; font-weight: 700; letter-spacing: 1px; color: #7c8a90; text-transform: uppercase; margin-bottom: 6px; }
+.seg { display: flex; background: #eef2f2; border-radius: 8px; padding: 2px; gap: 2px; }
+.seg button { flex: 1; border: 0; background: transparent; font-size: 12.5px; font-weight: 600; color: #536268; padding: 7px 4px; border-radius: 6px; cursor: pointer; transition: .15s; }
+.seg button.on { background: #fff; color: #176e6e; box-shadow: 0 1px 3px rgba(22, 36, 42, .05); }
+.seg button:disabled { color: #a8b2b6; cursor: not-allowed; opacity: .45; }
+.grades { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.grade { border: 1px solid #e3e9e9; border-radius: 9px; background: #fff; cursor: pointer; padding: 8px 4px 6px; text-align: center; transition: .15s; position: relative; overflow: hidden; }
+.grade .num { font-size: 17px; font-weight: 700; color: #16242a; line-height: 1; }
+.grade .cn { font-size: 10px; color: #7c8a90; margin-top: 2px; font-weight: 600; }
+.grade:hover { border-color: #2ba3a3; }
+.grade.on { border-color: #1e8a8a; background: linear-gradient(180deg, #f0faf9, #fff); }
+.grade.on .num { color: #176e6e; }
+.grade.on::before { content: ''; position: absolute; inset: 0 0 auto 0; height: 3px; background: #1e8a8a; }
+.grade.dim { opacity: .32; pointer-events: none; filter: grayscale(.4); }
+.zk { display: flex; gap: 6px; margin-top: 7px; flex-wrap: wrap; }
+.zk .chip { flex: 1; justify-content: center; }
+.stage-empty { margin-top: 8px; font-size: 11.5px; color: #a8b2b6; text-align: center; padding: 6px; }
+.chip { display: inline-flex; align-items: center; justify-content: center; gap: 4px; font-size: 11.5px; font-weight: 600; color: #536268; background: #fff; border: 1px solid #e3e9e9; padding: 5px 11px; border-radius: 999px; cursor: pointer; transition: .15s; user-select: none; }
+.chip:hover { border-color: #2ba3a3; color: #176e6e; }
+.chip.on { background: #1e8a8a; border-color: #1e8a8a; color: #fff; }
+.chip.dim { opacity: .35; pointer-events: none; }
+.ptype { display: flex; flex-wrap: wrap; gap: 6px; }
+.ptype .chip.on { background: #e6f2f2; border-color: #1e8a8a; color: #176e6e; }
+.divln { height: 1px; background: #eef2f2; margin: 4px 0 10px; }
+.search-mini { padding: 0 1px; }
 
-.sidebar-filter {
-  width: 100%;
-}
-
-.tree-wrap {
-  flex: 1;
-  overflow-y: auto;
-  padding-top: 4px;
-}
-
-:deep(.el-tree-node__content) {
-  height: 32px;
-  font-size: 13px;
-}
-
-:deep(.el-tree-node.is-current > .el-tree-node__content) {
-  /* DESIGN §3.2 青系：teal-50 底 + teal-600 字（替换 EP 默认蓝 #ecf5ff/#409eff） */
-  background-color: #E6F2F2;
-  color: #1E8A8A;
-}
-
-/* ── 中间主区 ─────────────────────────────── */
-.paper-main {
-  flex: 1;
-  height: 100%;
-  padding: 16px 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-width: 0;
-  overflow: hidden; /* 自身不滚，滚动交给内部 .paper-list */
-}
-
-.search-bar {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  flex-shrink: 0; /* 顶部搜索固定，不随列表滚走 */
-}
-
-.search-input {
-  width: 260px;
-}
-
-.search-btn {
-  padding: 0 18px;
-}
-
-/* ── 卷列表（唯一滚动区，对齐题库：左侧/搜索固定，只有列表滚） ── */
-.paper-list {
-  flex: 1;
-  background: #ffffff;
-  border-radius: 4px;
-  min-height: 0;
-  overflow-y: auto;
-}
-
-.paper-card {
-  padding: 16px 20px;
-  border-bottom: 1px solid #ebeef5;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  background: #ffffff;
-  transition: background 0.15s ease;
-}
-
-.paper-card:last-child {
-  border-bottom: none;
-}
-
-.paper-card:hover {
-  background: #fafcff;
-}
-
-.paper-card-row1 {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.paper-card-title-area {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 1;
-  min-width: 0;
-}
-
-.paper-star {
-  font-size: 16px;
-  color: #c0c4cc;
-  cursor: pointer;
-  transition: color 0.15s ease;
-}
-
-.paper-star:hover {
-  color: #1E8A8A;
-}
-
-.paper-name {
-  font-size: 14px;
-  font-weight: 600;
-  color: #1E8A8A;
-  cursor: pointer;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.paper-name:hover {
-  text-decoration: underline;
-}
-
-.paper-card-actions {
-  display: flex;
-  gap: 16px;
-  flex-shrink: 0;
-}
-
-.paper-card-row2 {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 16px;
-  color: #606266;
-  font-size: 13px;
-}
-
-.paper-field {
-  display: flex;
-  align-items: center;
-}
-
-.paper-field-label {
-  color: #909399;
-}
-
-.paper-field-colon {
-  margin-right: 8px;
-  margin-left: 0;
-  color: #909399;
-}
-
-.paper-field-value {
-  color: #303133;
-}
-
-/* ── 分页器 ───────────────────────────────── */
-.pagination-wrap {
-  flex-shrink: 0; /* 分页固定底部，不随列表滚 */
-  display: flex;
-  justify-content: flex-start;
-  padding: 12px 0;
-  background: #ffffff;
-  border-radius: 4px;
-  padding-left: 20px;
-}
+/* ── 右侧内容区 ───────────────────────────── */
+.paper-main { flex: 1; height: 100%; padding: 2px 4px 2px 0; display: flex; flex-direction: column; gap: 12px; min-width: 0; overflow: hidden; }
+.search-bar { display: flex; gap: 10px; align-items: center; flex-shrink: 0; }
+.search-input { width: 260px; }
+.search-btn { padding: 0 18px; }
+.crumbbar { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: #7c8a90; flex-shrink: 0; flex-wrap: wrap; }
+.crumbbar .pill { background: #e6f2f2; color: #176e6e; font-weight: 700; padding: 3px 10px; border-radius: 999px; }
+.crumbbar .seg-crumb { display: inline-flex; align-items: center; gap: 6px; }
+.crumbbar .sep { color: #cbd4d6; }
+.paper-list { flex: 1; background: #fff; border-radius: 10px; border: 1px solid #eef1f1; min-height: 0; overflow-y: auto; }
+.paper-card { padding: 16px 20px; border-bottom: 1px solid #ebeef5; display: flex; flex-direction: column; gap: 12px; background: #fff; transition: background .15s ease; }
+.paper-card:last-child { border-bottom: none; }
+.paper-card:hover { background: #fafcfc; }
+.paper-card-row1 { display: flex; justify-content: space-between; align-items: center; }
+.paper-card-title-area { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+.paper-star { font-size: 16px; color: #c0c4cc; cursor: pointer; transition: color .15s ease; }
+.paper-star:hover { color: #1e8a8a; }
+.paper-name { font-size: 14px; font-weight: 600; color: #176e6e; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.paper-name:hover { text-decoration: underline; }
+.paper-card-actions { display: flex; gap: 16px; flex-shrink: 0; }
+.paper-card-row2 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; color: #606266; font-size: 13px; }
+.paper-field { display: flex; align-items: center; }
+.paper-field-label { color: #909399; }
+.paper-field-colon { margin-right: 8px; color: #909399; }
+.paper-field-value { color: #303133; }
+.pagination-wrap { flex-shrink: 0; display: flex; justify-content: flex-start; padding: 12px 0 12px 8px; background: #fff; border-radius: 10px; border: 1px solid #eef1f1; }
 </style>

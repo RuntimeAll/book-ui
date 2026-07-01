@@ -16,6 +16,13 @@ export interface PaperTreeNode {
   value: string               // = id
   level: number | null        // misikt 没填，固定 null
   nodeDataSum: number | null  // misikt 没填，固定 null
+  // ── 结构化维度（2026-07-01 字典化，语义下沉每节点；字典码，配 useDictStore 渲染，不再解析 title）──
+  subject?: number | null     // biz_edu_subject
+  stage?: number | null       // biz_edu_stage
+  grade?: number | null       // biz_edu_grade（中考/资料库=null）
+  volume?: number | null      // biz_edu_volume（九年级/中考=null）
+  paperType?: number | null   // biz_paper_type
+  nodeKind?: string | null    // root/grade/ptype/exam/chapter/year/misc
   children?: PaperTreeNode[]  // 叶节点不返该字段
 }
 

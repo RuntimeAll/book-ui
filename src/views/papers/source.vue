@@ -25,6 +25,8 @@ import PaperSourceCard from './components/PaperSourceCard.vue'
 import AddFromBasketDialog from './components/AddFromBasketDialog.vue'
 import QuestionContent from '@/components/business/QuestionContent/index.vue'
 import QuestionBlockRender from '@/components/business/QuestionBlockRender/index.vue'
+import PaperAnalysisPanel from './components/PaperAnalysisPanel.vue'
+import type { WorkbenchPaper } from '@/composables/useBasketWorkbench'
 import { parseBlockDoc } from '@/utils/blockSchema'
 import { useDictStore, DICT_QUESTION_TYPE } from '@/store/dict'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
@@ -202,6 +204,19 @@ async function handleBasketToggle(q: PaperSourceQuestion) {
     await basket.add(q)
   }
 }
+
+// ── 试卷分析侧栏（PRD-C-1000：复用组卷工作台同款 PaperAnalysisPanel，单卷传入）──
+// 把本卷包成单元素 WorkbenchPaper[]：questions=全卷题、remark=AI 命题分析；
+// 面板 papers.length===1 即展示 AI 命题分析卡 + 难度/题型/章节分布等（与页2一致，零重复造）。
+const analysisPapers = computed<WorkbenchPaper[]>(() => {
+  if (!detail.value) return []
+  return [{
+    paperId: String(detail.value.paperId ?? paperId.value),
+    paperName: detail.value.paperName ?? '试卷',
+    questions: allQuestions.value,
+    remark: detail.value.remark ?? null,
+  }]
+})
 
 // ── 草稿纸 ──────────────────────────────────────────────────
 const sketchVisible = ref(false)
@@ -515,45 +530,58 @@ watch(paperId, async () => {
       </div>
 
       <div v-else class="question-list">
-        <!-- ══ 查看态：卷头 + 大题分组（PRD-A-006 view 分支）══ -->
+        <!-- ══ 查看态：左题目 + 右试卷分析侧栏（PRD-C-1000 两栏）══ -->
         <template v-if="mode === 'view'">
-        <!-- ══ 卷头区 ══ -->
-        <div class="paper-header">
-          <h2 class="paper-title">{{ detail.paperName }}</h2>
-          <div class="paper-meta">
-            <span v-if="detail.examYear" class="meta-chip meta-chip--year">{{ detail.examYear }}年</span>
-            <span class="meta-chip">总分 <strong>{{ detail.score }}</strong></span>
-            <span class="meta-chip">时长 <strong>{{ detail.suggestTime }}</strong> 分钟</span>
-            <span class="meta-chip">共 <strong>{{ detail.questionCount }}</strong> 题</span>
+        <div class="view-layout">
+          <!-- 左栏：卷头 + 大题分组 -->
+          <div class="view-main">
+            <!-- ══ 卷头区 ══ -->
+            <div class="paper-header">
+              <h2 class="paper-title">{{ detail.paperName }}</h2>
+              <div class="paper-meta">
+                <span v-if="detail.examYear" class="meta-chip meta-chip--year">{{ detail.examYear }}年</span>
+                <span class="meta-chip">总分 <strong>{{ detail.score }}</strong></span>
+                <span class="meta-chip">时长 <strong>{{ detail.suggestTime }}</strong> 分钟</span>
+                <span class="meta-chip">共 <strong>{{ detail.questionCount }}</strong> 题</span>
+              </div>
+            </div>
+
+            <!-- ══ 大题分组区 ══ -->
+            <section
+              v-for="(section, sIdx) in detail.sections"
+              :key="section.sectionId"
+              class="paper-section"
+            >
+              <!-- 大题标题 -->
+              <h3 class="section-title">
+                {{ sectionLabel(sIdx) }}、{{ section.title }}
+                <span class="section-sub">（共 {{ section.questions?.length ?? 0 }} 题，共 {{ sectionTotalScore(section) }} 分）</span>
+              </h3>
+
+              <!-- 题目卡片 — misikt 风格：顶 meta + 题干 + 底 meta
+                   PRD-A-010 T3：抽 PaperSourceCard 子组件，basket 状态 props 传入、动作 emit -->
+              <PaperSourceCard
+                v-for="q in section.questions"
+                :key="q.id"
+                :q="q"
+                :in-basket="basket.basketIds.value.has(q.id)"
+                :basket-loading="basket.isLoading(q.id)"
+                @draft="handleDraft"
+                @favorite="handleFavorite"
+                @basket-toggle="handleBasketToggle"
+                @detail="handleDetail"
+              />
+            </section>
           </div>
+
+          <!-- 右栏：试卷分析（复用组卷工作台同款面板，单卷传入 = AI 命题分析 + 难度/题型/章节分布）-->
+          <aside class="view-aside">
+            <div class="aside-head">试卷分析</div>
+            <div class="aside-panel">
+              <PaperAnalysisPanel :questions="allQuestions" :papers="analysisPapers" />
+            </div>
+          </aside>
         </div>
-
-        <!-- ══ 大题分组区 ══ -->
-        <section
-          v-for="(section, sIdx) in detail.sections"
-          :key="section.sectionId"
-          class="paper-section"
-        >
-          <!-- 大题标题 -->
-          <h3 class="section-title">
-            {{ sectionLabel(sIdx) }}、{{ section.title }}
-            <span class="section-sub">（共 {{ section.questions?.length ?? 0 }} 题，共 {{ sectionTotalScore(section) }} 分）</span>
-          </h3>
-
-          <!-- 题目卡片 — misikt 风格：顶 meta + 题干 + 底 meta
-               PRD-A-010 T3：抽 PaperSourceCard 子组件，basket 状态 props 传入、动作 emit -->
-          <PaperSourceCard
-            v-for="q in section.questions"
-            :key="q.id"
-            :q="q"
-            :in-basket="basket.basketIds.value.has(q.id)"
-            :basket-loading="basket.isLoading(q.id)"
-            @draft="handleDraft"
-            @favorite="handleFavorite"
-            @basket-toggle="handleBasketToggle"
-            @detail="handleDetail"
-          />
-        </section>
         </template>
 
         <!-- ══ 编辑态：平铺题列表（PRD-A-006 edit 分支，复用查看题卡骨架 .source-question-card）══ -->
@@ -731,10 +759,57 @@ watch(paperId, async () => {
 /* ── 内容区 ── */
 .source-body {
   padding: 16px 24px;
-  max-width: 1000px;
+  max-width: 1320px;
   margin: 0 auto;
   width: 100%;
   box-sizing: border-box;
+}
+
+/* ── 查看态两栏：左题目 + 右试卷分析侧栏 ── */
+.view-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.view-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.view-aside {
+  flex: 0 0 360px;
+  width: 360px;
+  position: sticky;
+  top: 76px;
+  align-self: flex-start;
+}
+
+.aside-head {
+  font-size: 15px;
+  font-weight: 700;
+  color: #1d2129;
+  padding: 0 4px 10px;
+}
+
+.aside-panel {
+  background: #fff;
+  border: 1px solid #f2f3f5;
+  border-radius: 10px;
+  max-height: calc(100vh - 110px);
+  overflow-y: auto;
+}
+
+/* 窄屏回落单栏（侧栏移到题目下方、不再 sticky）*/
+@media (max-width: 1100px) {
+  .view-layout {
+    flex-direction: column;
+  }
+  .view-aside {
+    position: static;
+    width: 100%;
+    flex-basis: auto;
+  }
 }
 
 .source-loading,
