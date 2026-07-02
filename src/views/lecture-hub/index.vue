@@ -55,19 +55,15 @@ const readonlyConfig = {
   locale: 'zh-CN',
 }
 
-/** 等编辑器就绪后回调（切课时可反复灌内容，非一次性） */
-function whenEditor(cb: (editor: ReturnType<InstanceType<typeof UmoEditor>['useEditor']>) => void, tries = 0) {
+/** 灌内容（切课时可反复调，非一次性）；编辑器未就绪则退避重试。沿用旧 kg-lecture 的内联取 editor 模式。 */
+function applyDoc(tries = 0) {
   const editor = editorRef.value?.useEditor?.()
-  if (editor) cb(editor)
-  else if (tries < 20) setTimeout(() => whenEditor(cb, tries + 1), 120)
-}
-
-function applyDoc() {
-  whenEditor((editor) => {
-    if (!editor) return
-    editor.commands.setContent((docJson.value ?? { type: 'doc', content: [] }) as Parameters<typeof editor.commands.setContent>[0])
-    scheduleToc()
-  })
+  if (!editor) {
+    if (tries < 20) setTimeout(() => applyDoc(tries + 1), 120)
+    return
+  }
+  editor.commands.setContent((docJson.value ?? { type: 'doc', content: [] }) as Parameters<typeof editor.commands.setContent>[0])
+  scheduleToc()
 }
 
 // ── 加载 ───────────────────────────────────────────────────────────
