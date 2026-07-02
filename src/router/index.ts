@@ -189,11 +189,10 @@ const router = createRouter({
           name: 'GeoBoardGallery',
           component: () => import('@/views/geo-board/gallery.vue'),
         },
-        // 知识点讲义查看页（PRD-C-205：Umo readOnly 渲染 docJson）
+        // PRD-C-207 退役：旧「讲义查看」单课时页 → 重定向到新讲义浏览器（兜老书签）
         {
           path: '/kg-lecture',
-          name: 'KgLecture',
-          component: () => import('@/views/kg-lecture/index.vue'),
+          redirect: '/lecture-hub',
         },
         // PRD-C-205 — 课件编辑页（超管/备课后台，UmoEditor readOnly:false）
         {
