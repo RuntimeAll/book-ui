@@ -28,6 +28,7 @@ const answerBlock = ref<QuestionBlockDoc | null>(null)
 const analyzeBlock = ref<QuestionBlockDoc | null>(null)
 const loading = ref(false)
 const errorMsg = ref<string | null>(null)
+const answerOpen = ref(false)
 const explainOpen = ref(false)
 
 // 题型/难度 meta 与题库卡片同源：字典 SSOT + el-rate 4 星（QuestionCard 同款）
@@ -114,11 +115,17 @@ watch(() => props.node.attrs.qid, load)
       <QuestionBlockRender v-if="stemBlock" class="kg-example-stem" :doc="stemBlock" />
       <div v-else class="kg-example-stem" v-safe-html="question.stem" />
 
-      <!-- 答案（蓝色，可折叠暂不实现，直接展示） -->
-      <div v-if="answerBlock || question.answer" class="kg-example-answer">
-        <span class="kg-example-answer-label">答案：</span>
-        <QuestionBlockRender v-if="answerBlock" class="kg-example-answer-text" :doc="answerBlock" />
-        <span v-else class="kg-example-answer-text" v-safe-html="question.answer" />
+      <!-- 答案（与详解一致：默认收起，点击展开） -->
+      <div v-if="answerBlock || question.answer" class="kg-example-explain-wrap">
+        <button class="kg-example-explain-toggle" @click.stop="answerOpen = !answerOpen">
+          <span>{{ answerOpen ? '▲' : '▼' }}</span>
+          <span>{{ answerOpen ? '收起答案' : '展开答案' }}</span>
+        </button>
+        <div v-if="answerOpen" class="kg-example-answer">
+          <span class="kg-example-answer-label">答案：</span>
+          <QuestionBlockRender v-if="answerBlock" class="kg-example-answer-text" :doc="answerBlock" />
+          <span v-else class="kg-example-answer-text" v-safe-html="question.answer" />
+        </div>
       </div>
 
       <!-- 详解（灰底，可折叠） -->
