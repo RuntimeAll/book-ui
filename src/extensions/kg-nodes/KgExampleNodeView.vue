@@ -8,12 +8,13 @@
 -->
 <script setup lang="ts">
 import { NodeViewWrapper } from '@tiptap/vue-3'
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { getKgQuestions } from '@/api/kg/doc'
 import type { KgQuestion } from '@/api/kg/doc'
-import { questionListByIds } from '@/api/question/index'
+import { questionListByIds, type QuestionDetail } from '@/api/question/index'
 import QuestionBlockRender from '@/components/business/QuestionBlockRender/index.vue'
 import { parseBlockDoc, type QuestionBlockDoc } from '@/utils/blockSchema'
+import { useDictStore, DICT_QUESTION_TYPE } from '@/store/dict'
 
 const props = defineProps<{
   node: { attrs: { qid: string; knowledgeId: string } }
@@ -21,6 +22,7 @@ const props = defineProps<{
 }>()
 
 const question = ref<KgQuestion | null>(null)
+const detail = ref<QuestionDetail | null>(null)
 const stemBlock = ref<QuestionBlockDoc | null>(null)
 const answerBlock = ref<QuestionBlockDoc | null>(null)
 const analyzeBlock = ref<QuestionBlockDoc | null>(null)
@@ -28,7 +30,23 @@ const loading = ref(false)
 const errorMsg = ref<string | null>(null)
 const explainOpen = ref(false)
 
-onMounted(async () => {
+// 题型/难度 meta 与题库卡片同源：字典 SSOT + el-rate 4 星（QuestionCard 同款）
+const dict = useDictStore()
+dict.load(DICT_QUESTION_TYPE)
+const typeLabel = computed(() => {
+  const t = detail.value?.questionType
+  return t != null ? dict.label(DICT_QUESTION_TYPE, t) || `题型${t}` : ''
+})
+const typeTag = computed(
+  () =>
+    dict.tagType(DICT_QUESTION_TYPE, detail.value?.questionType ?? '', 'info') as
+      | 'success'
+      | 'warning'
+      | 'info'
+      | 'primary',
+)
+
+async function load() {
   const qid = props.node.attrs.qid
   if (!qid) return
   loading.value = true
@@ -43,16 +61,20 @@ onMounted(async () => {
     if (!question.value) {
       errorMsg.value = `题目未找到（qid=${qid}）`
     }
-    const detail = details[0]
-    stemBlock.value = parseBlockDoc(detail?.blockJson)
-    answerBlock.value = parseBlockDoc(detail?.answerBlockJson)
-    analyzeBlock.value = parseBlockDoc(detail?.analyzeBlockJson)
+    detail.value = details[0] ?? null
+    stemBlock.value = parseBlockDoc(detail.value?.blockJson)
+    answerBlock.value = parseBlockDoc(detail.value?.answerBlockJson)
+    analyzeBlock.value = parseBlockDoc(detail.value?.analyzeBlockJson)
   } catch (e: unknown) {
     errorMsg.value = e instanceof Error ? e.message : '题目加载失败'
   } finally {
     loading.value = false
   }
-})
+}
+
+onMounted(load)
+// 原子节点 attrs 变更（撤销/重做/替换 qid）时 Vue 复用同一 NodeView 实例，须跟拉新题
+watch(() => props.node.attrs.qid, load)
 </script>
 
 <template>
@@ -76,10 +98,15 @@ onMounted(async () => {
 
     <!-- 渲染题目 -->
     <div v-else-if="question" class="kg-example-content">
-      <!-- 标题行 -->
+      <!-- 标题行（题型/难度与题库卡片同源同款） -->
       <div class="kg-example-title-row">
         <span class="kg-example-badge">例题</span>
-        <span v-if="question.type" class="kg-example-type">{{ question.type }}</span>
+        <el-tag v-if="typeLabel" size="small" :type="typeTag" disable-transitions>{{ typeLabel }}</el-tag>
+        <span v-else-if="question.type" class="kg-example-type">{{ question.type }}</span>
+        <template v-if="detail?.difficult">
+          <span class="kg-example-meta-sep">难度:</span>
+          <el-rate :model-value="detail.difficult" :max="4" disabled class="kg-example-rate" />
+        </template>
         <span v-if="question.source" class="kg-example-source">{{ question.source }}</span>
       </div>
 
@@ -206,6 +233,22 @@ onMounted(async () => {
   font-size: 12px;
   color: #64748b;
   font-style: italic;
+}
+
+/* 难度（QuestionCard meta 行同款 4 星） */
+.kg-example-meta-sep {
+  font-size: 12px;
+  color: #94a3b8;
+  white-space: nowrap;
+}
+
+.kg-example-rate {
+  height: auto;
+}
+
+.kg-example-rate :deep(.el-rate__icon) {
+  font-size: 14px;
+  margin-right: 1px;
 }
 
 /* 题干 */
