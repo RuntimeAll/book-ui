@@ -24,7 +24,11 @@ const props = withDefaults(defineProps<{
   mine?: boolean
   /** 默认是否落到一本教材并过滤（题库=true / 我的题库=false 默认全部） */
   autoSelect?: boolean
-}>(), { mine: false, autoSelect: true })
+  /** 讲义模式装饰（PRD-C-207）：课时 subjectId → {badge?}；命中则树上显徽标（如"1版"）。题库页不传=不装饰。 */
+  lessonMeta?: Record<string, { badge?: string }>
+  /** 讲义模式：未挂讲义的课时(L4=12位id)置灰，看得到全书结构+哪些还没做（D4） */
+  dimUncovered?: boolean
+}>(), { mine: false, autoSelect: true, dimUncovered: false })
 
 /** 选中节点 id（教材根 or 章节）；null = 全部（不按章节过滤） */
 const emit = defineEmits<{ (e: 'select', subjectId: string | null): void }>()
@@ -295,7 +299,14 @@ onMounted(async () => {
           :expand-on-click-node="false"
           :filter-node-method="filterNode"
           @node-click="onChapterClick"
-        />
+        >
+          <template #default="{ data }">
+            <span class="stree-label" :class="{ dim: dimUncovered && data.id && String(data.id).length === 12 && !lessonMeta?.[data.id] }">
+              <span class="stree-text">{{ data.title }}</span>
+              <span v-if="lessonMeta?.[data.id]?.badge" class="stree-badge">{{ lessonMeta[data.id].badge }}</span>
+            </span>
+          </template>
+        </el-tree>
         <div v-else class="chap-empty">
           {{ atAll ? '展开上方选择教材，可按章节筛选' : '该教材暂无章节' }}
         </div>
@@ -362,4 +373,10 @@ onMounted(async () => {
 .search { margin: 0 10px 6px; flex-shrink: 0; }
 .chap-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 10px; }
 .chap-empty { padding: 22px 12px; text-align: center; color: #a8b2b6; font-size: 12px; line-height: 1.6; }
+
+/* 讲义模式：课时徽标 + 未覆盖置灰（题库页不传 lessonMeta/dimUncovered 时无影响） */
+.stree-label { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.stree-label.dim { opacity: .42; }
+.stree-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stree-badge { flex-shrink: 0; font-size: 9.5px; font-weight: 700; color: #176e6e; background: #e6f2f2; padding: 0 6px; border-radius: 999px; line-height: 15px; }
 </style>

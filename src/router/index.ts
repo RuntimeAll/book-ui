@@ -189,12 +189,23 @@ const router = createRouter({
           name: 'GeoBoardGallery',
           component: () => import('@/views/geo-board/gallery.vue'),
         },
-        // 知识点讲义查看页（教辅讲义 1:1 还原：图文/表格/例题/习题/模块练习）
-        // GET /teacher/kg/course/:courseId；courseId 先写死 901001002001；USE_MOCK 开关控制真假数据。
+        // 知识点讲义查看页（PRD-C-205：Umo readOnly 渲染 docJson）
         {
           path: '/kg-lecture',
           name: 'KgLecture',
           component: () => import('@/views/kg-lecture/index.vue'),
+        },
+        // PRD-C-205 — 课件编辑页（超管/备课后台，UmoEditor readOnly:false）
+        {
+          path: '/kg-lecture-edit',
+          name: 'KgLectureEdit',
+          component: () => import('@/views/kg-lecture-edit/index.vue'),
+        },
+        // 🔴 PRD-C-207 — 讲义浏览器（片段汇聚 + 三栏只读；替代 /kg-lecture 入口）
+        {
+          path: '/lecture-hub',
+          name: 'LectureHub',
+          component: () => import('@/views/lecture-hub/index.vue'),
         },
       ],
     },
