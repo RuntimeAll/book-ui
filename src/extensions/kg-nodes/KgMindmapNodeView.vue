@@ -1,19 +1,20 @@
 <!--
   kgMindmap 自定义节点的 Vue NodeView。
   data attr = JSON.stringify(root)，root 结构：{ text, color?, detail?, children[] }
-  渲染用 CSS 缩进树，不引重型思维导图库。
+  用 simple-mind-map 只读渲染横向逻辑结构图（对齐崔崔原版的横向思维导图观感）。
+  - 内联：固定预览（fit 看全貌，pointer-events:none 不响应交互）
+  - 全屏：Teleport 到 body 的全屏层，可缩放/拖拽/滚动查看细节
 -->
 <script setup lang="ts">
 import { NodeViewWrapper } from '@tiptap/vue-3'
-import { computed } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
+import MindMap from 'simple-mind-map'
 
-// Tiptap VueNodeViewRenderer 注入的标准 props
 const props = defineProps<{
   node: { attrs: { data: string } }
   selected: boolean
 }>()
 
-// 思维导图节点树（契约 data 字段内的树结构）
 interface MindmapTreeNode {
   text: string
   color?: string
@@ -30,6 +31,112 @@ const tree = computed<MindmapTreeNode | null>(() => {
     return null
   }
 })
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+// 我方树 → simple-mind-map 数据（detail 作第二行灰字；一级分支上色）
+function toSmm(n: MindmapTreeNode, depth = 0): unknown {
+  const lines = [`<span>${escapeHtml(n.text)}</span>`]
+  if (n.detail) {
+    lines.push(`<span style="font-size:12px;color:#94a3b8">${escapeHtml(n.detail)}</span>`)
+  }
+  const data: Record<string, unknown> = {
+    text: `<div style="text-align:left">${lines.join('<br/>')}</div>`,
+    richText: true,
+  }
+  if (depth === 1) {
+    data.fillColor = n.color || '#64748b'
+    data.color = '#ffffff'
+    data.borderColor = n.color || '#64748b'
+  }
+  return {
+    data,
+    children: (n.children ?? []).map((c) => toSmm(c, depth + 1)),
+  }
+}
+
+const THEME_CONFIG = {
+  backgroundColor: '#ffffff',
+  lineWidth: 2,
+  lineColor: '#cbd5e1',
+  root: { fillColor: '#334155', color: '#ffffff', fontSize: 15, borderRadius: 8, paddingX: 14, paddingY: 10 },
+  second: { borderRadius: 8, fontSize: 14, paddingX: 12, paddingY: 8 },
+  node: { fontSize: 13, paddingX: 8, paddingY: 5, borderRadius: 4, color: '#1e293b' },
+}
+
+function buildMindMap(el: HTMLElement): InstanceType<typeof MindMap> {
+  const mm = new MindMap({
+    el,
+    data: toSmm(tree.value as MindmapTreeNode) as never,
+    readonly: true,
+    layout: 'logicalStructure',
+    theme: 'freshGreen',
+    initRootNodePosition: ['left', 'center'],
+    themeConfig: THEME_CONFIG,
+    mousewheelAction: 'zoom',
+    enableFreeDrag: false,
+  })
+  mm.on('node_tree_render_end', () => {
+    try {
+      mm.view.fit()
+    } catch {
+      /* fit 偶发在尺寸未定时抛错，忽略 */
+    }
+  })
+  return mm
+}
+
+// ── 内联实例（固定预览） ──
+const containerRef = ref<HTMLDivElement | null>(null)
+let mindMap: InstanceType<typeof MindMap> | null = null
+
+function renderInline() {
+  if (!containerRef.value || !tree.value) return
+  if (mindMap) {
+    mindMap.destroy()
+    mindMap = null
+  }
+  mindMap = buildMindMap(containerRef.value)
+}
+
+// ── 全屏实例（可交互） ──
+const fullscreen = ref(false)
+const fsContainerRef = ref<HTMLDivElement | null>(null)
+let fsMindMap: InstanceType<typeof MindMap> | null = null
+
+watch(fullscreen, (open) => {
+  if (open) {
+    nextTick(() => {
+      if (fsContainerRef.value && tree.value) {
+        fsMindMap = buildMindMap(fsContainerRef.value)
+      }
+    })
+  } else if (fsMindMap) {
+    fsMindMap.destroy()
+    fsMindMap = null
+  }
+})
+
+function onKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape' && fullscreen.value) fullscreen.value = false
+}
+
+onMounted(() => {
+  nextTick(renderInline)
+  window.addEventListener('keydown', onKeydown)
+})
+
+watch(() => props.node.attrs.data, () => nextTick(renderInline))
+
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKeydown)
+  mindMap?.destroy()
+  fsMindMap?.destroy()
+  mindMap = null
+  fsMindMap = null
+})
 </script>
 
 <template>
@@ -41,56 +148,31 @@ const tree = computed<MindmapTreeNode | null>(() => {
     <div class="kg-mindmap-header">
       <span class="kg-mindmap-icon">🗺</span>
       <span class="kg-mindmap-title">思维导图</span>
+      <button
+        v-if="tree"
+        class="kg-mindmap-fs-btn"
+        type="button"
+        @click.stop="fullscreen = true"
+      >
+        ⛶ 全屏查看
+      </button>
     </div>
-    <!-- 横向思维导图：中心节点在左，彩色分支向右展开（对齐崔崔原版布局） -->
-    <div v-if="tree" class="mm-scroll">
-      <div class="mm-map">
-        <!-- 中心根节点 -->
-        <div class="mm-root">{{ tree.text }}</div>
 
-        <!-- 一级分支列 -->
-        <div class="mm-branches">
-          <div
-            v-for="(branch, bi) in (tree.children ?? [])"
-            :key="bi"
-            class="mm-branch"
-            :style="{ '--c': branch.color || '#64748b' }"
-          >
-            <!-- 一级：彩色标签 -->
-            <div class="mm-branch-label">
-              {{ branch.text }}
-              <span v-if="branch.detail" class="mm-branch-detail">{{ branch.detail }}</span>
-            </div>
-
-            <!-- 二级：带说明的节点卡 -->
-            <div v-if="(branch.children ?? []).length > 0" class="mm-leaves">
-              <div
-                v-for="(leaf, li) in (branch.children ?? [])"
-                :key="li"
-                class="mm-leaf"
-              >
-                <div class="mm-leaf-head">
-                  <span class="mm-leaf-title">{{ leaf.text }}</span>
-                  <span v-if="leaf.detail" class="mm-leaf-detail">{{ leaf.detail }}</span>
-                </div>
-                <!-- 三级：细分要点 -->
-                <div v-if="(leaf.children ?? []).length > 0" class="mm-subs">
-                  <div
-                    v-for="(sub, si) in (leaf.children ?? [])"
-                    :key="si"
-                    class="mm-sub"
-                  >
-                    <span class="mm-sub-title">{{ sub.text }}</span>
-                    <span v-if="sub.detail" class="mm-sub-detail">{{ sub.detail }}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+    <!-- 内联固定预览：pointer-events:none，纯展示不响应交互 -->
+    <div v-if="tree" ref="containerRef" class="kg-mindmap-canvas" />
     <div v-else class="mm-empty">（思维导图数据为空）</div>
+
+    <!-- 全屏层：Teleport 到 body，避开编辑器 overflow 裁剪；内部可缩放/拖拽/滚动 -->
+    <Teleport to="body">
+      <div v-if="fullscreen" class="mm-fullscreen" @click.self="fullscreen = false">
+        <div class="mm-fs-bar">
+          <span class="mm-fs-title">🗺 思维导图</span>
+          <span class="mm-fs-hint">滚轮缩放 · 拖拽平移</span>
+          <button class="mm-fs-close" type="button" @click="fullscreen = false">✕ 关闭</button>
+        </div>
+        <div ref="fsContainerRef" class="mm-fs-canvas" />
+      </div>
+    </Teleport>
   </NodeViewWrapper>
 </template>
 
@@ -125,192 +207,93 @@ const tree = computed<MindmapTreeNode | null>(() => {
 .kg-mindmap-icon { font-size: 15px; }
 .kg-mindmap-title { letter-spacing: 0.5px; }
 
-/* ── 横向思维导图 ── */
-.mm-scroll {
-  overflow-x: auto;
-  padding: 8px 4px;
-}
-
-.mm-map {
-  display: flex;
-  align-items: center;
-  min-width: min-content;
-  gap: 0;
-}
-
-/* 中心根节点 */
-.mm-root {
-  flex-shrink: 0;
-  font-size: 15px;
-  font-weight: 800;
-  color: #fff;
-  background: linear-gradient(135deg, #334155, #475569);
-  padding: 14px 16px;
-  border-radius: 10px;
-  max-width: 140px;
-  line-height: 1.4;
-  box-shadow: 0 2px 8px rgba(51, 65, 85, 0.25);
-}
-
-/* 根 → 分支列 的主干横线 */
-.mm-root::after {
-  content: '';
-  display: inline-block;
-}
-
-.mm-branches {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding-left: 28px;
-  position: relative;
-}
-
-/* 主干竖线（贯穿所有分支的连接干） */
-.mm-branches::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 24px;
-  bottom: 24px;
-  width: 2px;
-  background: #cbd5e1;
-}
-
-/* 一级分支行：标签 + 二级子节点 横向排 */
-.mm-branch {
-  display: flex;
-  align-items: center;
-  gap: 0;
-  position: relative;
-}
-
-/* 分支横连线（主干 → 标签） */
-.mm-branch::before {
-  content: '';
-  position: absolute;
-  left: -28px;
-  top: 50%;
-  width: 28px;
-  height: 2px;
-  background: var(--c);
-}
-
-/* 一级：彩色实心标签 */
-.mm-branch-label {
-  flex-shrink: 0;
-  align-self: center;
-  background: var(--c);
-  color: #fff;
-  font-size: 14px;
-  font-weight: 700;
-  padding: 8px 12px;
-  border-radius: 8px;
-  max-width: 130px;
-  line-height: 1.35;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  box-shadow: 0 1px 4px color-mix(in srgb, var(--c) 40%, transparent);
-}
-
-.mm-branch-detail {
-  font-size: 11px;
-  font-weight: 400;
-  opacity: 0.9;
-}
-
-/* 二级节点列 */
-.mm-leaves {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding-left: 20px;
-  position: relative;
-}
-
-/* 二级列的连接干（分支色） */
-.mm-leaves::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 12px;
-  bottom: 12px;
-  width: 2px;
-  background: color-mix(in srgb, var(--c) 45%, transparent);
-}
-
-/* 二级节点卡 */
-.mm-leaf {
-  position: relative;
-  padding-left: 12px;
-}
-
-.mm-leaf::before {
-  content: '';
-  position: absolute;
-  left: -20px;
-  top: 14px;
-  width: 20px;
-  height: 2px;
-  background: color-mix(in srgb, var(--c) 45%, transparent);
-}
-
-.mm-leaf-head {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  flex-wrap: wrap;
-  border-bottom: 1.5px solid color-mix(in srgb, var(--c) 30%, transparent);
-  padding-bottom: 2px;
-}
-
-.mm-leaf-title {
-  font-size: 13.5px;
-  font-weight: 700;
-  color: #1e293b;
-  white-space: nowrap;
-}
-
-.mm-leaf-detail {
-  font-size: 12.5px;
-  color: #475569;
-}
-
-/* 三级细分 */
-.mm-subs {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin: 3px 0 3px 10px;
-}
-
-.mm-sub {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
+.kg-mindmap-fs-btn {
+  margin-left: auto;
   font-size: 12px;
-}
-
-.mm-sub::before {
-  content: '›';
-  color: var(--c);
-  font-weight: 700;
-}
-
-.mm-sub-title {
   font-weight: 600;
-  color: #334155;
-  white-space: nowrap;
+  color: #2563eb;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
 }
 
-.mm-sub-detail {
-  color: #64748b;
+.kg-mindmap-fs-btn:hover {
+  background: #dbeafe;
+  border-color: #93c5fd;
+}
+
+/* 内联画布：固定预览，pointer-events:none 不响应交互（外面固定，看细节走全屏） */
+.kg-mindmap-canvas {
+  width: 100%;
+  height: 420px;
+  background: #ffffff;
+  border-radius: 8px;
+  overflow: hidden;
+  pointer-events: none;
 }
 
 .mm-empty {
   color: #94a3b8;
   font-size: 13px;
   font-style: italic;
+}
+
+/* ── 全屏层 ── */
+.mm-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  background: rgba(255, 255, 255, 0.98);
+  display: flex;
+  flex-direction: column;
+}
+
+.mm-fs-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  border-bottom: 1px solid #e2e8f0;
+  flex-shrink: 0;
+  background: #f8fafc;
+}
+
+.mm-fs-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.mm-fs-hint {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.mm-fs-close {
+  margin-left: auto;
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
+  background: #fff;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+
+.mm-fs-close:hover {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+}
+
+/* 全屏画布：撑满剩余空间，可缩放拖拽 */
+.mm-fs-canvas {
+  flex: 1;
+  min-height: 0;
+  background: #ffffff;
+  overflow: hidden;
 }
 </style>

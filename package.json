@@ -14,7 +14,10 @@
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",
     "@microsoft/fetch-event-source": "^2.0.1",
+    "@tiptap/core": "^3.20.0",
+    "@tiptap/vue-3": "^3.20.0",
     "@traptitech/markdown-it-katex": "^3.6.0",
+    "@umoteam/editor": "^10.2.1",
     "axios": "^1.9.0",
     "dompurify": "^3.4.8",
     "element-plus": "^2.14.0",
@@ -25,6 +28,7 @@
     "markdown-it": "^14.2.0",
     "mathjax": "3.2.2",
     "pinia": "^3.0.1",
+    "simple-mind-map": "0.14.0-fix.2",
     "sortablejs": "^1.15.7",
     "vue": "^3.5.34",
     "vue-router": "^4.5.1"
