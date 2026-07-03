@@ -1,6 +1,8 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 import AppLayout from '@/layout/AppLayout.vue'
 import { useUserStore } from '@/store/user'
+// PRD-C-211 — 管理中心权限 store（/getInfo 拉 permissions，v-hasPermi 与守卫共用）
+import { useUserStore as useAdminUserStore } from '@/store/modules/user'
 import { getCurrentUser } from '@/api/user'
 
 // ---------------------------------------------------------------------------
@@ -16,6 +18,8 @@ declare module 'vue-router' {
   interface RouteMeta {
     /** 允许访问该路由的角色 role_key 集合；省略 = 任意已登录用户可访问 */
     roles?: string[]
+    /** PRD-C-211 — RuoYi 权限串（管理中心子路由用，比对 /getInfo permissions） */
+    perms?: string[]
   }
 }
 
@@ -206,13 +210,31 @@ const router = createRouter({
           name: 'LectureHub',
           component: () => import('@/views/lecture-hub/index.vue'),
         },
-        // PRD-C-207 V9 — 管理中心（成员 / 讲义内容 / 邀请码占位）；页面级权限=superadmin/org_admin，
-        // 与导航项 roles 双保险（守卫拦未授权直达；导航过滤挡入口曝光）。
+        // PRD-C-211 — 系统管理中心（B 线 admin 系统管理直接移植）；壳=左菜单+右内容区。
+        // 页面级权限=superadmin/org_admin 双保险；子路由 meta.perms= RuoYi 权限串（守卫比对 /getInfo 拉回的 permissions）。
         {
           path: '/manage',
           name: 'ManageCenter',
           component: () => import('@/views/manage/index.vue'),
           meta: { roles: ['superadmin', 'org_admin'] },
+          redirect: '/manage/user',
+          children: [
+            { path: 'user', name: 'ManageUser', component: () => import('@/views/manage/system/user/index.vue'), meta: { perms: ['system:user:list'] } },
+            { path: 'user-auth/role/:userId', name: 'ManageUserAuthRole', component: () => import('@/views/manage/system/user/authRole.vue'), meta: { perms: ['system:user:edit'] } },
+            { path: 'role', name: 'ManageRole', component: () => import('@/views/manage/system/role/index.vue'), meta: { perms: ['system:role:list'] } },
+            { path: 'role-auth/user/:roleId', name: 'ManageRoleAuthUser', component: () => import('@/views/manage/system/role/authUser.vue'), meta: { perms: ['system:role:edit'] } },
+            { path: 'menu', name: 'ManageMenu', component: () => import('@/views/manage/system/menu/index.vue'), meta: { perms: ['system:menu:list'] } },
+            { path: 'dept', name: 'ManageDept', component: () => import('@/views/manage/system/dept/index.vue'), meta: { perms: ['system:dept:list'] } },
+            { path: 'post', name: 'ManagePost', component: () => import('@/views/manage/system/post/index.vue'), meta: { perms: ['system:post:list'] } },
+            { path: 'dict', name: 'ManageDict', component: () => import('@/views/manage/system/dict/index.vue'), meta: { perms: ['system:dict:list'] } },
+            { path: 'config', name: 'ManageConfig', component: () => import('@/views/manage/system/config/index.vue'), meta: { perms: ['system:config:list'] } },
+            { path: 'notice', name: 'ManageNotice', component: () => import('@/views/manage/system/notice/index.vue'), meta: { perms: ['system:notice:list'] } },
+            { path: 'operlog', name: 'ManageOperlog', component: () => import('@/views/manage/system/log/operlog.vue'), meta: { perms: ['monitor:operlog:list'] } },
+            { path: 'logininfor', name: 'ManageLogininfor', component: () => import('@/views/manage/system/log/logininfor.vue'), meta: { perms: ['monitor:logininfor:list'] } },
+            { path: 'oss', name: 'ManageOss', component: () => import('@/views/manage/system/oss/index.vue'), meta: { perms: ['system:oss:list'] } },
+            { path: 'oss-config', name: 'ManageOssConfig', component: () => import('@/views/manage/system/oss/config.vue'), meta: { perms: ['system:ossConfig:list'] } },
+            { path: 'client', name: 'ManageClient', component: () => import('@/views/manage/system/client/index.vue'), meta: { perms: ['system:client:list'] } },
+          ],
         },
       ],
     },
@@ -280,6 +302,25 @@ router.beforeEach(async (to) => {
     const hasPermission = requiredRoles.some((r) => userStore.roles.includes(r))
     if (!hasPermission) {
       return { path: NO_PERMISSION_REDIRECT }
+    }
+  }
+
+  // PRD-C-211 — 管理中心：进 /manage/* 前拉一次 RuoYi /getInfo（roles+permissions，
+  // v-hasPermi 指令与左菜单显隐的数据源），并按子路由 meta.perms 拦截越权直达
+  // （org_admin 直敲 /manage/role → 弹回自己第一个可见模块）。
+  if (to.path.startsWith('/manage')) {
+    const adminStore = useAdminUserStore()
+    try {
+      await adminStore.fetchInfo()
+    } catch (e) {
+      console.warn('[router] /getInfo 拉取失败:', e)
+    }
+    const perms = to.meta.perms as string[] | undefined
+    if (perms && perms.length > 0) {
+      const ok = adminStore.permissions.some((p) => p === '*:*:*' || perms.includes(p))
+      if (!ok) {
+        return to.path === '/manage/user' ? { path: NO_PERMISSION_REDIRECT } : { path: '/manage/user' }
+      }
     }
   }
 

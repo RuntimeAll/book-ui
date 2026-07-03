@@ -9,6 +9,10 @@ import 'katex/dist/katex.min.css'
 // PRD-C-205 Umo Editor 样式（全局引入，避免每个页面重复打包 CSS；类型走 shims-umoteam.d.ts）
 import '@umoteam/editor/style'
 import * as ElementPlusIconsVue from '@element-plus/icons-vue'
+// PRD-C-211 系统管理移植：svg 雪碧图注册 + plus-ui globalProperties 插件（$modal/$tab/useDict/handleTree…）+ v-hasPermi 指令
+import 'virtual:svg-icons-register'
+import adminPlugins from '@/plugins'
+import adminDirectives from '@/directive'
 import App from './App.vue'
 import router from './router'
 import { safeHtml } from '@/directives/safeHtml'
@@ -28,4 +32,7 @@ app.use(router)
 app.use(ElementPlus, { locale: zhCn })
 // PRD-A-013 H-3: 全局 v-safe-html 指令 — 富文本一律走它, 禁用裸 v-html
 app.directive('safe-html', safeHtml)
+// PRD-C-211：系统管理移植页的地基（globalProperties + v-hasPermi/v-hasRoles/v-copyText）
+app.use(adminPlugins)
+adminDirectives(app)
 app.mount('#app')

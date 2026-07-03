@@ -5,6 +5,8 @@ import { resolve } from 'path'
 import AutoImport from 'unplugin-auto-import/vite'
 import Components from 'unplugin-vue-components/vite'
 import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
+// PRD-C-211 系统管理移植：plus-ui 页面用 <svg-icon>/<icon-select>（本地 svg 雪碧图）
+import { createSvgIconsPlugin } from 'vite-plugin-svg-icons'
 
 // ---------------------------------------------------------------------------
 // V1 卡（题库去原网站化）：proxy 全本地，删 misikt fallback + cookie 注入。
@@ -39,9 +41,19 @@ export default defineConfig({
     vue(),
     AutoImport({
       resolvers: [ElementPlusResolver()],
+      // PRD-C-211：移植的 plus-ui 系统管理页无 import 直接用 ref/useRouter 等（plus-ui 工程约定），
+      // 补 vue/vue-router/pinia 预设；book-ui 自有代码显式 import 不受影响。dts 供 vue-tsc。
+      imports: ['vue', 'vue-router', 'pinia'],
+      dts: 'src/types/auto-imports.d.ts',
     }),
     Components({
       resolvers: [ElementPlusResolver()],
+      dts: 'src/types/components.d.ts',
+    }),
+    // PRD-C-211：svg 雪碧图（src/assets/icons/svg，来自 book-admin），menu 页图标选择器用
+    createSvgIconsPlugin({
+      iconDirs: [resolve(process.cwd(), 'src/assets/icons/svg')],
+      symbolId: 'icon-[dir]-[name]',
     }),
   ],
   resolve: {
