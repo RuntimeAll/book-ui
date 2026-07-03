@@ -28,6 +28,10 @@ const greeting = computed(() => {
 const displayName = computed(
   () => userStore.userInfo?.realName || userStore.userInfo?.userName || '老师',
 )
+// realName 可能本身带称谓（"王小雅老师"/"李校长(阳光)"），带了就不再追加"老师"防止"老师 老师"
+const greetName = computed(() =>
+  /老师|校长/.test(displayName.value) ? displayName.value : `${displayName.value} 老师`,
+)
 
 // ── 三张统计卡（均走现成接口；拉不到就占位 "—"，不阻塞页面）────────────
 const questionTotal = ref<number | null>(null)
@@ -95,7 +99,7 @@ onMounted(async () => {
 <template>
   <div class="dk-overview">
     <header class="dk-greeting">
-      <h1 class="dk-greeting-title">{{ greeting }}，{{ displayName }} 老师</h1>
+      <h1 class="dk-greeting-title">{{ greeting }}，{{ greetName }}</h1>
       <p class="dk-greeting-sub">这里是你的备课台，题库 / 试卷 / 举一反三 / 几何画板 / 收藏一站直达</p>
     </header>
 
