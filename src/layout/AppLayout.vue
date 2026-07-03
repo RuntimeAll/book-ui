@@ -62,6 +62,7 @@ const allMenuItems: MenuItem[] = [
   { label: '题库', path: '/question/index' },
   { label: '我的题库', path: '/my-question' },           // 🔴 PRD-C-009 只看自己的题（举一反三跑出 + 上传）
   { label: '讲义', path: '/lecture-hub' },               // 🔴 PRD-C-207 教辅讲义只读浏览器（替代旧「讲义查看」；编辑=页内状态 P2）
+  { label: '管理', path: '/manage', roles: ['superadmin', 'org_admin'] },  // 🔴 PRD-C-207 V9 管理中心（成员/讲义内容/邀请码占位）
   // 资料库：用户 2026-06-04 拍板「暂时隐藏不做开发」→ 菜单隐藏，路由 /materials/index 保留备用。
   // { label: '资料库', path: '/materials/index' },
   // 管理控制台：纯占位无业务（原 PRD-A-005「按角色显隐」示范页），用户 2026-06-04 拍板移除（菜单+路由一并清）。

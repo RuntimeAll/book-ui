@@ -11,25 +11,43 @@
  */
 import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { UmoEditor } from '@umoteam/editor'
-import { ElMessage } from 'element-plus'
-import { Edit, ArrowLeftBold, ArrowRightBold, Document } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Edit, ArrowLeftBold, ArrowRightBold, Document, Check, Close } from '@element-plus/icons-vue'
 import SubjectDirectory from '@/components/business/SubjectDirectory/index.vue'
 import { KG_NODE_EXTENSIONS } from '@/extensions/kg-nodes/index'
+import { lazyTree, type SubjectNode } from '@/api/question'
+import { useUserStore } from '@/store/user'
 import {
-  getLectureCatalog, getLecture,
-  type CatalogLesson, type LectureSource,
+  getLectureCatalog, getLecture, saveLectureFrags,
+  type CatalogLesson, type LectureSource, type LectureFragSave,
 } from '@/api/kg/lecture'
 
 const BOOK_ID = 'CC7S'
+const userStore = useUserStore()
 
 // ── 目录数据（灰置 + 来源 + 上/下课时）─────────────────────────────
 const lessons = ref<CatalogLesson[]>([])
+/** 当前登录者 uid（catalog 响应带回；null=匿名只读官方） */
+const viewerId = ref<number | null>(null)
 /** 课时 subjectId → {badge}，喂给 SubjectDirectory 显"N版"徽标 */
 const lessonMeta = computed<Record<string, { badge: string }>>(() => {
   const m: Record<string, { badge: string }> = {}
   for (const l of lessons.value) m[l.lessonId] = { badge: `${l.sources.length}版` }
   return m
 })
+
+// ── KG 知识点索引（编辑保存重切片段用：课时L4 id → 子知识点 [{id,title}]，D13）──
+const kpByLesson = ref<Record<string, { id: string; title: string }[]>>({})
+function indexKps(nodes: SubjectNode[]) {
+  for (const n of nodes) {
+    if (n.id?.length === 12 && n.children?.length) {
+      kpByLesson.value[n.id] = n.children
+        .filter((c) => c.id?.length === 15)
+        .map((c) => ({ id: c.id, title: (c.title ?? '').trim() }))
+    }
+    if (n.children?.length) indexKps(n.children)
+  }
+}
 
 // ── 当前课时 / 来源 ────────────────────────────────────────────────
 const currentLesson = ref<CatalogLesson | null>(null)
@@ -67,18 +85,21 @@ function applyDoc(tries = 0) {
 }
 
 // ── 加载 ───────────────────────────────────────────────────────────
-/** 点左树某节点：课时→整份讲义；知识点→单片段；章/节/未挂→提示 */
+/** 点左树某节点：课时→整份讲义（空课时也进，可新建）；知识点→单片段；章/节→提示 */
 async function onSelectNode(id: string | null) {
-  if (!id) return
+  if (!id || editing.value) return
   const lesson = lessons.value.find((l) => l.lessonId === id)
   if (lesson) { selectLesson(lesson); return }
   if (id.length === 15) { // 知识点 L5：看单个片段
     currentLesson.value = null; sources.value = []
-    await loadLecture(id, BOOK_ID, true)
+    await loadLecture(id, BOOK_ID, undefined, true)
     return
   }
-  if (id.length === 12) { // 课时但未挂讲义
-    resetToHint('该课时暂无讲义（待录入）')
+  if (id.length === 12) { // 课时但未挂讲义：也选中（登录后可"新建我的讲义"）
+    currentLesson.value = { lessonId: id, lessonName: '', sources: [] }
+    sources.value = []
+    activeSourceIdx.value = 0
+    await loadLecture(id, BOOK_ID)
     return
   }
   resetToHint('请在左侧展开到具体课时查看讲义')
@@ -88,22 +109,27 @@ function selectLesson(lesson: CatalogLesson) {
   currentLesson.value = lesson
   sources.value = lesson.sources
   activeSourceIdx.value = 0
+  // 默认视图不传 owner（BE 覆盖序 我的>本部门管理员>官方）
   loadLecture(lesson.lessonId, lesson.sources[0]?.bookId ?? BOOK_ID)
 }
 
 function switchSource(idx: number) {
-  if (idx === activeSourceIdx.value || !currentLesson.value) return
+  if (idx === activeSourceIdx.value || !currentLesson.value || editing.value) return
   activeSourceIdx.value = idx
-  loadLecture(currentLesson.value.lessonId, sources.value[idx].bookId)
+  const s = sources.value[idx]
+  loadLecture(currentLesson.value.lessonId, s.bookId, s.owner)
 }
 
-async function loadLecture(subjectId: string, bookId: string, isKnowledge = false) {
+async function loadLecture(subjectId: string, bookId: string, owner?: number, isKnowledge = false) {
   loading.value = true
   emptyHint.value = null
   try {
-    const res = await getLecture(subjectId, bookId)
+    const res = await getLecture(subjectId, bookId, owner)
     docJson.value = res.docJson ?? null
     courseTitle.value = res.node?.name ?? ''
+    if (currentLesson.value && !currentLesson.value.lessonName && res.node?.name) {
+      currentLesson.value.lessonName = res.node.name
+    }
     if (!docJson.value) {
       resetToHint(isKnowledge ? '该知识点暂无讲义片段' : '该课时暂无讲义（待录入）')
       return
@@ -124,9 +150,150 @@ function resetToHint(msg: string) {
   emptyHint.value = msg
 }
 
-function goPrev() { if (hasPrev.value) selectLesson(lessons.value[curIndex.value - 1]) }
-function goNext() { if (hasNext.value) selectLesson(lessons.value[curIndex.value + 1]) }
-function onEditClick() { ElMessage.info('讲义编辑（复制为我的 / 直接改）即将开放') }
+function goPrev() { if (hasPrev.value && !editing.value) selectLesson(lessons.value[curIndex.value - 1]) }
+function goNext() { if (hasNext.value && !editing.value) selectLesson(lessons.value[curIndex.value + 1]) }
+
+// ── ✎ 编辑态（D13 整课时编辑 + 保存自动重切片段；D14 自由 H3 归所在片段）──────
+const editing = ref(false)
+const saving = ref(false)
+/** 进编辑时的每节点片段快照（subjectId → JSON 串）；保存时 diff 只落有改动的（D13） */
+let editSnapshot: Record<string, string> = {}
+
+const canEdit = computed(() => !!viewerId.value && !!currentLesson.value && currentLesson.value.lessonId.length === 12)
+const activeSource = computed<LectureSource | null>(() => sources.value[activeSourceIdx.value] ?? null)
+
+function setEditorReadOnly(ro: boolean) {
+  const inst = editorRef.value as unknown as { setReadOnly?: (v: boolean) => void } | null
+  if (inst?.setReadOnly) { inst.setReadOnly(ro); return }
+  const editor = editorRef.value?.useEditor?.()
+  editor?.setEditable(!ro)
+}
+
+/** Tiptap doc → 按 H3↔KG 知识点切片段（镜像 V0 迁移切分器；H2 组头折进组首知识点；未匹配 H3 归当前片段=D14） */
+function splitDoc(doc: { type: string; content?: unknown[] }, lessonId: string): Record<string, { title: string; nodes: unknown[] }> {
+  const kps = kpByLesson.value[lessonId] ?? []
+  const kpByName: Record<string, string> = {}
+  for (const k of kps) kpByName[k.title] = k.id
+  const kpTitleById: Record<string, string> = {}
+  for (const k of kps) kpTitleById[k.id] = k.title
+
+  const frags: Record<string, { title: string; nodes: unknown[] }> = {}
+  const ensure = (sid: string, title: string) => (frags[sid] ??= { title, nodes: [] })
+  let cur = lessonId
+  ensure(lessonId, currentLesson.value?.lessonName ?? '')
+  let pendingH2: unknown | null = null
+  const text = (n: Record<string, unknown>): string =>
+    ((n.content as Record<string, unknown>[] | undefined) ?? [])
+      .map((c) => (c.type === 'text' ? String(c.text ?? '') : text(c))).join('')
+
+  for (const raw of doc.content ?? []) {
+    const n = raw as Record<string, unknown>
+    const lv = n.type === 'heading' ? (n.attrs as Record<string, unknown>)?.level : null
+    if (lv === 2) { pendingH2 = n; continue }
+    if (lv === 3) {
+      const kid = kpByName[text(n).trim()]
+      if (kid) { // 匹配 KG 知识点 → 新片段边界
+        cur = kid
+        ensure(kid, kpTitleById[kid])
+        if (pendingH2) { frags[kid].nodes.push(pendingH2); pendingH2 = null }
+        frags[kid].nodes.push(n)
+        continue
+      }
+      // D14：KG 没有的自由 H3 不成为边界，作为普通内容归入当前片段
+    }
+    if (pendingH2) { frags[cur].nodes.push(pendingH2); pendingH2 = null }
+    frags[cur].nodes.push(n)
+  }
+  if (pendingH2) frags[cur].nodes.push(pendingH2)
+  return frags
+}
+
+function fragKey(nodes: unknown[]): string {
+  return JSON.stringify({ type: 'doc', content: nodes })
+}
+
+function enterEdit() {
+  if (!canEdit.value) return
+  const editor = editorRef.value?.useEditor?.()
+  if (!editor || !currentLesson.value) return
+  // 安全闸：切分器依赖该课时的 KG 知识点索引；没有则整份 doc 会塌进课时片段（与官方知识点片段叠加=重复渲染），禁止进入
+  if (!kpByLesson.value[currentLesson.value.lessonId]?.length) {
+    ElMessage.warning('该课时的知识点索引未就绪（KG 无子知识点或目录树未加载），暂不能编辑')
+    return
+  }
+  if (!docJson.value) { // 空课时新建：喂空 doc
+    editor.commands.setContent({ type: 'doc', content: [] } as Parameters<typeof editor.commands.setContent>[0])
+    emptyHint.value = null
+    docJson.value = { type: 'doc', content: [] }
+  }
+  // 快照取自编辑器（与保存同经 Tiptap 归一化 → 未动的节点 diff 必然相等）
+  const snap = splitDoc(editor.getJSON() as { type: string; content?: unknown[] }, currentLesson.value.lessonId)
+  editSnapshot = {}
+  for (const [sid, f] of Object.entries(snap)) editSnapshot[sid] = fragKey(f.nodes)
+  setEditorReadOnly(false)
+  editing.value = true
+}
+
+function cancelEdit() {
+  editing.value = false
+  setEditorReadOnly(true)
+  if (currentLesson.value) {
+    const s = activeSource.value
+    loadLecture(currentLesson.value.lessonId, s?.bookId ?? BOOK_ID, s?.owner)
+  }
+}
+
+async function saveEdit() {
+  const editor = editorRef.value?.useEditor?.()
+  if (!editor || !currentLesson.value || viewerId.value == null) return
+  const lessonId = currentLesson.value.lessonId
+  const split = splitDoc(editor.getJSON() as { type: string; content?: unknown[] }, lessonId)
+  const changed: LectureFragSave[] = []
+  for (const [sid, f] of Object.entries(split)) {
+    const key = fragKey(f.nodes)
+    if (editSnapshot[sid] !== key && (f.nodes.length > 0 || editSnapshot[sid])) {
+      changed.push({ subjectId: sid, title: f.title, contentJson: JSON.parse(key) })
+    }
+  }
+  if (!changed.length) { ElMessage.info('没有改动'); return }
+
+  // 目标归属：当前源是我的→存我；否则默认"保存为我的版本"（fork），管理员可选存到当前源名下
+  const src = activeSource.value
+  let targetOwner: number | undefined
+  const isAdmin = userStore.roles.includes('superadmin') || userStore.roles.includes('org_admin')
+  if (src && src.owner !== viewerId.value && isAdmin) {
+    try {
+      await ElMessageBox.confirm(
+        `改动 ${changed.length} 个知识点片段。保存为我的版本（推荐），还是直接保存到「${src.ownerName ?? src.owner}」名下？`,
+        '保存讲义',
+        { confirmButtonText: '保存为我的版本', cancelButtonText: `存到${src.ownerName ?? '对方'}名下`, distinguishCancelAndClose: true, type: 'info' },
+      )
+      targetOwner = undefined // 我的
+    } catch (action) {
+      if (action !== 'cancel') return // 右上角关闭 = 放弃
+      targetOwner = src.owner // 管理员在位改（BE 判权，官方 uid1 仅本人）
+    }
+  }
+
+  saving.value = true
+  try {
+    const res = await saveLectureFrags(src?.bookId ?? BOOK_ID, changed, targetOwner)
+    if (res.ok) {
+      ElMessage.success(`已保存 ${res.stats.ok} 个片段${targetOwner == null ? '（我的版本）' : ''}`)
+      editing.value = false
+      setEditorReadOnly(true)
+      await reloadCatalog()
+      loadLecture(lessonId, src?.bookId ?? BOOK_ID) // 回默认视图（我的>管理员>官方）
+    } else {
+      const bad = res.results.filter((r) => r.action === 'fail')
+      ElMessage.error(`部分失败：${bad.map((b) => b.reason).join('；')}`)
+    }
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '保存失败（无权限或网络异常）')
+  } finally {
+    saving.value = false
+  }
+}
 
 // ── 本课目录（TOC）：复用 kg-lecture 的 scrollBy 循环逼近，驯 Umo 封闭滚动 ──
 interface TocItem { level: number; text: string; index: number }
@@ -197,13 +364,28 @@ function onEditorScroll() {
 }
 
 // ── 初始化 ─────────────────────────────────────────────────────────
+async function reloadCatalog() {
+  const cat = await getLectureCatalog(BOOK_ID)
+  lessons.value = cat.lessons ?? []
+  viewerId.value = (cat as unknown as { viewer: number | null }).viewer ?? null
+  // 同步当前课时的 sources（保存后可能多出"我的版"）
+  if (currentLesson.value) {
+    const l = lessons.value.find((x) => x.lessonId === currentLesson.value!.lessonId)
+    if (l) { currentLesson.value = l; sources.value = l.sources }
+  }
+}
+
 onMounted(async () => {
   try {
-    const cat = await getLectureCatalog(BOOK_ID)
-    lessons.value = cat.lessons ?? []
+    await reloadCatalog()
   } catch {
     ElMessage.warning('讲义目录加载失败')
   }
+  // KG 知识点索引（切分器用）；失败仅禁编辑不影响浏览
+  try {
+    const roots = await lazyTree(0, false)
+    indexKps(Array.isArray(roots) ? roots : [])
+  } catch { /* 编辑保存前会再校验 */ }
 })
 onBeforeUnmount(() => { if (scrollHost) scrollHost.removeEventListener('scroll', onEditorScroll) })
 </script>
@@ -225,20 +407,25 @@ onBeforeUnmount(() => { if (scrollHost) scrollHost.removeEventListener('scroll',
             <div class="lh-src">
               <button
                 v-for="(s, i) in sources" :key="s.bookId + s.owner"
-                class="lh-src-tab" :class="{ on: i === activeSourceIdx }"
-                :title="s.bookName" @click="switchSource(i)"
-              >📗 {{ s.bookName }}</button>
+                class="lh-src-tab" :class="{ on: i === activeSourceIdx }" :disabled="editing"
+                :title="s.owner === 1 ? s.bookName : s.ownerName" @click="switchSource(i)"
+              >{{ s.owner === 1 ? `📗 ${s.bookName}` : s.owner === viewerId ? '👤 我的版' : `👥 ${s.ownerName}` }}</button>
             </div>
           </template>
           <span v-else class="lh-bar-lab muted">讲义浏览</span>
         </div>
         <div class="lh-bar-r">
+          <span v-if="editing" class="lh-editing-tag">编辑中</span>
           <span v-if="courseTitle" class="lh-course">{{ courseTitle }}</span>
-          <div v-if="currentLesson" class="lh-nav">
+          <div v-if="currentLesson && !editing" class="lh-nav">
             <button :disabled="!hasPrev" title="上一课时" @click="goPrev"><el-icon><ArrowLeftBold /></el-icon></button>
             <button :disabled="!hasNext" title="下一课时" @click="goNext"><el-icon><ArrowRightBold /></el-icon></button>
           </div>
-          <button v-if="docJson" class="lh-edit" title="编辑（P2）" @click="onEditClick"><el-icon><Edit /></el-icon>编辑</button>
+          <template v-if="editing">
+            <button class="lh-save" :disabled="saving" @click="saveEdit"><el-icon><Check /></el-icon>{{ saving ? '保存中…' : '保存' }}</button>
+            <button class="lh-cancel" :disabled="saving" @click="cancelEdit"><el-icon><Close /></el-icon>取消</button>
+          </template>
+          <button v-else-if="docJson && canEdit" class="lh-edit" title="编辑（改动只落有变化的知识点片段）" @click="enterEdit"><el-icon><Edit /></el-icon>编辑</button>
         </div>
       </header>
 
@@ -247,8 +434,9 @@ onBeforeUnmount(() => { if (scrollHost) scrollHost.removeEventListener('scroll',
         <div v-if="emptyHint" class="lh-empty">
           <el-icon class="ic"><Document /></el-icon>
           <p>{{ emptyHint }}</p>
+          <button v-if="canEdit && !docJson" class="lh-new" @click="enterEdit">＋ 新建我的讲义</button>
         </div>
-        <div v-show="!emptyHint" v-loading="loading" class="lh-umo-wrap">
+        <div v-show="!emptyHint || editing" v-loading="loading" class="lh-umo-wrap" :class="{ editing }">
           <UmoEditor ref="editorRef" v-bind="readonlyConfig" />
         </div>
       </div>
@@ -296,10 +484,21 @@ onBeforeUnmount(() => { if (scrollHost) scrollHost.removeEventListener('scroll',
 /* 内容区 */
 .lh-body { position: relative; flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
 .lh-umo-wrap { flex: 1; overflow: hidden; min-height: 0; }
-/* 只读：隐藏 Umo 编辑工具栏 + 页脚水印。本页 .lh-umo-wrap(flex:1;min-height:0) 结构下 display:none
-   不会塌陷滚动容器（已用 Playwright 实测 umo-main 撑满全高），故此处安全，AC6 只读无工具栏。 */
-.lh-umo-wrap :deep(.umo-toolbar) { display: none; }
-.lh-umo-wrap :deep(.umo-footer) { display: none; }
+/* 只读：隐藏 Umo 编辑工具栏 + 页脚水印（编辑态放出工具栏）。本页 flex 结构下 display:none
+   不塌陷滚动容器（Playwright 实测 umo-main 撑满全高），AC6 只读无工具栏。 */
+.lh-umo-wrap:not(.editing) :deep(.umo-toolbar) { display: none; }
+.lh-umo-wrap:not(.editing) :deep(.umo-footer) { display: none; }
+
+/* 编辑态控件 */
+.lh-editing-tag { font-size: 11px; font-weight: 700; color: #b45309; background: #fef3c7; padding: 3px 9px; border-radius: 999px; }
+.lh-save { display: inline-flex; align-items: center; gap: 4px; border: 1px solid #1e8a8a; background: #1e8a8a; color: #fff; font-size: 12.5px; font-weight: 600; padding: 5px 13px; border-radius: 7px; cursor: pointer; transition: .15s; }
+.lh-save:hover:not(:disabled) { background: #176e6e; }
+.lh-save:disabled { opacity: .6; cursor: not-allowed; }
+.lh-cancel { display: inline-flex; align-items: center; gap: 4px; border: 1px solid #e3e9e9; background: #fff; color: #536268; font-size: 12.5px; font-weight: 600; padding: 5px 11px; border-radius: 7px; cursor: pointer; transition: .15s; }
+.lh-cancel:hover:not(:disabled) { border-color: #cbd5d5; }
+.lh-src-tab:disabled { opacity: .55; cursor: not-allowed; }
+.lh-new { border: 1px dashed #2ba3a3; background: #f0faf9; color: #176e6e; font-size: 13px; font-weight: 600; padding: 8px 18px; border-radius: 9px; cursor: pointer; transition: .15s; }
+.lh-new:hover { background: #e6f2f2; }
 .lh-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: #a8b2b6; }
 .lh-empty .ic { font-size: 40px; color: #cdd6d6; }
 .lh-empty p { font-size: 13.5px; }

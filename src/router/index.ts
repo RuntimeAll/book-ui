@@ -206,6 +206,14 @@ const router = createRouter({
           name: 'LectureHub',
           component: () => import('@/views/lecture-hub/index.vue'),
         },
+        // PRD-C-207 V9 — 管理中心（成员 / 讲义内容 / 邀请码占位）；页面级权限=superadmin/org_admin，
+        // 与导航项 roles 双保险（守卫拦未授权直达；导航过滤挡入口曝光）。
+        {
+          path: '/manage',
+          name: 'ManageCenter',
+          component: () => import('@/views/manage/index.vue'),
+          meta: { roles: ['superadmin', 'org_admin'] },
+        },
       ],
     },
     // 登录页（无 layout 包裹）
