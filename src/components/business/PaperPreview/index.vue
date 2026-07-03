@@ -346,7 +346,7 @@ function pollRecord(recordId: string, estimatedSeconds: number, name: string) {
         duration: 0,
         onClick: () => {
           import('@/router').then(({ default: router }) => {
-            router.push('/workspace')
+            router.push('/desk/workspace')
           })
         },
       })

@@ -4,6 +4,8 @@ import { useUserStore } from '@/store/user'
 // PRD-C-211 — 管理中心权限 store（/getInfo 拉 permissions，v-hasPermi 与守卫共用）
 import { useUserStore as useAdminUserStore } from '@/store/modules/user'
 import { getCurrentUser } from '@/api/user'
+// PRD-C-212 V0 — 管理台地基（雪碧图/globalProperties/指令）懒装载，进 /manage 才拉
+import { ensureAdminFoundation } from '@/plugins/admin-foundation'
 
 // ---------------------------------------------------------------------------
 // PRD-A-005 T2 — 路由 meta 类型增强：页面级权限声明 `meta.roles`
@@ -69,11 +71,10 @@ const router = createRouter({
           name: 'QuestionAttributes',
           component: () => import('@/views/question/attributes.vue'),
         },
-        // PRD-C-009「我的题库」——只看当前登录老师自己的题（mine:true），复用题库详情页
+        // PRD-C-212 D3 — 「我的题库」收进备课台，旧地址兜书签
         {
           path: '/my-question',
-          name: 'MyQuestion',
-          component: () => import('@/views/my-question/index.vue'),
+          redirect: '/desk/my-question',
         },
         // PRD-A-002 路A「框选录题全屏页」——上传题/卷照片 → 拖框选区 → 每框识别去手写富文本题
         //   → 改题/解题（可选）→ 绑定章节 → 录入 biz_question 草稿(status='0')。
@@ -132,24 +133,18 @@ const router = createRouter({
         },
         // AI 助手（/ai-assistant，原 PRD-C-004/005 vibe 聊天入口）2026-06-30 移除：
         //   功能暂废，菜单项 + 本路由 + views/ai-compose + api/chat 一并清。
-        // 🔴 举一反三（PRD-C-009）= 图片变式 agent 入口。拍题 → 贴 OSS 图链 → 自动出代表性变式
-        //    （2 普通 1 难）→ 对话式编辑 → 入个人题库。调 toolkit :8093 variant agent（vite proxy /agent）。
+        // PRD-C-212 D3 — 举一反三/工作台/收藏 收进备课台，旧地址兜书签
         {
           path: '/ai-variant',
-          name: 'AiVariant',
-          component: () => import('@/views/variant/index.vue'),
+          redirect: '/desk/ai-variant',
         },
-        // U 卡 段④ — 教师我的工作台聚合页
         {
           path: '/workspace',
-          name: 'Workspace',
-          component: () => import('@/views/workspace/index.vue'),
+          redirect: '/desk/workspace',
         },
-        // PRD-A-005 T6 — 收藏管理页（列收藏题 + 取消收藏，工作台「收藏管理」入口指向此）
         {
           path: '/favorites/index',
-          name: 'FavoritesIndex',
-          component: () => import('@/views/favorites/index.vue'),
+          redirect: '/desk/favorites',
         },
         // PRD-002 — 个人资料页（登录态内页）
         {
@@ -181,17 +176,37 @@ const router = createRouter({
         //   原为 PRD-A-005「页面级权限·按角色显隐」示范页；A 线无真实 admin 业务，故撤。
         //   若将来需页面级权限示范，照 meta.roles 模式挂任意真实页即可，无需复活此占位。
 
-        // 几何画板（GeoBoard）——老师从零画/拖调 + agent 构件出图。draw 主页 + 只读画廊两页。
-        //   引擎 = JSXGraph（@/utils/geoEngine 统一引擎）；构件层 figure-builder（agent 不盲打坐标）。
+        // PRD-C-212 D3 — 几何画板收进备课台，旧地址兜书签
         {
           path: '/geo-board',
-          name: 'GeoBoardStudio',
-          component: () => import('@/views/geo-board/index.vue'),
+          redirect: '/desk/geo-board',
         },
         {
           path: '/geo-board/gallery',
-          name: 'GeoBoardGallery',
-          component: () => import('@/views/geo-board/gallery.vue'),
+          redirect: '/desk/geo-board/gallery',
+        },
+        // 🔴 PRD-C-212 D3 — 备课台（工具箱+个人空间聚合壳，照 manage 壳模式）。
+        //   原页面组件零重写零搬家，路由 component 直指现有 views 文件；壳=views/desk/index.vue。
+        {
+          path: '/desk',
+          name: 'DeskCenter',
+          component: () => import('@/views/desk/index.vue'),
+          redirect: '/desk/overview',
+          children: [
+            // 概览：问候+统计卡+快捷入口（PRD-C-212 V1 新页）
+            { path: 'overview', name: 'DeskOverview', component: () => import('@/views/desk/overview.vue') },
+            // U 卡 段④ — 教师我的工作台聚合页
+            { path: 'workspace', name: 'Workspace', component: () => import('@/views/workspace/index.vue') },
+            // PRD-C-009「我的题库」——只看当前登录老师自己的题（mine:true）
+            { path: 'my-question', name: 'MyQuestion', component: () => import('@/views/my-question/index.vue') },
+            // 🔴 举一反三（PRD-C-009）= 图片变式入口（toolkit :8093，vite proxy /agent）
+            { path: 'ai-variant', name: 'AiVariant', component: () => import('@/views/variant/index.vue') },
+            // 几何画板（GeoBoard）——JSXGraph 引擎，draw 主页 + 只读画廊
+            { path: 'geo-board', name: 'GeoBoardStudio', component: () => import('@/views/geo-board/index.vue') },
+            { path: 'geo-board/gallery', name: 'GeoBoardGallery', component: () => import('@/views/geo-board/gallery.vue') },
+            // PRD-A-005 T6 — 收藏管理页
+            { path: 'favorites', name: 'FavoritesIndex', component: () => import('@/views/favorites/index.vue') },
+          ],
         },
         // PRD-C-207 退役：旧「讲义查看」单课时页 → 重定向到新讲义浏览器（兜老书签）
         {
@@ -309,6 +324,10 @@ router.beforeEach(async (to) => {
   // v-hasPermi 指令与左菜单显隐的数据源），并按子路由 meta.perms 拦截越权直达
   // （org_admin 直敲 /manage/role → 弹回自己第一个可见模块）。
   if (to.path.startsWith('/manage')) {
+    // PRD-C-212 V0：管理台地基（svg雪碧图/globalProperties/v-hasPermi）懒装载，
+    // 首次进 /manage 才拉 chunk；app 实例走动态 import 取，避免 main↔router 静态环
+    const { app } = await import('../main')
+    await ensureAdminFoundation(app)
     const adminStore = useAdminUserStore()
     try {
       await adminStore.fetchInfo()

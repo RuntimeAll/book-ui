@@ -85,7 +85,7 @@ const FAMILIES: Array<[string, Array<[string, Record<string, unknown>]>]> = [
         <h1>几何构件库 · 只读画廊</h1>
         <p class="sub">小学 + 初中常用图形一页看全 · 只读呈现（无可编辑圆点，只留字母）· 全部由构件 JSON 代码精确生成</p>
       </div>
-      <el-button text type="primary" @click="router.push('/geo-board')">← 回画板</el-button>
+      <el-button text type="primary" @click="router.push('/desk/geo-board')">← 回画板</el-button>
     </header>
 
     <section v-for="[fam, items] in FAMILIES" :key="fam" class="fam">

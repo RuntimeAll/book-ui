@@ -576,10 +576,10 @@ async function ingestAll() {
 }
 
 function goBack() {
-  router.push('/my-question')
+  router.push('/desk/my-question')
 }
 function goMyQuestion() {
-  router.push('/my-question')
+  router.push('/desk/my-question')
 }
 
 function cardDisplayStyle(card: IngestCard) {

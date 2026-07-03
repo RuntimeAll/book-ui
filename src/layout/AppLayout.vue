@@ -52,20 +52,16 @@ interface MenuItem {
   roles?: string[]
 }
 
+// PRD-C-212 D2 — 导航 9→6：工具箱/个人空间四页（工作台/我的题库/举一反三/几何画板+收藏夹）
+// 收拢进「备课台」壳（/desk，见 views/desk/index.vue），旧路径全部 redirect（router）。
 const allMenuItems: MenuItem[] = [
   { label: '首页', path: '/home' },
-  // AI 助手（vibe 聊天入口）2026-06-30 移除：功能暂废，菜单 + 路由 + 页面一并清。
-  { label: '举一反三', path: '/ai-variant' },                   // 🔴 PRD-C-009 图片变式 agent 入口（toolkit :8093）
-  { label: '几何画板', path: '/geo-board' },                    // 🔴 GeoBoard 交互几何画板（老师从零画/拖调 + agent 构件出图，JSXGraph）
-  { label: '我的工作台', path: '/workspace' },                  // U-3 教师工作台聚合页
-  { label: '卷库', path: '/papers/index' },
   { label: '题库', path: '/question/index' },
-  { label: '我的题库', path: '/my-question' },           // 🔴 PRD-C-009 只看自己的题（举一反三跑出 + 上传）
-  { label: '讲义', path: '/lecture-hub' },               // 🔴 PRD-C-207 教辅讲义只读浏览器（替代旧「讲义查看」；编辑=页内状态 P2）
-  { label: '管理', path: '/manage', roles: ['superadmin', 'org_admin'] },  // 🔴 PRD-C-207 V9 管理中心（成员/讲义内容/邀请码占位）
+  { label: '卷库', path: '/papers/index' },
+  { label: '讲义', path: '/lecture-hub' },               // 🔴 PRD-C-207 教辅讲义只读浏览器
+  { label: '备课台', path: '/desk' },                    // 🔴 PRD-C-212 D3 工具箱+个人空间聚合壳
+  { label: '管理', path: '/manage', roles: ['superadmin', 'org_admin'] },  // PRD-C-211 管理中心
   // 资料库：用户 2026-06-04 拍板「暂时隐藏不做开发」→ 菜单隐藏，路由 /materials/index 保留备用。
-  // { label: '资料库', path: '/materials/index' },
-  // 管理控制台：纯占位无业务（原 PRD-A-005「按角色显隐」示范页），用户 2026-06-04 拍板移除（菜单+路由一并清）。
 ]
 
 // PRD-A-005 T2 — 菜单按 userStore.roles 过滤显隐（单一事实源 = store roles）。
@@ -103,16 +99,13 @@ const showMultiFunctionFab = computed(() => {
   ) {
     return false
   }
+  // PRD-C-212 D3 — 工作台/我的题库/举一反三已收进备课台，白名单同步 /desk/* 新路径
   return route.path.startsWith('/question/')
     || route.path.startsWith('/papers/')
-    || route.path === '/workspace'
-    || route.path === '/my-question'
-    || route.path === '/ai-variant'
+    || route.path === '/desk/workspace'
+    || route.path === '/desk/my-question'
+    || route.path === '/desk/ai-variant'
 })
-
-function handleUpgrade() {
-  ElMessage.info('升级会员功能开发中')
-}
 </script>
 
 <template>
@@ -123,10 +116,10 @@ function handleUpgrade() {
         <!-- Logo 区 -->
         <div class="logo-area">
           <div class="logo-icon">
-            <img src="/icon.png" alt="AI·备课助手" class="logo-img" />
+            <img src="/icon.png" alt="AI·备课帮" class="logo-img" />
           </div>
           <div class="logo-text-group">
-            <span class="logo-title"><span class="logo-ai">AI</span>·备课助手</span>
+            <span class="logo-title"><span class="logo-ai">AI</span>·备课帮</span>
           </div>
         </div>
 
@@ -143,16 +136,8 @@ function handleUpgrade() {
           </span>
         </nav>
 
-        <!-- Right actions -->
+        <!-- Right actions（PRD-C-212 D2：会员体系不做，「升级会员」按钮删除） -->
         <div class="header-right">
-          <el-button
-            class="upgrade-btn"
-            size="small"
-            @click="handleUpgrade"
-          >
-            <el-icon size="13" style="margin-right: 4px;"><Star /></el-icon>
-            升级会员
-          </el-button>
           <!-- U-hotfix — avatar 改 dropdown，含"退出登录" -->
           <el-dropdown trigger="click" placement="bottom-end" @command="handleDropdownCommand">
             <div class="avatar-wrap">
@@ -320,35 +305,6 @@ function handleUpgrade() {
   align-items: center;
   gap: 16px;
   flex-shrink: 0;
-}
-
-/* 升级会员：描边青 + 青字（轻盈），hover 才淡填充 —— 与 avatar 实心青拉开层次，
-   不再两坨实心青撞（DESIGN §7.2 secondary 思路 + 青系克制） */
-.upgrade-btn {
-  background: #ffffff;
-  border: 1px solid #1e8a8a; /* teal-600 描边 */
-  color: #1e8a8a;
-  font-size: 13px;
-  font-weight: 500;
-  border-radius: 6px;
-  padding: 0 14px;
-  height: 32px;
-  box-shadow: none;
-  transition: all 0.2s ease;
-  display: flex;
-  align-items: center;
-}
-
-.upgrade-btn:hover {
-  background: #e6f2f2 !important; /* teal-50 淡填充 */
-  border-color: #176e6e !important; /* teal-700 */
-  color: #176e6e !important;
-}
-
-.upgrade-btn:focus {
-  background: #ffffff;
-  border-color: #1e8a8a;
-  color: #1e8a8a;
 }
 
 .avatar-wrap {

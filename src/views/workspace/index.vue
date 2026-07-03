@@ -193,13 +193,13 @@ function goPaperList() {
 
 // PRD-A-005 T6 — 进入收藏管理页（全部收藏，不分夹）
 function goFavorites() {
-  router.push('/favorites/index')
+  router.push('/desk/favorites')
 }
 
 // 点收藏夹 → 进收藏管理页并按该夹筛选（默认夹 id:0 也可点，进默认夹看散收藏）
 function goFolderDetail(folder: FavoriteFolder) {
   router.push({
-    path: '/favorites/index',
+    path: '/desk/favorites',
     query: { folderId: folder.id, folderName: folder.name },
   })
 }

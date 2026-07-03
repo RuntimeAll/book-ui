@@ -123,7 +123,7 @@ async function handleRename() {
 
 // 返回"全部收藏"视图（清掉 folder query）
 function goAll() {
-  router.push('/favorites/index')
+  router.push('/desk/favorites')
 }
 
 // SPA 内 query.folderId 变化（夹间切换 / 返回全部）重新加载 ——

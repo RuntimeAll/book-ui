@@ -533,7 +533,7 @@ async function handleSave() {
       if (newId) {
         router.push(`/question/detail/${newId}`)
       } else {
-        router.push('/my-question')
+        router.push('/desk/my-question')
       }
     }
   } catch (e: unknown) {
@@ -697,7 +697,7 @@ watch(questionId, async (newId) => {
                 <el-radio-group
                   :model-value="groupCols(ri)"
                   size="small"
-                  @change="(v: string | number | boolean) => reflowGroup(ri, Number(v))"
+                  @change="(v: string | number | boolean | undefined) => reflowGroup(ri, Number(v))"
                 >
                   <el-radio-button :value="1">1列</el-radio-button>
                   <el-radio-button :value="2">2列</el-radio-button>

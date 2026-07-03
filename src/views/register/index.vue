@@ -130,7 +130,7 @@ function goLogin() {
   <div class="register-page">
     <el-card class="register-card" shadow="always">
       <div class="register-title">老师注册</div>
-      <div class="register-subtitle">AI·备课助手 · 加入教师社区</div>
+      <div class="register-subtitle">AI·备课帮 · 加入教师社区</div>
 
       <el-form
         ref="formRef"

@@ -122,7 +122,7 @@ async function onSubmit() {
 <template>
   <div class="login-page">
     <el-card class="login-card" shadow="always">
-      <div class="login-title"><span class="brand-ai">AI</span>·备课助手</div>
+      <div class="login-title"><span class="brand-ai">AI</span>·备课帮</div>
       <div class="login-subtitle">教培老师的命题外脑 · 请登录后继续</div>
 
       <el-form

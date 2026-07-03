@@ -76,7 +76,7 @@ function exportPNG() { void boardRef.value?.exportPNG(2) }
         <h1>几何画板</h1>
         <p class="sub">老师从零画 / 拖调 AI 出的图 / 只读预览 · 构件 JSON 精确出图（字母不压线，几何由代码保证）</p>
       </div>
-      <el-button text type="primary" @click="router.push('/geo-board/gallery')">只读画廊（看全部图形）→</el-button>
+      <el-button text type="primary" @click="router.push('/desk/geo-board/gallery')">只读画廊（看全部图形）→</el-button>
     </header>
 
     <div class="gs-body">
