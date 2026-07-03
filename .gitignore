@@ -33,3 +33,8 @@ playwright-report/
 # dev server 日志（后台起 vite 的输出落盘）
 vite.out.log
 vite.err.log
+
+# dev server 后台日志碎屑
+_dev*.out
+_dev*.err
+_dev*.log
