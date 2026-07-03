@@ -259,9 +259,9 @@ const showMultiFunctionFab = computed(() => {
   letter-spacing: -0.2px;
 }
 
-/* "AI" 二字 violet-600 点睛（AI 在场，DESIGN §2.2） */
+/* "AI" 二字点睛（PRD-C-212 V4：紫色归并进品牌青，全站零紫色） */
 .logo-ai {
-  color: #7b6cf0;
+  color: var(--bk-teal);
   font-weight: 600;
 }
 
@@ -290,11 +290,11 @@ const showMultiFunctionFab = computed(() => {
 }
 
 .nav-item:hover {
-  color: #1e8a8a; /* teal-600 */
+  color: var(--bk-teal); /* 教育青 */
 }
 
 .nav-item.active {
-  color: #1e8a8a; /* teal-600 */
+  color: var(--bk-teal); /* 教育青 */
   font-weight: 600;
 }
 
@@ -307,7 +307,7 @@ const showMultiFunctionFab = computed(() => {
   bottom: 12px;
   height: 2px;
   border-radius: 2px;
-  background: #1e8a8a; /* teal-600 */
+  background: var(--bk-teal); /* 教育青 */
 }
 
 /* ── 右侧操作区 ── */
@@ -323,9 +323,9 @@ const showMultiFunctionFab = computed(() => {
   cursor: pointer;
 }
 
-/* avatar 实心青保留 + 细白边光圈让它精致（DESIGN §3.2 青主色） */
+/* avatar 实心青保留 + 细白边光圈让它精致（PRD-C-212 V4：教育青系） */
 .user-avatar {
-  background: linear-gradient(135deg, #2ba3a3, #1e8a8a);
+  background: linear-gradient(135deg, #14958a, var(--bk-teal));
   color: #fff;
   font-size: 14px;
   font-weight: 600;
@@ -336,7 +336,7 @@ const showMultiFunctionFab = computed(() => {
 }
 
 .avatar-wrap:hover .user-avatar {
-  box-shadow: 0 0 0 3px rgba(30, 138, 138, 0.18), 0 1px 3px rgba(29, 42, 46, 0.08);
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.18), 0 1px 3px rgba(29, 42, 46, 0.08);
 }
 
 /* ── 主内容区 ── */

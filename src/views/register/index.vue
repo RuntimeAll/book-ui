@@ -222,12 +222,14 @@ function goLogin() {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #f5f8ff 0%, #e8f0ff 100%);
+  background: #f5f8f8; /* PRD-C-212 V4:与全站底色统一,去蓝渐变 */
 }
 
 .register-card {
   width: 420px;
   padding: 8px 16px 16px;
+  border-radius: 12px;
+  border-color: var(--bk-line);
 }
 
 .register-title {

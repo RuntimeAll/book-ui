@@ -440,11 +440,11 @@ onMounted(async () => {
 .papers-page { display: flex; height: 100%; background: #f0f2f5; position: relative; overflow: hidden; gap: 14px; padding: 14px; }
 
 /* ── 左侧卷库目录（题库目录同构）─────────────────── */
-.dir { width: 300px; flex-shrink: 0; background: #fff; border: 1px solid #eef1f1; border-radius: 10px; box-shadow: 0 1px 3px rgba(22, 36, 42, .05); display: flex; flex-direction: column; overflow: hidden; }
+.dir { width: 300px; flex-shrink: 0; background: #fff; border: 1px solid var(--bk-line); border-radius: 12px; box-shadow: 0 1px 3px rgba(19, 49, 43, .05); display: flex; flex-direction: column; overflow: hidden; }
 .dir-head { padding: 13px 14px; border-bottom: 1px solid #eef2f2; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
 .dir-head .t { display: flex; align-items: center; gap: 8px; }
 .dir-head .bar { width: 3px; height: 15px; border-radius: 2px; background: #7b6cf0; }
-.dir-head b { font-size: 14px; font-weight: 700; color: #16242a; }
+.dir-head b { font-size: 14px; font-weight: 700; color: var(--bk-ink); }
 .dir-head .n { font-size: 10.5px; color: #a8b2b6; }
 .dir-body { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 10px 10px; }
 
@@ -452,10 +452,10 @@ onMounted(async () => {
 .crumb { padding: 8px 9px; border: 1px solid #e3e9e9; border-radius: 9px; background: #fafdfd; cursor: pointer; display: flex; align-items: center; gap: 7px; transition: .15s; margin-bottom: 11px; }
 .crumb:hover { border-color: #cfe0e0; background: #f3faf9; }
 .crumb .ico { width: 26px; height: 26px; border-radius: 7px; flex-shrink: 0; display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 12.5px; }
-.crumb .ico.math { background: linear-gradient(135deg, #2ba3a3, #176e6e); }
+.crumb .ico.math { background: linear-gradient(135deg, #14958a, var(--bk-teal)); }
 .crumb .ico.sci { background: linear-gradient(135deg, #8f86f4, #6357d6); }
 .crumb .txt { flex: 1; min-width: 0; }
-.crumb .l1 { font-size: 12px; font-weight: 700; color: #16242a; line-height: 1.25; display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+.crumb .l1 { font-size: 12px; font-weight: 700; color: var(--bk-ink); line-height: 1.25; display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
 .crumb .l1 .main { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .crumb .l2 { font-size: 10px; color: #7c8a90; margin-top: 1px; }
 .crumb .ed { font-size: 9.5px; font-weight: 600; padding: 1px 5px; border-radius: 4px; background: #efeefe; color: #7b6cf0; flex-shrink: 0; }
@@ -469,26 +469,26 @@ onMounted(async () => {
 .grp-lab { font-size: 10px; font-weight: 700; letter-spacing: 1px; color: #7c8a90; text-transform: uppercase; margin-bottom: 6px; }
 .seg { display: flex; background: #eef2f2; border-radius: 8px; padding: 2px; gap: 2px; }
 .seg button { flex: 1; border: 0; background: transparent; font-size: 12.5px; font-weight: 600; color: #536268; padding: 7px 4px; border-radius: 6px; cursor: pointer; transition: .15s; }
-.seg button.on { background: #fff; color: #176e6e; box-shadow: 0 1px 3px rgba(22, 36, 42, .05); }
+.seg button.on { background: #fff; color: var(--bk-teal); box-shadow: 0 1px 3px rgba(19, 49, 43, .05); }
 .seg button:disabled { color: #a8b2b6; cursor: not-allowed; opacity: .45; }
 .grades { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
 .grade { border: 1px solid #e3e9e9; border-radius: 9px; background: #fff; cursor: pointer; padding: 8px 4px 6px; text-align: center; transition: .15s; position: relative; overflow: hidden; }
-.grade .num { font-size: 17px; font-weight: 700; color: #16242a; line-height: 1; }
+.grade .num { font-size: 17px; font-weight: 700; color: var(--bk-ink); line-height: 1; }
 .grade .cn { font-size: 10px; color: #7c8a90; margin-top: 2px; font-weight: 600; }
-.grade:hover { border-color: #2ba3a3; }
-.grade.on { border-color: #1e8a8a; background: linear-gradient(180deg, #f0faf9, #fff); }
-.grade.on .num { color: #176e6e; }
-.grade.on::before { content: ''; position: absolute; inset: 0 0 auto 0; height: 3px; background: #1e8a8a; }
+.grade:hover { border-color: #14958a; }
+.grade.on { border-color: var(--bk-teal); background: linear-gradient(180deg, #f0faf9, #fff); }
+.grade.on .num { color: var(--bk-teal); }
+.grade.on::before { content: ''; position: absolute; inset: 0 0 auto 0; height: 3px; background: var(--bk-teal); }
 .grade.dim { opacity: .32; pointer-events: none; filter: grayscale(.4); }
 .zk { display: flex; gap: 6px; margin-top: 7px; flex-wrap: wrap; }
 .zk .chip { flex: 1; justify-content: center; }
 .stage-empty { margin-top: 8px; font-size: 11.5px; color: #a8b2b6; text-align: center; padding: 6px; }
 .chip { display: inline-flex; align-items: center; justify-content: center; gap: 4px; font-size: 11.5px; font-weight: 600; color: #536268; background: #fff; border: 1px solid #e3e9e9; padding: 5px 11px; border-radius: 999px; cursor: pointer; transition: .15s; user-select: none; }
-.chip:hover { border-color: #2ba3a3; color: #176e6e; }
-.chip.on { background: #1e8a8a; border-color: #1e8a8a; color: #fff; }
+.chip:hover { border-color: #14958a; color: var(--bk-teal); }
+.chip.on { background: var(--bk-teal); border-color: var(--bk-teal); color: #fff; }
 .chip.dim { opacity: .35; pointer-events: none; }
 .ptype { display: flex; flex-wrap: wrap; gap: 6px; }
-.ptype .chip.on { background: #e6f2f2; border-color: #1e8a8a; color: #176e6e; }
+.ptype .chip.on { background: var(--bk-teal-soft); border-color: var(--bk-teal); color: var(--bk-teal); }
 .divln { height: 1px; background: #eef2f2; margin: 4px 0 10px; }
 .search-mini { padding: 0 1px; }
 
@@ -498,18 +498,18 @@ onMounted(async () => {
 .search-input { width: 260px; }
 .search-btn { padding: 0 18px; }
 .crumbbar { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: #7c8a90; flex-shrink: 0; flex-wrap: wrap; }
-.crumbbar .pill { background: #e6f2f2; color: #176e6e; font-weight: 700; padding: 3px 10px; border-radius: 999px; }
+.crumbbar .pill { background: var(--bk-teal-soft); color: var(--bk-teal); font-weight: 700; padding: 3px 10px; border-radius: 999px; }
 .crumbbar .seg-crumb { display: inline-flex; align-items: center; gap: 6px; }
 .crumbbar .sep { color: #cbd4d6; }
-.paper-list { flex: 1; background: #fff; border-radius: 10px; border: 1px solid #eef1f1; min-height: 0; overflow-y: auto; }
+.paper-list { flex: 1; background: #fff; border-radius: 12px; border: 1px solid var(--bk-line); box-shadow: 0 1px 3px rgba(19, 49, 43, .05); min-height: 0; overflow-y: auto; }
 .paper-card { padding: 16px 20px; border-bottom: 1px solid #ebeef5; display: flex; flex-direction: column; gap: 12px; background: #fff; transition: background .15s ease; }
 .paper-card:last-child { border-bottom: none; }
 .paper-card:hover { background: #fafcfc; }
 .paper-card-row1 { display: flex; justify-content: space-between; align-items: center; }
 .paper-card-title-area { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
 .paper-star { font-size: 16px; color: #c0c4cc; cursor: pointer; transition: color .15s ease; }
-.paper-star:hover { color: #1e8a8a; }
-.paper-name { font-size: 14px; font-weight: 600; color: #176e6e; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.paper-star:hover { color: var(--bk-teal); }
+.paper-name { font-size: 14px; font-weight: 600; color: var(--bk-teal); cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .paper-name:hover { text-decoration: underline; }
 .paper-card-actions { display: flex; gap: 16px; flex-shrink: 0; }
 .paper-card-row2 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; color: #606266; font-size: 13px; }
@@ -517,5 +517,5 @@ onMounted(async () => {
 .paper-field-label { color: #909399; }
 .paper-field-colon { margin-right: 8px; color: #909399; }
 .paper-field-value { color: #303133; }
-.pagination-wrap { flex-shrink: 0; display: flex; justify-content: flex-start; padding: 12px 0 12px 8px; background: #fff; border-radius: 10px; border: 1px solid #eef1f1; }
+.pagination-wrap { flex-shrink: 0; display: flex; justify-content: flex-start; padding: 12px 0 12px 8px; background: #fff; border-radius: 12px; border: 1px solid var(--bk-line); }
 </style>

@@ -463,12 +463,12 @@ function handleDetail(q: QuestionItem) {
 }
 
 :deep(.el-tree-node__content:hover) {
-  background: rgba(30, 138, 138, 0.06);
+  background: rgba(15, 118, 110, 0.06);
 }
 
 :deep(.el-tree-node.is-current > .el-tree-node__content) {
-  background: rgba(30, 138, 138, 0.1);
-  color: #1E8A8A;
+  background: var(--bk-teal-soft);
+  color: var(--bk-teal);
   font-weight: 600;
 }
 
@@ -514,7 +514,7 @@ function handleDetail(q: QuestionItem) {
 .list-title {
   font-size: 14px;
   font-weight: 600;
-  color: #1d2129;
+  color: var(--bk-ink);
 }
 
 /* ── 题目列表区 ── */

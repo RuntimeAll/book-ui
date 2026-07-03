@@ -40,18 +40,38 @@ body {
 }
 
 /**
+ * PRD-C-212 V4 tokens（设计稿⑤，正本 = only-one / PRD-C-212）
+ * 命名前缀 bk- 防撞 EP 变量。双色纪律（用户拍板不许违反）：
+ *  - --bk-amber 只做 AI 产出物徽章，禁用于普通元素
+ *  - --bk-red-pen 只做批改隐喻（装订线/✓/盖章），禁用于其他强调色
+ *  - --bk-teal-glow（荧光青 #2DD4BF）只在"AI 干活的瞬间"发光，应用内页面禁辉光
+ */
+:root {
+  --bk-teal: #0f766e; /* 品牌主色·教育青 —— 按钮/链接/选中态/图标主色 */
+  --bk-teal-deep: #0b5d56; /* 教育青深一档 —— hover/按下态 */
+  --bk-ink: #13312b; /* 墨青 —— 标题/正文强调文字色 */
+  --bk-teal-soft: #e6f3f1; /* 青雾 —— 选中态/高亮底色，不做正文色 */
+  --bk-amber: #d97706; /* 琥珀 —— 仅 AI 产出物徽章专用，禁用于普通元素 */
+  --bk-paper: #fffdf9; /* 纸白 —— 试卷/讲义材料底色 */
+  --bk-red-pen: #e0526b; /* 红笔 —— 仅批改隐喻专用（装订线/✓/盖章），禁做其他强调色 */
+  --bk-line: #e5ebe9; /* 卡片描边 */
+}
+
+/**
  * Element Plus 主题变量 override → 青主色（DESIGN §3.2 / §3.5 红线1）
  * 全站 el-button type="primary" / el-link / el-tag / 选中态走青，与默认蓝拉开。
  * AI 触发类按钮（紫）走 .btn-ai shortcut，不在此处。
+ * 🔴 PRD-C-212 V4：primary 由旧 teal #1e8a8a 统一切到教育青 #0F766E（= --bk-teal），
+ * light-3/5/7/8 按新主色重算色阶，light-9 与 --bk-teal-soft 对齐。
  */
 :root {
-  --el-color-primary: #1e8a8a; /* teal-600 */
-  --el-color-primary-light-3: #4ba3a3;
-  --el-color-primary-light-5: #76bcbc;
-  --el-color-primary-light-7: #a2d4d4;
-  --el-color-primary-light-8: #b8e0e0;
-  --el-color-primary-light-9: #e6f2f2; /* teal-50 */
-  --el-color-primary-dark-2: #176e6e; /* teal-700 */
+  --el-color-primary: #0f766e; /* 教育青（= --bk-teal） */
+  --el-color-primary-light-3: #579f9a;
+  --el-color-primary-light-5: #87bbb7;
+  --el-color-primary-light-7: #b7d6d4;
+  --el-color-primary-light-8: #cfe4e2;
+  --el-color-primary-light-9: #e6f3f1; /* = --bk-teal-soft 青雾 */
+  --el-color-primary-dark-2: #0b5d56;
 
   --el-color-success: #0e9f6e; /* green-600 */
   --el-color-warning: #e0a23c; /* amber-500 */

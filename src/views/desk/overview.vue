@@ -139,7 +139,7 @@ onMounted(async () => {
 .dk-greeting-title {
   font-size: 20px;
   font-weight: 700;
-  color: #13312b;
+  color: var(--bk-ink);
   margin: 0 0 6px;
 }
 
@@ -157,7 +157,7 @@ onMounted(async () => {
 
 .dk-stat-card {
   background: #fff;
-  border: 1px solid #e5ebe9;
+  border: 1px solid var(--bk-line);
   border-radius: 12px;
   padding: 18px 20px;
   cursor: pointer;
@@ -165,14 +165,14 @@ onMounted(async () => {
 }
 
 .dk-stat-card:hover {
-  border-color: #0f766e;
+  border-color: var(--bk-teal);
   box-shadow: 0 2px 8px rgba(15, 118, 110, .08);
 }
 
 .dk-stat-value {
   font-size: 26px;
   font-weight: 700;
-  color: #0f766e;
+  color: var(--bk-teal);
   line-height: 1.3;
 }
 
@@ -185,7 +185,7 @@ onMounted(async () => {
 .dk-recent-title {
   font-size: 15px;
   font-weight: 700;
-  color: #13312b;
+  color: var(--bk-ink);
   margin: 0 0 12px;
 }
 
@@ -198,7 +198,7 @@ onMounted(async () => {
 .dk-quick-card {
   position: relative;
   background: #fff;
-  border: 1px solid #e5ebe9;
+  border: 1px solid var(--bk-line);
   border-radius: 12px;
   padding: 16px 18px;
   cursor: pointer;
@@ -206,14 +206,14 @@ onMounted(async () => {
 }
 
 .dk-quick-card:hover {
-  border-color: #0f766e;
+  border-color: var(--bk-teal);
   box-shadow: 0 2px 8px rgba(15, 118, 110, .08);
 }
 
 .dk-quick-title {
   font-size: 14px;
   font-weight: 600;
-  color: #13312b;
+  color: var(--bk-ink);
   margin-bottom: 4px;
 }
 
@@ -228,7 +228,7 @@ onMounted(async () => {
   right: 16px;
   top: 50%;
   transform: translateY(-50%);
-  color: #0f766e;
+  color: var(--bk-teal);
   font-size: 14px;
 }
 </style>

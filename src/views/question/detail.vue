@@ -708,13 +708,13 @@ watch(questionId, async () => {
 }
 
 .back-btn:hover {
-  color: #1E8A8A;
+  color: var(--bk-teal);
 }
 
 .topbar-title {
   font-size: 16px;
   font-weight: 600;
-  color: #1d2129;
+  color: var(--bk-ink);
 }
 .topbar-spacer {
   flex: 1;
@@ -756,9 +756,10 @@ watch(questionId, async () => {
   flex-wrap: wrap;
   gap: 8px;
   background: #fff;
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 12px 16px;
-  border: 1px solid #f2f3f5;
+  border: 1px solid var(--bk-line);
+  box-shadow: 0 1px 3px rgba(19, 49, 43, 0.05);
 }
 
 .meta-left {
@@ -829,9 +830,10 @@ watch(questionId, async () => {
 /* ── 题干区 ── */
 .stem-area {
   background: #fff;
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 20px;
-  border: 1px solid #f2f3f5;
+  border: 1px solid var(--bk-line);
+  box-shadow: 0 1px 3px rgba(19, 49, 43, 0.05);
   min-height: 160px;
 }
 
@@ -844,7 +846,7 @@ watch(questionId, async () => {
 /* 字号由 MarkdownMath 固定 16px 基准驱动；markdown 自带换行，去掉 pre-wrap */
 .stem-text {
   line-height: 1.7;
-  color: #1d2129;
+  color: var(--bk-ink);
 }
 
 .stem-placeholder {
@@ -859,9 +861,10 @@ watch(questionId, async () => {
   gap: 12px;
   flex-wrap: wrap;
   background: #fff;
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 10px 16px;
-  border: 1px solid #f2f3f5;
+  border: 1px solid var(--bk-line);
+  box-shadow: 0 1px 3px rgba(19, 49, 43, 0.05);
 }
 
 .source-item {
@@ -877,8 +880,9 @@ watch(questionId, async () => {
 /* ── 折叠区 ── */
 .collapse-section {
   background: #fff;
-  border-radius: 10px;
-  border: 1px solid #f2f3f5;
+  border-radius: 12px;
+  border: 1px solid var(--bk-line);
+  box-shadow: 0 1px 3px rgba(19, 49, 43, 0.05);
   overflow: hidden;
 }
 
@@ -920,7 +924,7 @@ watch(questionId, async () => {
 .answer-label {
   font-size: 14px;
   font-weight: 600;
-  color: #1d2129;
+  color: var(--bk-ink);
   margin-bottom: 8px;
 }
 
@@ -964,8 +968,9 @@ watch(questionId, async () => {
 /* ── PRD-C-204 血缘关系卡 ── */
 .lineage-card {
   background: #fff;
-  border-radius: 10px;
-  border: 1px solid #f2f3f5;
+  border-radius: 12px;
+  border: 1px solid var(--bk-line);
+  box-shadow: 0 1px 3px rgba(19, 49, 43, 0.05);
   padding: 14px 16px;
 }
 
@@ -979,7 +984,7 @@ watch(questionId, async () => {
 .lineage-title {
   font-size: 14px;
   font-weight: 600;
-  color: #1d2129;
+  color: var(--bk-ink);
 }
 
 .lineage-loading {
@@ -1026,8 +1031,8 @@ watch(questionId, async () => {
 }
 
 .lineage-item:hover {
-  border-color: #1e8a8a;
-  background: #f6fbfb;
+  border-color: var(--bk-teal);
+  background: var(--bk-teal-soft);
 }
 
 .lineage-item--mother {
@@ -1041,7 +1046,7 @@ watch(questionId, async () => {
 
 .lineage-item-brief {
   font-size: 13px;
-  color: #1d2129;
+  color: var(--bk-ink);
   line-height: 1.5;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1056,7 +1061,7 @@ watch(questionId, async () => {
 }
 
 .lineage-rel {
-  color: #1e8a8a;
+  color: var(--bk-teal);
 }
 
 .lineage-empty {

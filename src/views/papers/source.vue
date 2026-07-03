@@ -741,7 +741,7 @@ watch(paperId, async () => {
 }
 
 .back-btn:hover {
-  color: #1E8A8A;
+  color: var(--bk-teal);
 }
 
 .topbar-info {
@@ -753,7 +753,7 @@ watch(paperId, async () => {
 .topbar-title {
   font-size: 16px;
   font-weight: 600;
-  color: #1d2129;
+  color: var(--bk-ink);
 }
 
 .topbar-export-btn {
@@ -795,14 +795,15 @@ watch(paperId, async () => {
 .aside-head {
   font-size: 15px;
   font-weight: 700;
-  color: #1d2129;
+  color: var(--bk-ink);
   padding: 0 4px 10px;
 }
 
 .aside-panel {
   background: #fff;
-  border: 1px solid #f2f3f5;
-  border-radius: 10px;
+  border: 1px solid var(--bk-line);
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(19, 49, 43, 0.05);
   max-height: calc(100vh - 110px);
   overflow-y: auto;
 }
@@ -829,17 +830,18 @@ watch(paperId, async () => {
 /* ── 卷头 ── */
 .paper-header {
   background: #fff;
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 22px 24px;
   margin-bottom: 14px;
-  border: 1px solid #f2f3f5;
+  border: 1px solid var(--bk-line);
+  box-shadow: 0 1px 3px rgba(19, 49, 43, 0.05);
   text-align: center;
 }
 
 .paper-title {
   font-size: 22px;
   font-weight: 700;
-  color: #1d2129;
+  color: var(--bk-ink);
   margin: 0 0 12px;
   line-height: 1.4;
 }
@@ -865,7 +867,7 @@ watch(paperId, async () => {
 }
 
 .meta-chip strong {
-  color: #1d2129;
+  color: var(--bk-ink);
   font-weight: 600;
 }
 
@@ -883,13 +885,13 @@ watch(paperId, async () => {
 .section-title {
   font-size: 16px;
   font-weight: 700;
-  color: #1d2129;
+  color: var(--bk-ink);
   margin: 0 0 10px;
   padding: 10px 14px;
   background: #fff;
-  border-left: 4px solid #1E8A8A;
+  border-left: 4px solid var(--bk-teal);
   border-radius: 4px;
-  border: 1px solid #f2f3f5;
+  border: 1px solid var(--bk-line);
   border-left-width: 4px;
 }
 
@@ -903,15 +905,16 @@ watch(paperId, async () => {
 /* ── 题目卡片 ── */
 .source-question-card {
   background: #fff;
-  border-radius: 10px;
-  border: 1px solid #f2f3f5;
+  border-radius: 12px;
+  border: 1px solid var(--bk-line);
+  box-shadow: 0 1px 3px rgba(19, 49, 43, 0.05);
   padding: 16px 20px;
   margin-bottom: 10px;
   transition: all 0.2s;
 }
 
 .source-question-card:hover {
-  box-shadow: 0 4px 16px rgba(30, 138, 138, 0.1);
+  box-shadow: 0 4px 16px rgba(15, 118, 110, 0.1);
   border-color: #d0e2ff;
 }
 
@@ -977,7 +980,7 @@ watch(paperId, async () => {
 }
 
 .action-icon-btn:hover {
-  color: #1E8A8A;
+  color: var(--bk-teal);
 }
 
 .action-icon-btn.is-fav {
@@ -1167,7 +1170,7 @@ watch(paperId, async () => {
 }
 
 .stat-num.total {
-  color: #1E8A8A;
+  color: var(--bk-teal);
 }
 
 .stat-unit {
@@ -1188,7 +1191,7 @@ watch(paperId, async () => {
 .edit-row-index {
   width: 24px;
   height: 24px;
-  background: linear-gradient(135deg, #1E8A8A, #176E6E);
+  background: linear-gradient(135deg, #14958a, var(--bk-teal));
   color: #fff;
   font-size: 12px;
   font-weight: 700;

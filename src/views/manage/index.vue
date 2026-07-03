@@ -78,12 +78,12 @@ function go(path: string) {
 
 <style scoped>
 .mc-page { display: flex; gap: 12px; min-height: calc(100vh - 60px); padding: 12px; background: #f4f7f7; box-sizing: border-box; align-items: stretch; }
-.mc-side { width: 168px; flex-shrink: 0; background: #fff; border: 1px solid #eef1f1; border-radius: 10px; box-shadow: 0 1px 3px rgba(22, 36, 42, .05); overflow: hidden; align-self: flex-start; position: sticky; top: 12px; }
-.mc-side-head { font-size: 13px; font-weight: 700; color: #16242a; padding: 12px 14px 8px; border-bottom: 1px solid #f1f4f4; }
+.mc-side { width: 168px; flex-shrink: 0; background: #fff; border: 1px solid var(--bk-line); border-radius: 12px; box-shadow: 0 1px 3px rgba(22, 36, 42, .05); overflow: hidden; align-self: flex-start; position: sticky; top: 12px; }
+.mc-side-head { font-size: 13px; font-weight: 700; color: var(--bk-ink); padding: 12px 14px 8px; border-bottom: 1px solid #f1f4f4; }
 .mc-menu { display: flex; flex-direction: column; padding: 6px; gap: 2px; }
 .mc-menu-item { text-align: left; border: 0; background: transparent; font-size: 13px; color: #435560; padding: 8px 10px; border-radius: 7px; cursor: pointer; transition: .15s; }
-.mc-menu-item:hover { background: #f0f7f6; color: #0f766e; }
-.mc-menu-item.on { background: #e6f3f1; color: #0f766e; font-weight: 700; }
+.mc-menu-item:hover { background: #f0f7f6; color: var(--bk-teal); } /* hover 比选中浅一档,保留两级区分 */
+.mc-menu-item.on { background: var(--bk-teal-soft); color: var(--bk-teal); font-weight: 700; }
 .mc-body { flex: 1; min-width: 0; }
 /* 移植页自带 plus-ui 结构（.p-2 等），给个白底容器兜住 */
 .mc-body :deep(.p-2) { padding: 0; }

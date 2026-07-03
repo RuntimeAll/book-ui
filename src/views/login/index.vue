@@ -197,12 +197,14 @@ async function onSubmit() {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #f5f5f5;
+  background: #f5f8f8; /* PRD-C-212 V4:与全站底色统一 */
 }
 
 .login-card {
   width: 380px;
   padding: 8px 16px 16px;
+  border-radius: 12px;
+  border-color: var(--bk-line);
 }
 
 .login-title {
@@ -213,9 +215,9 @@ async function onSubmit() {
   margin-bottom: 4px;
 }
 
-/* "AI" 二字 violet-600 点睛（DESIGN §2.2） */
+/* "AI" 二字点睛（PRD-C-212 D6：教育青，禁紫色/荧光青） */
 .login-title .brand-ai {
-  color: #7b6cf0;
+  color: var(--bk-teal);
 }
 
 .login-subtitle {

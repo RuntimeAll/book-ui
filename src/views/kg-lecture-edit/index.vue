@@ -268,7 +268,7 @@ function pickerStem(q: QuestionItem): string {
   gap: 12px;
   padding: 8px 16px;
   background: #fff;
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--bk-line);
   flex-wrap: wrap;
   flex-shrink: 0;
 }
@@ -283,7 +283,7 @@ function pickerStem(q: QuestionItem): string {
 .toolbar-title {
   font-size: 15px;
   font-weight: 700;
-  color: #1e293b;
+  color: var(--bk-ink);
 }
 
 .toolbar-subtitle {
@@ -361,7 +361,7 @@ function pickerStem(q: QuestionItem): string {
 }
 
 .picker-item:hover {
-  border-color: #93c5fd;
+  border-color: var(--bk-teal);
   background: #f8fafc;
 }
 
