@@ -71,8 +71,20 @@ const docJson = ref<object | null>(null)
 const readonlyConfig = {
   extensions: KG_NODE_EXTENSIONS,
   document: { title: '', readOnly: true },
+  page: { showToc: true }, // Umo 自带大纲默认展开（读态用 CSS 藏掉，编辑态可见）
   assistant: false,
   locale: 'zh-CN',
+}
+
+/** Umo 媒体节点（image/video/audio/file）自带 uploaded 标记：录入的图是现成 OSS URL、不走 Umo 上传回调，
+ *  uploaded=false 会让编辑态 NodeView 挂一根永远走不完的上传进度条 → 灌前统一补 true */
+function markMediaUploaded(node: unknown): void {
+  if (!node || typeof node !== 'object') return
+  const n = node as { type?: string; attrs?: Record<string, unknown>; content?: unknown[] }
+  if (n.attrs && (n.type === 'image' || n.type === 'video' || n.type === 'audio' || n.type === 'file')) {
+    if (n.attrs.src || n.attrs.url) { n.attrs.uploaded = true; n.attrs.error = false }
+  }
+  n.content?.forEach(markMediaUploaded)
 }
 
 /** 灌内容（切课时可反复调，非一次性）；编辑器未就绪则退避重试。沿用旧 kg-lecture 的内联取 editor 模式。 */
@@ -82,6 +94,7 @@ function applyDoc(tries = 0) {
     if (tries < 20) setTimeout(() => applyDoc(tries + 1), 120)
     return
   }
+  if (docJson.value) markMediaUploaded(docJson.value)
   editor.commands.setContent((docJson.value ?? { type: 'doc', content: [] }) as Parameters<typeof editor.commands.setContent>[0])
   scheduleToc()
 }
@@ -316,8 +329,7 @@ function insertKgMindmap() {
     }),
   })
 }
-function insertKgNote() { insertNode('kgNote', { title: '名师解读', text: '（在此输入解读内容）' }) }
-function insertKgCallout() { insertNode('kgCallout', { lines: '记忆点第一行\n记忆点第二行\n记忆点第三行', color: '#2563eb' }) }
+// 名师解读/记忆框插入按钮已按维护者要求移除（2026-07-03）；节点扩展保留——存量内容仍要能渲染
 
 // 例题选题器：搜题库选题插入（例题只存 qid，三位一体铁律）
 const pickerVisible = ref(false)
@@ -468,8 +480,6 @@ onBeforeUnmount(() => { if (scrollHost) scrollHost.removeEventListener('scroll',
         <div v-if="editing" class="lh-insert">
           <span class="lh-insert-lab">插入</span>
           <button class="lh-ins-btn mm" @click="insertKgMindmap">思维导图</button>
-          <button class="lh-ins-btn note" @click="insertKgNote">名师解读</button>
-          <button class="lh-ins-btn callout" @click="insertKgCallout">记忆框</button>
           <button class="lh-ins-btn ex" @click="insertKgExample">例题卡</button>
         </div>
         <div class="lh-bar-r">
@@ -561,6 +571,8 @@ onBeforeUnmount(() => { if (scrollHost) scrollHost.removeEventListener('scroll',
    不塌陷滚动容器（Playwright 实测 umo-main 撑满全高），AC6 只读无工具栏。 */
 .lh-umo-wrap:not(.editing) :deep(.umo-toolbar) { display: none; }
 .lh-umo-wrap:not(.editing) :deep(.umo-footer) { display: none; }
+/* Umo 自带页面大纲：只在编辑态展示（page.showToc=true 默认展开），查看态有右栏"本课目录"不重复 */
+.lh-umo-wrap:not(.editing) :deep(.umo-toc-container) { display: none; }
 
 /* 编辑态控件 */
 .lh-editing-tag { font-size: 11px; font-weight: 700; color: #b45309; background: #fef3c7; padding: 3px 9px; border-radius: 999px; }
@@ -582,8 +594,6 @@ onBeforeUnmount(() => { if (scrollHost) scrollHost.removeEventListener('scroll',
 .lh-insert-lab { font-size: 11px; font-weight: 700; letter-spacing: .5px; color: #7c8a90; }
 .lh-ins-btn { border: 1px solid #e3e9e9; background: #fff; font-size: 12px; font-weight: 600; padding: 4px 11px; border-radius: 7px; cursor: pointer; transition: .15s; }
 .lh-ins-btn.mm { color: #2563eb; border-color: #dbe5fb; } .lh-ins-btn.mm:hover { background: #eff4fe; }
-.lh-ins-btn.note { color: #dc2626; border-color: #fbdddd; } .lh-ins-btn.note:hover { background: #fef2f2; }
-.lh-ins-btn.callout { color: #64748b; border-color: #e2e8f0; } .lh-ins-btn.callout:hover { background: #f1f5f9; }
 .lh-ins-btn.ex { color: #176e6e; border-color: #cfe6e6; } .lh-ins-btn.ex:hover { background: #f0faf9; }
 
 /* 例题选题器 */
