@@ -15,8 +15,9 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Edit, ArrowLeftBold, ArrowRightBold, Document, Check, Close } from '@element-plus/icons-vue'
 import SubjectDirectory from '@/components/business/SubjectDirectory/index.vue'
 import { KG_NODE_EXTENSIONS } from '@/extensions/kg-nodes/index'
-import { lazyTree, type SubjectNode } from '@/api/question'
+import { lazyTree, questionPage, type SubjectNode, type QuestionItem } from '@/api/question'
 import { useUserStore } from '@/store/user'
+import { useDictStore, DICT_QUESTION_TYPE } from '@/store/dict'
 import {
   getLectureCatalog, getLecture, saveLectureFrags,
   type CatalogLesson, type LectureSource, type LectureFragSave,
@@ -24,6 +25,7 @@ import {
 
 const BOOK_ID = 'CC7S'
 const userStore = useUserStore()
+const dict = useDictStore()
 
 // ── 目录数据（灰置 + 来源 + 上/下课时）─────────────────────────────
 const lessons = ref<CatalogLesson[]>([])
@@ -295,6 +297,54 @@ async function saveEdit() {
   }
 }
 
+// ── 沉浸式编辑：插入自定义节点（移植自 kg-lecture-edit，含防吞卡 insertContentAt 修法）──
+dict.load(DICT_QUESTION_TYPE)
+function insertNode(type: string, attrs: Record<string, string>) {
+  const editor = editorRef.value?.useEditor?.()
+  if (!editor) return
+  // 🔴 insertContentAt(selection.to) 而非 insertContent：后者=替换选区，光标停在原子卡上会静默吞卡
+  editor.chain().focus().insertContentAt(editor.state.selection.to, { type, attrs }).run()
+}
+function insertKgMindmap() {
+  insertNode('kgMindmap', {
+    data: JSON.stringify({
+      text: '思维导图根节点',
+      children: [
+        { text: '分支 A', color: '#ef4444', children: [{ text: '叶节点', detail: '说明' }] },
+        { text: '分支 B', color: '#3b82f6', children: [] },
+      ],
+    }),
+  })
+}
+function insertKgNote() { insertNode('kgNote', { title: '名师解读', text: '（在此输入解读内容）' }) }
+function insertKgCallout() { insertNode('kgCallout', { lines: '记忆点第一行\n记忆点第二行\n记忆点第三行', color: '#2563eb' }) }
+
+// 例题选题器：搜题库选题插入（例题只存 qid，三位一体铁律）
+const pickerVisible = ref(false)
+const pickerKeyword = ref('')
+const pickerLoading = ref(false)
+const pickerList = ref<QuestionItem[]>([])
+async function searchPicker() {
+  pickerLoading.value = true
+  try {
+    const res = await questionPage({ pageIndex: 1, pageSize: 8, keyWord: pickerKeyword.value.trim() || undefined })
+    pickerList.value = res.list ?? []
+  } catch { pickerList.value = [] } finally { pickerLoading.value = false }
+}
+function insertKgExample() {
+  pickerVisible.value = true
+  if (!pickerList.value.length) searchPicker()
+}
+function pickQuestion(q: QuestionItem) {
+  insertNode('kgExample', { qid: String(q.id), knowledgeId: q.subjectId ?? currentLesson.value?.lessonId ?? '' })
+  pickerVisible.value = false
+  ElMessage.success('例题已插入')
+}
+function pickerStem(q: QuestionItem): string {
+  const raw = q.stemTextContent || q.stemText || ''
+  return raw.replace(/<[^>]+>/g, ' ').trim() || '（无题干文本，图片题）'
+}
+
 // ── 本课目录（TOC）：复用 kg-lecture 的 scrollBy 循环逼近，驯 Umo 封闭滚动 ──
 interface TocItem { level: number; text: string; index: number }
 const toc = ref<TocItem[]>([])
@@ -391,9 +441,9 @@ onBeforeUnmount(() => { if (scrollHost) scrollHost.removeEventListener('scroll',
 </script>
 
 <template>
-  <div class="lh-page">
-    <!-- 左·教辅结构树（复用题库目录，讲义装饰） -->
-    <aside class="lh-left">
+  <div class="lh-page" :class="{ immersive: editing }">
+    <!-- 左·教辅结构树（复用题库目录，讲义装饰）；编辑态收起=沉浸式 -->
+    <aside v-show="!editing" class="lh-left">
       <SubjectDirectory :lesson-meta="lessonMeta" dim-uncovered @select="onSelectNode" />
     </aside>
 
@@ -413,6 +463,14 @@ onBeforeUnmount(() => { if (scrollHost) scrollHost.removeEventListener('scroll',
             </div>
           </template>
           <span v-else class="lh-bar-lab muted">讲义浏览</span>
+        </div>
+        <!-- 编辑态：插入自定义节点快捷条（沉浸式，移植自旧课件编辑页） -->
+        <div v-if="editing" class="lh-insert">
+          <span class="lh-insert-lab">插入</span>
+          <button class="lh-ins-btn mm" @click="insertKgMindmap">思维导图</button>
+          <button class="lh-ins-btn note" @click="insertKgNote">名师解读</button>
+          <button class="lh-ins-btn callout" @click="insertKgCallout">记忆框</button>
+          <button class="lh-ins-btn ex" @click="insertKgExample">例题卡</button>
         </div>
         <div class="lh-bar-r">
           <span v-if="editing" class="lh-editing-tag">编辑中</span>
@@ -442,8 +500,8 @@ onBeforeUnmount(() => { if (scrollHost) scrollHost.removeEventListener('scroll',
       </div>
     </section>
 
-    <!-- 右·本课目录 -->
-    <aside class="lh-right">
+    <!-- 右·本课目录；编辑态收起=沉浸式 -->
+    <aside v-show="!editing" class="lh-right">
       <div class="lh-toc-head">本课目录</div>
       <nav v-if="toc.length" class="lh-toc-list">
         <button
@@ -454,6 +512,21 @@ onBeforeUnmount(() => { if (scrollHost) scrollHost.removeEventListener('scroll',
       </nav>
       <div v-else class="lh-toc-empty">选择课时后<br>显示本课小节目录</div>
     </aside>
+
+    <!-- 例题选题器（编辑态插入例题卡用；只存 qid） -->
+    <el-dialog v-model="pickerVisible" title="从题库选例题" width="640px" append-to-body>
+      <div class="lh-picker-search">
+        <el-input v-model="pickerKeyword" placeholder="关键字搜题干…" clearable size="default" @keyup.enter="searchPicker" />
+        <el-button type="primary" :loading="pickerLoading" @click="searchPicker">搜索</el-button>
+      </div>
+      <div v-loading="pickerLoading" class="lh-picker-list">
+        <div v-for="q in pickerList" :key="String(q.id)" class="lh-picker-item" @click="pickQuestion(q)">
+          <span class="lh-picker-type">{{ dict.label(DICT_QUESTION_TYPE, q.questionType) || '题' }}</span>
+          <span class="lh-picker-stem">{{ pickerStem(q) }}</span>
+        </div>
+        <div v-if="!pickerLoading && !pickerList.length" class="lh-picker-empty">没有匹配的题，换个关键字试试</div>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -499,6 +572,28 @@ onBeforeUnmount(() => { if (scrollHost) scrollHost.removeEventListener('scroll',
 .lh-src-tab:disabled { opacity: .55; cursor: not-allowed; }
 .lh-new { border: 1px dashed #2ba3a3; background: #f0faf9; color: #176e6e; font-size: 13px; font-weight: 600; padding: 8px 18px; border-radius: 9px; cursor: pointer; transition: .15s; }
 .lh-new:hover { background: #e6f2f2; }
+
+/* 沉浸式编辑：左右栏收起，编辑器满幅 */
+.lh-page.immersive { padding: 8px; gap: 0; }
+.lh-page.immersive .lh-center { border-radius: 8px; }
+
+/* 插入快捷条（编辑态） */
+.lh-insert { display: flex; align-items: center; gap: 6px; }
+.lh-insert-lab { font-size: 11px; font-weight: 700; letter-spacing: .5px; color: #7c8a90; }
+.lh-ins-btn { border: 1px solid #e3e9e9; background: #fff; font-size: 12px; font-weight: 600; padding: 4px 11px; border-radius: 7px; cursor: pointer; transition: .15s; }
+.lh-ins-btn.mm { color: #2563eb; border-color: #dbe5fb; } .lh-ins-btn.mm:hover { background: #eff4fe; }
+.lh-ins-btn.note { color: #dc2626; border-color: #fbdddd; } .lh-ins-btn.note:hover { background: #fef2f2; }
+.lh-ins-btn.callout { color: #64748b; border-color: #e2e8f0; } .lh-ins-btn.callout:hover { background: #f1f5f9; }
+.lh-ins-btn.ex { color: #176e6e; border-color: #cfe6e6; } .lh-ins-btn.ex:hover { background: #f0faf9; }
+
+/* 例题选题器 */
+.lh-picker-search { display: flex; gap: 8px; margin-bottom: 10px; }
+.lh-picker-list { min-height: 120px; max-height: 380px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+.lh-picker-item { display: flex; gap: 8px; align-items: flex-start; border: 1px solid #eef1f1; border-radius: 8px; padding: 9px 11px; cursor: pointer; transition: .15s; }
+.lh-picker-item:hover { border-color: #2ba3a3; background: #f7fcfb; }
+.lh-picker-type { flex-shrink: 0; font-size: 10.5px; font-weight: 700; color: #176e6e; background: #e6f2f2; padding: 2px 7px; border-radius: 999px; }
+.lh-picker-stem { font-size: 12.5px; color: #2c3b42; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.lh-picker-empty { text-align: center; color: #a8b2b6; font-size: 12.5px; padding: 30px 0; }
 .lh-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: #a8b2b6; }
 .lh-empty .ic { font-size: 40px; color: #cdd6d6; }
 .lh-empty p { font-size: 13.5px; }
