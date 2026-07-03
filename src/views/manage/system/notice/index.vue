@@ -126,7 +126,7 @@
 import { listNotice, getNotice, delNotice, addNotice, updateNotice } from '@/api/system/notice';
 import type { NoticeForm, NoticeQuery, NoticeVO } from '@/api/system/notice/types';
 
-const { proxy } = getCurrentInstance() as ComponentInternalInstance;
+const proxy = (getCurrentInstance() as ComponentInternalInstance).proxy!;
 const { sys_notice_status, sys_notice_type } = toRefs<any>(proxy?.useDict('sys_notice_status', 'sys_notice_type'));
 
 const noticeList = ref<NoticeVO[]>([]);

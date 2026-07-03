@@ -310,7 +310,7 @@ const ids = ref<Array<number | string>>([]);
 const single = ref(true);
 const multiple = ref(true);
 const total = ref(0);
-const dateRange = ref<[DateModelType, DateModelType]>(['', '']);
+const dateRange = ref<[string, string]>(['', '']);
 const deptName = ref('');
 const deptOptions = ref<DeptTreeVO[]>([]);
 const enabledDeptOptions = ref<DeptTreeVO[]>([]);
@@ -528,6 +528,7 @@ const handleResetPwd = async (row: UserVO) => {
         if (/<|>|"|'|\||\\/.test(value)) {
           return '不能包含非法字符：< > " \' \\ |';
         }
+        return true;
       }
     })
   );

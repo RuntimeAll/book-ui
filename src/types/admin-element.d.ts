@@ -1,6 +1,9 @@
 import type * as ep from 'element-plus';
 declare global {
-  declare type ElTagType = 'primary' | 'success' | 'info' | 'warning' | 'danger';
+  // RuoYi 字典 listClass 域（非 element-plus 官方 TagType）：后台字典管理页 listClass 下拉除
+  // primary/success/info/warning/danger 外还允许「默认」= 'default' 及历史空值 ''，DictTag 组件按
+  // 此判空/判默认渲染纯文本、非空值渲染 el-tag。
+  declare type ElTagType = 'default' | 'primary' | 'success' | 'info' | 'warning' | 'danger' | '';
   declare type ElFormInstance = ep.FormInstance;
   declare type ElTableInstance = ep.TableInstance;
   declare type ElUploadInstance = ep.UploadInstance;

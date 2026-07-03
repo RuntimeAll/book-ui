@@ -12,6 +12,8 @@
  * 注意：KaTeX 的 throwOnError=false，遇到无效 LaTeX 降级渲染原文，不崩组件。
  */
 import katex from 'katex'
+// PRD-C-212 V0：katex CSS 从 main.ts 下沉到这里 —— 谁用本模块渲染公式，谁的 chunk 背这份 CSS
+import 'katex/dist/katex.min.css'
 import MarkdownIt from 'markdown-it'
 import { normalizeMath } from '@/utils/mathNormalize'
 

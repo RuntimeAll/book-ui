@@ -1471,7 +1471,7 @@ function saveFieldEdit() {
               <span v-else-if="dna.noModel" class="no-model-pill" title="这道题没有对应的考试解题模型（不硬凑 M00）">无考模型</span>
               <span v-else class="dna-muted">未标</span>
               <span v-if="dimDirty('models')" class="dim-dirty">待重生⏳</span>
-              <el-popover :visible="modelPopover" placement="bottom-start" :width="300" trigger="manual">
+              <el-popover :visible="modelPopover" placement="bottom-start" :width="300">
                 <template #reference>
                   <button type="button" class="dna-min-btn" :disabled="isBusy" @click="openModelPopover">
                     {{ dna.models.length ? '改模型' : '＋ 加模型' }}
@@ -1529,7 +1529,6 @@ function saveFieldEdit() {
                 :visible="tagPopover"
                 placement="bottom-start"
                 :width="300"
-                trigger="manual"
               >
                 <template #reference>
                   <button type="button" class="dna-min-btn" :disabled="isBusy" @click="openTagPopover">

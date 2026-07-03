@@ -63,7 +63,7 @@ import type { RouteLocationNormalized } from 'vue-router';
 import { parseTime } from '@/utils/ruoyi';
 
 const route = useRoute();
-const { proxy } = getCurrentInstance() as ComponentInternalInstance;
+const proxy = (getCurrentInstance() as ComponentInternalInstance).proxy!;
 
 const loading = ref(true);
 const total = ref(0);
@@ -104,10 +104,10 @@ const close = () => {
     fullPath: '',
     hash: '',
     matched: [],
-    meta: undefined,
+    meta: {},
     name: undefined,
-    params: undefined,
-    query: undefined,
+    params: {},
+    query: {},
     redirectedFrom: undefined,
     path: '/manage/user'
   };

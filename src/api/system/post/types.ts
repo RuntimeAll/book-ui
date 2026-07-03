@@ -22,8 +22,8 @@ export interface PostForm {
 }
 
 export interface PostQuery extends PageQuery {
-  deptId: number | string;
-  belongDeptId: number | string;
+  deptId?: number | string;
+  belongDeptId?: number | string;
   postCode: string;
   postName: string;
   postCategory: string;

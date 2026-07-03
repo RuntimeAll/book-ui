@@ -11,6 +11,8 @@
  */
 import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { UmoEditor } from '@umoteam/editor'
+// PRD-C-212 V0：Umo 样式从 main.ts 下沉到讲义两页（体积大含字体，别全站买单）
+import '@umoteam/editor/style'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Edit, ArrowLeftBold, ArrowRightBold, Document, Check, Close } from '@element-plus/icons-vue'
 import SubjectDirectory from '@/components/business/SubjectDirectory/index.vue'

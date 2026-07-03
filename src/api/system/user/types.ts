@@ -56,7 +56,8 @@ export interface UserVO extends BaseEntity {
 export interface UserForm {
   id?: string;
   userId?: string;
-  deptId?: number;
+  /** 自己编辑自己时置 null 阻止改角色/部门/岗位（见 views/manage/system/user/index.vue submitForm） */
+  deptId?: number | null;
   userName: string;
   nickName?: string;
   password: string;
@@ -65,8 +66,8 @@ export interface UserForm {
   sex?: string;
   status: string;
   remark?: string;
-  postIds: string[];
-  roleIds: string[];
+  postIds: string[] | null;
+  roleIds: string[] | null;
 }
 
 export interface UserInfoVO {

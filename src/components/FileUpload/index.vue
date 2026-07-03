@@ -95,7 +95,8 @@ watch(
       if (Array.isArray(val)) {
         list = val;
       } else {
-        const res = await listByIds(val);
+        // modelValue 非数组时运行时恒为逗号拼接 ossId 字符串（Object 分支为 PropType 遗留宽松声明，从未真正传对象）
+        const res = await listByIds(val as string);
         list = res.data.map((oss) => {
           return {
             name: oss.originalName,

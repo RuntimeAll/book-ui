@@ -153,7 +153,7 @@ interface DeptOptionsType {
   children: DeptOptionsType[];
 }
 
-const { proxy } = getCurrentInstance() as ComponentInternalInstance;
+const proxy = (getCurrentInstance() as ComponentInternalInstance).proxy!;
 const { sys_normal_disable } = toRefs<any>(proxy?.useDict('sys_normal_disable'));
 
 const deptList = ref<DeptVO[]>([]);

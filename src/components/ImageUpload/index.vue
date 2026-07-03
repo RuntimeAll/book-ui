@@ -96,14 +96,15 @@ const fileAccept = computed(() => props.fileType.map((type) => `.${type}`).join(
 
 watch(
   () => props.modelValue,
-  async (val: string) => {
+  async (val: any) => {
     if (val) {
       // 首先将值转为数组
       let list: OssVO[] = [];
       if (Array.isArray(val)) {
         list = val as OssVO[];
       } else {
-        const res = await listByIds(val);
+        // modelValue 非数组时运行时恒为逗号拼接 ossId 字符串（Object 分支为 PropType 遗留宽松声明，从未真正传对象）
+        const res = await listByIds(val as string);
         list = res.data;
       }
       // 然后将数组转为对象数组

@@ -310,12 +310,18 @@ interface MenuOptionsType {
   children: MenuOptionsType[] | undefined;
 }
 
+interface MenuExpandItem {
+  row: any;
+  treeNode: unknown;
+  resolve: (data: any[]) => void;
+}
+
 const { proxy } = getCurrentInstance() as ComponentInternalInstance;
 const { sys_show_hide, sys_normal_disable } = toRefs<any>(proxy?.useDict('sys_show_hide', 'sys_normal_disable'));
 
 const menuList = ref<MenuVO[]>([]);
-const menuChildrenListMap = ref({});
-const menuExpandMap = ref({});
+const menuChildrenListMap = ref<Record<string | number, MenuVO[]>>({});
+const menuExpandMap = ref<Record<string | number, MenuExpandItem | undefined>>({});
 const loading = ref(true);
 const showSearch = ref(true);
 const menuOptions = ref<MenuOptionsType[]>([]);
@@ -379,11 +385,11 @@ const expandMenuHandle = async (row: any, expanded: boolean) => {
 /** 刷新展开的菜单数据 */
 const refreshLoadTree = (parentId: string | number) => {
   if (menuExpandMap.value[parentId]) {
-    const { row, treeNode, resolve } = menuExpandMap.value[parentId];
+    const { row, treeNode, resolve } = menuExpandMap.value[parentId]!;
     if (row) {
       getChildrenList(row, treeNode, resolve);
       if (row.parentId) {
-        const grandpaMenu = menuExpandMap.value[row.parentId];
+        const grandpaMenu = menuExpandMap.value[row.parentId]!;
         getChildrenList(grandpaMenu.row, grandpaMenu.treeNode, grandpaMenu.resolve);
       }
     }
@@ -402,7 +408,7 @@ const getList = async () => {
   loading.value = true;
   const res = await listMenu(queryParams.value);
 
-  const tempMap = {};
+  const tempMap: Record<string | number, MenuVO[]> = {};
   // 存储 父菜单:子菜单列表
   for (const menu of res.data) {
     const parentId = menu.parentId;
@@ -415,7 +421,7 @@ const getList = async () => {
   const menuIdSet = new Set();
   // 设置有没有子菜单
   for (const menu of res.data) {
-    menu['hasChildren'] = tempMap[menu.menuId]?.length > 0;
+    menu.hasChildren = (tempMap[menu.menuId]?.length ?? 0) > 0;
     menuIdSet.add(menu.menuId);
   }
   menuChildrenListMap.value = tempMap;
@@ -514,7 +520,7 @@ const cancelCascade = () => {
 
 /** 删除提交按钮 */
 const submitDeleteForm = async () => {
-  const menuIds = menuTreeRef.value?.getCheckedKeys();
+  const menuIds = menuTreeRef.value?.getCheckedKeys() ?? [];
   if (menuIds.length < 0) {
     proxy?.$modal.msgWarning('请选择要删除的菜单');
     return;

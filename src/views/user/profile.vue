@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { useUserStore } from '@/store/user'
 import {
@@ -45,6 +45,13 @@ const form = reactive<UpdateProfilePayload>({
   sex: null,
   grade: '',
   school: '',
+})
+
+// el-radio-group 不接受 null（modelValue 类型无 null）；form.sex=null 是后端"未设置性别"契约值，
+// 这里用 computed 代理做 null<->undefined 转换，不改 form.sex 本身的语义。
+const sexModel = computed<number | undefined>({
+  get: () => form.sex ?? undefined,
+  set: (v) => { form.sex = v ?? null },
 })
 
 // 任教年级下拉选项（按 misikt 硬编码）
@@ -181,7 +188,7 @@ onMounted(() => {
 
         <!-- 性别 0 男 / 1 女 -->
         <el-form-item label="性别">
-          <el-radio-group v-model="form.sex">
+          <el-radio-group v-model="sexModel">
             <el-radio :value="0">男</el-radio>
             <el-radio :value="1">女</el-radio>
           </el-radio-group>

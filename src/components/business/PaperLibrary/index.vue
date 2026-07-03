@@ -245,11 +245,18 @@ async function loadTree() {
 }
 
 onMounted(async () => {
-  if (!userStore.userInfo) {
-    try { const info = await getCurrentUser(); if (info) userStore.setUserInfo(info) } catch (e) { console.warn('[PaperLibrary] getCurrentUser 兜底失败', e) }
-  }
-  await Promise.all([dict.load(DICT_EDU_SUBJECT), dict.load(DICT_EDU_STAGE), dict.load(DICT_EDU_GRADE), dict.load(DICT_PAPER_TYPE)])
-  await loadTree()
+  // PRD-C-212 V0 首屏瀑布并行化：用户信息兜底 / 4 字典 / 卷库树 三者互不依赖，
+  // 原先三段串行（user → dicts → tree）= 3 个 RTT，并行后 1 个 RTT。
+  const userReady: Promise<void> = !userStore.userInfo
+    ? getCurrentUser()
+        .then((info) => { if (info) userStore.setUserInfo(info) })
+        .catch((e) => console.warn('[PaperLibrary] getCurrentUser 兜底失败', e))
+    : Promise.resolve()
+  await Promise.all([
+    userReady,
+    dict.load(DICT_EDU_SUBJECT), dict.load(DICT_EDU_STAGE), dict.load(DICT_EDU_GRADE), dict.load(DICT_PAPER_TYPE),
+    loadTree(),
+  ])
 
   // 恢复缓存 > 页面默认（数学·初中·七上）
   const c = readCache()

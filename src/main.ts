@@ -1,18 +1,13 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
-import ElementPlus from 'element-plus'
-import 'element-plus/dist/index.css'
-import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import 'virtual:uno.css'
-// KaTeX 样式 — AI 入库题 Markdown+LaTeX 富文本渲染所需 CSS
-import 'katex/dist/katex.min.css'
-// PRD-C-205 Umo Editor 样式（全局引入，避免每个页面重复打包 CSS；类型走 shims-umoteam.d.ts）
-import '@umoteam/editor/style'
+// PRD-C-212 V0 首屏减重（改前 main.ts 挂三座大山，全部下沉）：
+//  1) 全量 ElementPlus JS+CSS 已删 —— unplugin 按需导入在 vite.config.ts；zh-cn locale 走 App.vue 的 ElConfigProvider
+//  2) katex CSS 下沉到 utils/richtext.ts（谁渲染公式谁背 CSS）；InlineMath.vue 本就自带
+//  3) @umoteam/editor/style 下沉到 lecture-hub / kg-lecture-edit 两页
+//  4) PRD-C-211 管理台地基（svg雪碧图 + adminPlugins + adminDirectives）改为进 /manage 懒装载
+//     —— 见 plugins/admin-foundation.ts + router 守卫，老师不进管理中心不为它买单
 import * as ElementPlusIconsVue from '@element-plus/icons-vue'
-// PRD-C-211 系统管理移植：svg 雪碧图注册 + plus-ui globalProperties 插件（$modal/$tab/useDict/handleTree…）+ v-hasPermi 指令
-import 'virtual:svg-icons-register'
-import adminPlugins from '@/plugins'
-import adminDirectives from '@/directive'
 import App from './App.vue'
 import router from './router'
 import { safeHtml } from '@/directives/safeHtml'
@@ -22,17 +17,16 @@ import '@/views/variant/variant-theme.css'
 
 const app = createApp(App)
 
-// Register Element Plus icons globally
+// Element Plus 图标全局注册（业务页模板裸用 <Search/> 等，unplugin 不解析图标，保留全局）
 for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
   app.component(key, component)
 }
 
 app.use(createPinia())
 app.use(router)
-app.use(ElementPlus, { locale: zhCn })
 // PRD-A-013 H-3: 全局 v-safe-html 指令 — 富文本一律走它, 禁用裸 v-html
 app.directive('safe-html', safeHtml)
-// PRD-C-211：系统管理移植页的地基（globalProperties + v-hasPermi/v-hasRoles/v-copyText）
-app.use(adminPlugins)
-adminDirectives(app)
 app.mount('#app')
+
+// 供 router 守卫懒装载管理台地基时取 app 实例（plugins/admin-foundation.ts）
+export { app }

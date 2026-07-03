@@ -137,7 +137,7 @@ import ImagePreview from '@/components/ImagePreview/index.vue';
 import type { OssForm, OssQuery, OssVO } from '@/api/system/oss/types';
 
 const router = useRouter();
-const { proxy } = getCurrentInstance() as ComponentInternalInstance;
+const proxy = (getCurrentInstance() as ComponentInternalInstance).proxy!;
 
 const ossList = ref<OssVO[]>([]);
 const showTable = ref(true);
@@ -150,7 +150,7 @@ const multiple = ref(true);
 const total = ref(0);
 const type = ref(0);
 const previewListResource = ref(true);
-const dateRangeCreateTime = ref<[DateModelType, DateModelType]>(['', '']);
+const dateRangeCreateTime = ref<[string, string]>(['', '']);
 
 const dialog = reactive<DialogOption>({
   visible: false,

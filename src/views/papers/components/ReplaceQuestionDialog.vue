@@ -15,7 +15,7 @@ import { ref, watch, computed } from 'vue'
 import { questionPage } from '@/api/question/index'
 import type { QuestionItem } from '@/api/question/index'
 import QuestionContent from '@/components/business/QuestionContent/index.vue'
-import { useDictStore, DICT_QUESTION_TYPE } from '@/store/dict'
+import { useDictStore, DICT_QUESTION_TYPE, type ElTagColorType } from '@/store/dict'
 
 // ── props / emits ────────────────────────────────────────────
 // PRD-A-013 T2 — 雪花 ID 全 string
@@ -149,7 +149,7 @@ function typeLabel(t: number): string {
   return dict.label(DICT_QUESTION_TYPE, t) || `题型${t}`
 }
 
-function typeTagColor(t: number): string {
+function typeTagColor(t: number): ElTagColorType {
   // 徽标颜色走字典 list_class（biz_question_type，超管可维护）
   return dict.tagType(DICT_QUESTION_TYPE, t, 'info')
 }

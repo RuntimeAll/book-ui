@@ -59,7 +59,7 @@
       </el-table>
 
       <pagination v-show="total > 0" v-model:page="queryParams.pageNum" v-model:limit="queryParams.pageSize" :total="total" @pagination="getList" />
-      <select-user ref="selectRef" :role-id="queryParams.roleId" @ok="handleQuery" />
+      <select-user ref="selectRef" :role-id="queryParams.roleId!" @ok="handleQuery" />
     </el-card>
   </div>
 </template>
@@ -108,10 +108,10 @@ const handleClose = () => {
     fullPath: '',
     hash: '',
     matched: [],
-    meta: undefined,
+    meta: {},
     name: undefined,
-    params: undefined,
-    query: undefined,
+    params: {},
+    query: {},
     redirectedFrom: undefined
   };
   proxy?.$tab.closeOpenPage(obj);

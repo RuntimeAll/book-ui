@@ -99,7 +99,7 @@
       <el-form :model="form" label-width="100px">
         <el-row>
           <el-col :span="12">
-            <el-form-item label="操作模块：">{{ form.title }} / {{ proxy?.selectDictLabel(sys_oper_type, form.businessType) }}</el-form-item>
+            <el-form-item label="操作模块：">{{ form.title }} / {{ proxy?.selectDictLabel(sys_oper_type, form.businessType ?? '') }}</el-form-item>
             <el-form-item label="登录信息：">{{ form.operName }} / {{ form.operIp }} / {{ form.operLocation }}</el-form-item>
             <el-form-item label="请求地址：">{{ form.operUrl }}</el-form-item>
             <el-form-item label="请求方式：">{{ form.requestMethod }}</el-form-item>
@@ -107,7 +107,7 @@
           </el-col>
           <el-col :span="12">
             <el-form-item label="操作状态：">
-              <dict-tag :options="sys_common_status" :value="form.status" />
+              <dict-tag :options="sys_common_status" :value="form.status ?? ''" />
             </el-form-item>
             <el-form-item label="操作时间：">{{ proxy?.parseTime(form.operTime) }}</el-form-item>
             <el-form-item label="消耗时间：">{{ form.costTime }}毫秒</el-form-item>
@@ -152,7 +152,7 @@ const ids = ref<Array<string | number>>([]);
 const multiple = ref(true);
 const total = ref(0);
 const openView = ref(false);
-const dateRange = ref<[DateModelType, DateModelType]>(['', '']);
+const dateRange = ref<[string, string]>(['', '']);
 
 const queryFormRef = ref<ElFormInstance>();
 const form = ref<Partial<OperLogVO>>({});

@@ -11,6 +11,7 @@
  */
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { Search, ArrowDown } from '@element-plus/icons-vue'
+import type { TreeNodeData } from 'element-plus'
 import { lazyTree, type SubjectNode } from '@/api/question'
 import {
   useDictStore,
@@ -157,7 +158,7 @@ function togglePicker() { pickerOpen.value = !pickerOpen.value }
 // ── 章节树（关键字筛选 + 点击）──────────────────────────────
 const treeRef = ref()
 const keyword = ref('')
-function filterNode(value: string, data: SubjectNode) { return !value || (data.title ?? '').includes(value) }
+function filterNode(value: string, data: TreeNodeData) { return !value || ((data as SubjectNode).title ?? '').includes(value) }
 watch(keyword, (v) => treeRef.value?.filter(v))
 function onChapterClick(data: SubjectNode) { atAll.value = false; persist(); emit('select', data.id) }
 
@@ -174,12 +175,15 @@ const isSci = computed(() => sel.value?.subject === '科学')
 onMounted(async () => {
   loading.value = true
   try {
-    // 先备好字典（学科/学段/版本/册 label），readTextbook 才能把码翻成标签作内部 key
-    await Promise.all([
-      dict.load(DICT_EDU_SUBJECT), dict.load(DICT_EDU_STAGE),
-      dict.load(DICT_EDU_VOLUME), dict.load(DICT_EDU_EDITION),
+    // PRD-C-212 V0 瀑布并行化：字典（readTextbook 翻码用）与 lazyTree 互不依赖，
+    // 原两段串行 = 2 个 RTT，并行后 1 个；readTextbook 在两者都就绪后才执行，语义不变
+    const [, result] = await Promise.all([
+      Promise.all([
+        dict.load(DICT_EDU_SUBJECT), dict.load(DICT_EDU_STAGE),
+        dict.load(DICT_EDU_VOLUME), dict.load(DICT_EDU_EDITION),
+      ]),
+      lazyTree(0, props.mine),
     ])
-    const result = await lazyTree(0, props.mine)
     const roots: SubjectNode[] = Array.isArray(result) ? result : result ? [result as unknown as SubjectNode] : []
     const tb: Textbook[] = []; const up: SubjectNode[] = []
     // 保持 lazyTree 的 biz_subject.sort 原序（数学在前），不二次排序——默认教材与原页面一致

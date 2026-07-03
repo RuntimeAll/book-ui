@@ -282,7 +282,7 @@ import { listData, getData, delData, addData, updateData } from '@/api/system/di
 import type { DictTypeForm, DictTypeQuery, DictTypeVO } from '@/api/system/dict/type/types';
 import type { DictDataForm, DictDataQuery, DictDataVO } from '@/api/system/dict/data/types';
 
-const { proxy } = getCurrentInstance() as ComponentInternalInstance;
+const proxy = (getCurrentInstance() as ComponentInternalInstance).proxy!;
 
 const typeList = ref<DictTypeVO[]>([]);
 const typeLoading = ref(true);
@@ -291,7 +291,7 @@ const typeIds = ref<Array<number | string>>([]);
 const typeSingle = ref(true);
 const typeMultiple = ref(true);
 const typeTotal = ref(0);
-const dateRange = ref<[DateModelType, DateModelType]>(['', '']);
+const dateRange = ref<[string, string]>(['', '']);
 
 const typeFormRef = ref<ElFormInstance>();
 const typeQueryFormRef = ref<ElFormInstance>();

@@ -126,7 +126,7 @@
 import { listConfig, getConfig, delConfig, addConfig, updateConfig, refreshCache } from '@/api/system/config';
 import type { ConfigForm, ConfigQuery, ConfigVO } from '@/api/system/config/types';
 
-const { proxy } = getCurrentInstance() as ComponentInternalInstance;
+const proxy = (getCurrentInstance() as ComponentInternalInstance).proxy!;
 const { sys_yes_no } = toRefs<any>(proxy?.useDict('sys_yes_no'));
 
 const configList = ref<ConfigVO[]>([]);
@@ -136,7 +136,7 @@ const ids = ref<Array<number | string>>([]);
 const single = ref(true);
 const multiple = ref(true);
 const total = ref(0);
-const dateRange = ref<[DateModelType, DateModelType]>(['', '']);
+const dateRange = ref<[string, string]>(['', '']);
 
 const queryFormRef = ref<ElFormInstance>();
 const configFormRef = ref<ElFormInstance>();

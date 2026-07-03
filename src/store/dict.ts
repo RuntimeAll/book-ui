@@ -17,6 +17,17 @@ export interface DictItem {
   listClass?: string
 }
 
+/** element-plus 新版 el-tag type 合法联合（无 'default'/''） */
+export type ElTagColorType = 'primary' | 'success' | 'warning' | 'info' | 'danger'
+const TAG_COLOR_TYPES: readonly ElTagColorType[] = ['primary', 'success', 'warning', 'info', 'danger']
+
+/** 把字典 list_class 的历史值域（含 'default'/''）归一到 el-tag 新版合法联合 */
+function normalizeTagColor(listClass: string | undefined, fallback: ElTagColorType): ElTagColorType {
+  if (listClass === '' || listClass === 'default') return 'primary'
+  if (listClass && (TAG_COLOR_TYPES as readonly string[]).includes(listClass)) return listClass as ElTagColorType
+  return fallback
+}
+
 export const useDictStore = defineStore('dict', () => {
   // dictType -> 该字典的条目列表
   const cache = ref<Record<string, DictItem[]>>({})
@@ -67,16 +78,19 @@ export const useDictStore = defineStore('dict', () => {
   /**
    * 取某值的 el-tag 类型（字典 list_class）；缓存未命中 / 字典未配 list_class 回落 fallback。
    * 徽标颜色统一走字典 SSOT，超管在字典管理里改 list_class 即生效，不再各组件硬编码。
+   *
+   * list_class 历史值域比 element-plus 新版 TagType 宽（含 'default'/''，旧 EP 下渲染默认蓝色 tag）；
+   * 这里把这些历史值归一到新版合法联合 'primary'（视觉等价），未识别值落 fallback。
    */
   function tagType(
     dictType: string,
     value: string | number | null | undefined,
-    fallback = 'info',
-  ): string {
+    fallback: ElTagColorType = 'info',
+  ): ElTagColorType {
     if (value === null || value === undefined) return fallback
     const arr = list(dictType)
     const hit = arr.find((d) => d.dictValue === String(value))
-    return hit && hit.listClass ? hit.listClass : fallback
+    return normalizeTagColor(hit?.listClass, fallback)
   }
 
   return { cache, load, list, label, tagType }

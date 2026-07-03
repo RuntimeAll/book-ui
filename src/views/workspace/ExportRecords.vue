@@ -72,7 +72,7 @@ function statusLabel(record: ExportRecordPageItem): string {
   }
 }
 
-function statusType(record: ExportRecordPageItem): '' | 'success' | 'warning' | 'danger' | 'info' {
+function statusType(record: ExportRecordPageItem): 'success' | 'warning' | 'danger' | 'info' {
   switch (record.status) {
     case '0': return 'info'
     case '1': return 'warning'

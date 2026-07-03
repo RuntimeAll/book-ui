@@ -174,7 +174,7 @@ import { listPost, addPost, delPost, getPost, updatePost, deptTreeSelect } from 
 import type { PostForm, PostQuery, PostVO } from '@/api/system/post/types';
 import type { DeptTreeVO, DeptVO } from '@/api/system/dept/types';
 
-const { proxy } = getCurrentInstance() as ComponentInternalInstance;
+const proxy = (getCurrentInstance() as ComponentInternalInstance).proxy!;
 const { sys_normal_disable } = toRefs<any>(proxy?.useDict('sys_normal_disable'));
 
 const postList = ref<PostVO[]>([]);

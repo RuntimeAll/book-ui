@@ -14,6 +14,8 @@
  */
 import { ref, onMounted } from 'vue'
 import { UmoEditor } from '@umoteam/editor'
+// PRD-C-212 V0：Umo 样式从 main.ts 下沉到讲义两页（体积大含字体，别全站买单）
+import '@umoteam/editor/style'
 import { ElMessage, ElLoading } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
 import { KG_NODE_EXTENSIONS } from '@/extensions/kg-nodes/index'

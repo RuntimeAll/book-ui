@@ -8,7 +8,29 @@
 <script setup lang="ts">
 import { NodeViewWrapper } from '@tiptap/vue-3'
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
-import MindMap from 'simple-mind-map'
+// PRD-C-212 V0：simple-mind-map（~几百KB）改首用动态加载，不再拖累讲义 chunk 首屏
+import type MindMapType from 'simple-mind-map'
+
+type MindMapCtor = typeof MindMapType
+type MindMapInstance = InstanceType<MindMapCtor>
+
+let smmCtor: MindMapCtor | null = null
+let smmLoadPromise: Promise<MindMapCtor> | null = null
+function loadSmm(): Promise<MindMapCtor> {
+  if (!smmLoadPromise) {
+    smmLoadPromise = import('simple-mind-map')
+      .then((m) => {
+        smmCtor = m.default
+        return smmCtor
+      })
+      .catch((e) => {
+        // 允许下次重试（chunk 网络抖动）
+        smmLoadPromise = null
+        throw e
+      })
+  }
+  return smmLoadPromise
+}
 
 const props = defineProps<{
   node: { attrs: { data: string } }
@@ -66,8 +88,10 @@ const THEME_CONFIG = {
   node: { fontSize: 13, paddingX: 8, paddingY: 5, borderRadius: 4, color: '#1e293b' },
 }
 
-function buildMindMap(el: HTMLElement): InstanceType<typeof MindMap> {
-  const mm = new MindMap({
+function buildMindMap(el: HTMLElement): MindMapInstance {
+  if (!smmCtor) throw new Error('simple-mind-map 尚未加载（先 await loadSmm()）')
+  // 上游 d.ts 把全部 140+ 选项标成必填（运行时实际全可选），窄断言到构造参数类型
+  const mm = new smmCtor({
     el,
     data: toSmm(tree.value as MindmapTreeNode) as never,
     readonly: true,
@@ -77,10 +101,11 @@ function buildMindMap(el: HTMLElement): InstanceType<typeof MindMap> {
     themeConfig: THEME_CONFIG,
     mousewheelAction: 'zoom',
     enableFreeDrag: false,
-  })
+  } as unknown as ConstructorParameters<MindMapCtor>[0])
   mm.on('node_tree_render_end', () => {
     try {
-      mm.view.fit()
+      // 上游 d.ts 给 fit 标了 3 个必填参数，运行时 0 参调用是官方用法，窄断言绕过
+      ;(mm.view as unknown as { fit: () => void }).fit()
     } catch {
       /* fit 偶发在尺寸未定时抛错，忽略 */
     }
@@ -90,10 +115,24 @@ function buildMindMap(el: HTMLElement): InstanceType<typeof MindMap> {
 
 // ── 内联实例（固定预览） ──
 const containerRef = ref<HTMLDivElement | null>(null)
-let mindMap: InstanceType<typeof MindMap> | null = null
+const smmLoading = ref(false)
+let mindMap: MindMapInstance | null = null
 
-function renderInline() {
+async function renderInline() {
   if (!containerRef.value || !tree.value) return
+  if (!smmCtor) {
+    smmLoading.value = true
+    try {
+      await loadSmm()
+    } catch (e) {
+      console.warn('[kgMindmap] simple-mind-map 加载失败:', e)
+      return
+    } finally {
+      smmLoading.value = false
+    }
+    // await 期间组件可能已卸载/数据已变
+    if (!containerRef.value || !tree.value) return
+  }
   if (mindMap) {
     mindMap.destroy()
     mindMap = null
@@ -104,12 +143,20 @@ function renderInline() {
 // ── 全屏实例（可交互） ──
 const fullscreen = ref(false)
 const fsContainerRef = ref<HTMLDivElement | null>(null)
-let fsMindMap: InstanceType<typeof MindMap> | null = null
+let fsMindMap: MindMapInstance | null = null
 
 watch(fullscreen, (open) => {
   if (open) {
-    nextTick(() => {
-      if (fsContainerRef.value && tree.value) {
+    nextTick(async () => {
+      if (!smmCtor) {
+        try {
+          await loadSmm()
+        } catch (e) {
+          console.warn('[kgMindmap] simple-mind-map 加载失败:', e)
+          return
+        }
+      }
+      if (fullscreen.value && fsContainerRef.value && tree.value) {
         fsMindMap = buildMindMap(fsContainerRef.value)
       }
     })
@@ -159,6 +206,7 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- 内联固定预览：pointer-events:none，纯展示不响应交互 -->
+    <div v-if="tree && smmLoading" class="mm-empty">思维导图加载中…</div>
     <div v-if="tree" ref="containerRef" class="kg-mindmap-canvas" />
     <div v-else class="mm-empty">（思维导图数据为空）</div>
 

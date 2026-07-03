@@ -45,6 +45,8 @@ export interface MenuVO extends BaseEntity {
   status: string;
   icon: string;
   remark: string;
+  /** 前端派生字段：是否存在子菜单（懒加载 el-table 用，非后端返回） */
+  hasChildren?: boolean;
 }
 
 export interface MenuForm {

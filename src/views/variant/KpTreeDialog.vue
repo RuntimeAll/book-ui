@@ -9,6 +9,7 @@
 // ---------------------------------------------------------------------------
 import { nextTick, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import type { TreeNodeData } from 'element-plus'
 import { lazyTree, type SubjectNode } from '@/api/question'
 
 const props = defineProps<{
@@ -42,9 +43,9 @@ function isLeaf(node: SubjectNode): boolean {
   return !node.hasChildren && (!node.children || node.children.length === 0)
 }
 
-function filterNode(value: string, data: SubjectNode) {
+function filterNode(value: string, data: TreeNodeData) {
   if (!value) return true
-  return (data.title ?? '').includes(value)
+  return ((data as SubjectNode).title ?? '').includes(value)
 }
 
 watch(keyword, (v) => treeRef.value?.filter(v))
