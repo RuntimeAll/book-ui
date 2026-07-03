@@ -6,6 +6,8 @@ import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import 'virtual:uno.css'
 // KaTeX 样式 — AI 入库题 Markdown+LaTeX 富文本渲染所需 CSS
 import 'katex/dist/katex.min.css'
+// PRD-C-205 Umo Editor 样式（全局引入，避免每个页面重复打包 CSS；类型走 shims-umoteam.d.ts）
+import '@umoteam/editor/style'
 import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 import App from './App.vue'
 import router from './router'

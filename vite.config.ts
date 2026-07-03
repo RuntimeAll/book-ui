@@ -20,11 +20,9 @@ import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 //    master-ai = C 线 → BE :8090 / dev :8091。目录+端口双隔离。
 const BOOK_SERVER_TARGET = 'http://localhost:8090'
 
-// 🔴 PRD-C-004：AI 编排服务 ai-orchestrator（Python/FastAPI）。端口归属：A 线(master-A)=:8094 / C 线=:8092。
-//    前端调 /ai/chat → vite proxy rewrite 掉 /ai → 转 <AI_ORCHESTRATOR_TARGET>/chat。
-//    走同源避免浏览器直连跨端口 CORS。ai-orchestrator 返回裸 JSON（非 misikt envelope），
-//    所以聊天调用独立封装（src/api/chat），不复用 /api 那套 misikt 拦截器。
-const AI_ORCHESTRATOR_TARGET = 'http://localhost:8092'
+// 🗂️ 2026-07-03 归档：AI 编排服务 ai-orchestrator（:8092 组卷）已退役 → _归档代码/ai-orchestrator-C线组卷-2026-07/；
+//    组卷职责转 L3 MCP compose_paper（走 :8090 落库）。前端 /ai→:8092 消费者（AI 助手页）2026-06-30 已删。
+//    原 AI_ORCHESTRATOR_TARGET 常量 + 下方 `^/ai/` proxy 块一并移除。完整同源副本见 codeplace-A/ai-orchestrator(:8094)。
 
 // 🔴 PRD-C-009：举一反三 agent 跑在 agent-service-toolkit（LangGraph/FastAPI）—— 与
 //    ai-orchestrator(:8092) 是两个独立 Python 服务。前端调 /agent/variant/stream → vite proxy
@@ -60,15 +58,8 @@ export default defineConfig({
         secure: false,
         rewrite: (p) => p.replace(/^\/api/, ''),
       },
-      // 🔴 用正则 `^/ai/`（带尾斜杠）而非裸 `/ai` 前缀 —— 否则 vite 前缀匹配会把 SPA 路由
-      //    /ai-assistant、/ai-variant 也吞进 proxy（/ai-variant → 转 :8092 → 404 detail:Not Found）。
-      //    `^/ai/` 只命中 /ai/chat 这类真接口，不误伤 /ai-* 页面路由（直连/刷新也不再 404）。
-      '^/ai/': {
-        target: AI_ORCHESTRATOR_TARGET,
-        changeOrigin: true,
-        secure: false,
-        rewrite: (p) => p.replace(/^\/ai/, ''),
-      },
+      // 🗂️ 2026-07-03 归档移除：原 `^/ai/` → AI_ORCHESTRATOR_TARGET(:8092 ai-orchestrator) proxy
+      //    随组卷服务归档删除（组卷转 L3 MCP compose_paper）。SPA 路由 /ai-assistant、/ai-variant 不受影响。
       // 🔴 PRD-C-009 举一反三 agent（toolkit :8093）。同样用 `^/agent/` 防误吞未来 /agent-* 路由。
       '^/agent/': {
         target: AI_TOOLKIT_TARGET,

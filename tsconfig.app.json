@@ -3,7 +3,9 @@
   "compilerOptions": {
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@umoteam/editor": ["./src/types/shims-umoteam.d.ts"],
+      "@umoteam/editor/style": ["./src/types/shims-umoteam.d.ts"]
     },
     "types": ["vite/client"],
     "noUnusedLocals": false,
