@@ -16,6 +16,7 @@ import {
 import { updateExamPaper, type UpdatePaperQuestion, type PaperListItem } from '@/api/paper/index'
 import { usePaperBasket } from '@/composables/usePaperBasket'
 import { useAbortableRequest } from '@/composables/useAbortableRequest'
+import { useLoginGuard } from '@/composables/useLoginGuard'
 import PaperPreview from '@/components/business/PaperPreview/index.vue'
 import SketchPad from '@/components/business/SketchPad/index.vue'
 import FavoriteFolderDrawer from '@/components/FavoriteFolderDrawer/index.vue'
@@ -41,6 +42,9 @@ const paperId = computed(() => route.params.id as string)
 // ── 试题栏 composable（E 段③ — 全局 singleton，跟题库 / 全局 FAB 联动）──
 const basket = useQuestionBasket()
 
+// PRD-C-212 D5 — 游客态操作按钮登录引导
+const { ensureLogin } = useLoginGuard()
+
 // ── 试卷篮 composable（本卷整卷加入/移出试卷篮，复用卷库列表页同一套，禁造轮子）──
 const paperBasket = usePaperBasket()
 // 用卷详情拼一个 PaperListItem（试卷篮 add/remove/角标 都按 id）
@@ -63,6 +67,7 @@ const asPaperItem = computed<PaperListItem>(() => ({
 const inPaperBasket = computed(() => paperBasket.basketIds.value.has(asPaperItem.value.id))
 async function handleTogglePaperBasket(): Promise<void> {
   if (!detail.value) return
+  if (!(await ensureLogin())) return
   const id = asPaperItem.value.id
   if (paperBasket.isLoading(id)) return
   if (paperBasket.basketIds.value.has(id)) {
@@ -197,6 +202,7 @@ function handleDetail(q: PaperSourceQuestion) {
 
 // ── 试题栏 toggle ──
 async function handleBasketToggle(q: PaperSourceQuestion) {
+  if (!(await ensureLogin())) return
   if (basket.isLoading(q.id)) return
   if (basket.basketIds.value.has(q.id)) {
     await basket.remove(q.id)
@@ -243,7 +249,8 @@ function patchFavorite(id: string, val: boolean) {
   }
 }
 
-function handleFavorite(q: PaperSourceQuestion) {
+async function handleFavorite(q: PaperSourceQuestion) {
+  if (!(await ensureLogin())) return
   if (q.isFavorite) {
     // 已收藏 → 直接取消（乐观更新 + 异步调 API）
     patchFavorite(q.id, false)

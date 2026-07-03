@@ -45,6 +45,11 @@ function handleDropdownCommand(command: string) {
   }
 }
 
+// PRD-C-212 D5 — 游客点「登录」带 redirect 回跳当前页
+function goLogin() {
+  router.push({ path: '/login', query: { redirect: route.fullPath } })
+}
+
 interface MenuItem {
   label: string
   path: string
@@ -138,8 +143,13 @@ const showMultiFunctionFab = computed(() => {
 
         <!-- Right actions（PRD-C-212 D2：会员体系不做，「升级会员」按钮删除） -->
         <div class="header-right">
+          <!-- PRD-C-212 D5 — 游客态：登录/免费注册 替代头像 -->
+          <template v-if="!userStore.isLoggedIn">
+            <el-button class="guest-login-btn" size="default" text @click="goLogin">登录</el-button>
+            <el-button class="guest-register-btn" size="default" type="primary" @click="router.push('/register')">免费注册</el-button>
+          </template>
           <!-- U-hotfix — avatar 改 dropdown，含"退出登录" -->
-          <el-dropdown trigger="click" placement="bottom-end" @command="handleDropdownCommand">
+          <el-dropdown v-if="userStore.isLoggedIn" trigger="click" placement="bottom-end" @command="handleDropdownCommand">
             <div class="avatar-wrap">
               <el-avatar
                 :size="34"
@@ -174,8 +184,9 @@ const showMultiFunctionFab = computed(() => {
     </el-main>
 
     <!-- 全局多功能球 hub（PRD-A-002 B1 — 合并 试题栏/试卷篮/拆题 三球为一：
-         单击展开 hub（＋录入新题 + 进行中/试题栏/试卷篮 三 tab），收起态球内进度环，可拖动） -->
-    <MultiFunctionFab v-if="showMultiFunctionFab" />
+         单击展开 hub（＋录入新题 + 进行中/试题栏/试卷篮 三 tab），收起态球内进度环，可拖动）
+         PRD-C-212 D5 — 游客不渲染（球会拉试题栏/试卷篮个人接口，游客态全是 401） -->
+    <MultiFunctionFab v-if="userStore.isLoggedIn && showMultiFunctionFab" />
   </el-container>
 </template>
 

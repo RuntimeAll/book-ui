@@ -102,6 +102,10 @@ instance.interceptors.response.use(
         // request.post<T, R> 调用方泛型推断，把 R 当真返回类型用。
         return data.data as unknown as AxiosResponse
       }
+      // PRD-C-212 D5 — 游客态 401 静默（未白名单的 /system 读，如个别字典）
+      if (data.code === 401 && !useUserStore().accessToken) {
+        return Promise.reject(new Error('未登录 (401)'))
+      }
       ElMessage.error(data.msg || `登录接口异常 (code=${data.code})`)
       return Promise.reject(new Error(data.msg || `登录接口异常 (code=${data.code})`))
     }
@@ -113,6 +117,11 @@ instance.interceptors.response.use(
       return data.response as unknown as AxiosResponse
     }
     if (data.code === 401) {
+      // PRD-C-212 D5 — 游客态（本就没 token）：漫游页挂着的个人化子请求（收藏态/篮子/笔记）
+      // 401 是预期，静默 reject 不弹 toast 不跳登录，由页面自行忽略；登录态失效才走引导
+      if (!useUserStore().accessToken) {
+        return Promise.reject(new Error('未登录 (401)'))
+      }
       redirectToLogin()
       return Promise.reject(new Error('未登录 (401)'))
     }
@@ -136,6 +145,10 @@ instance.interceptors.response.use(
 
     // HTTP 401（Sa-Token 拦下未经 advice 包装）
     if (status === 401) {
+      // PRD-C-212 D5 — 游客态静默（同上 envelope 401 分支）
+      if (!useUserStore().accessToken) {
+        return Promise.reject(error)
+      }
       redirectToLogin()
       return Promise.reject(error)
     }

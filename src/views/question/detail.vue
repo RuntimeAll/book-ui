@@ -38,6 +38,7 @@ import QuestionBlockRender from '@/components/business/QuestionBlockRender/index
 import { parseBlockDoc } from '@/utils/blockSchema'
 import { useDictStore, DICT_QUESTION_TYPE, DICT_QUESTION_DIFFICULTY } from '@/store/dict'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
+import { useLoginGuard } from '@/composables/useLoginGuard'
 import { useUserStore } from '@/store/user'
 import { getCurrentUser } from '@/api/user'
 
@@ -55,6 +56,9 @@ const sketchVisible = ref(false)
 
 // ── 试题栏（全局 singleton composable） ──────────────────────
 const basket = useQuestionBasket()
+
+// PRD-C-212 D5 — 游客态操作按钮登录引导
+const { ensureLogin } = useLoginGuard()
 
 // ── 题目数据 ─────────────────────────────────────────────────
 const question = ref<QuestionDetail | null>(null)
@@ -125,6 +129,7 @@ const isFavorite = ref(false)
 const favoriteLoading = ref(false)
 
 async function handleFavorite() {
+  if (!(await ensureLogin())) return
   if (favoriteLoading.value) return
   favoriteLoading.value = true
   const prev = isFavorite.value
@@ -152,6 +157,7 @@ const isInBasket = computed(() => basket.basketIds.value.has(questionId.value))
 const basketLoading = computed(() => basket.isLoading(questionId.value))
 
 async function handleBasketToggle() {
+  if (!(await ensureLogin())) return
   const id = questionId.value
   if (basket.isLoading(id)) return
   if (basket.basketIds.value.has(id)) {
@@ -190,6 +196,7 @@ async function loadNotes() {
 }
 
 async function saveNote() {
+  if (!(await ensureLogin())) return
   if (!noteInput.value.trim()) return
   noteSaving.value = true
   try {

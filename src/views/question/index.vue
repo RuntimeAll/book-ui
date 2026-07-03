@@ -13,6 +13,7 @@ import {
 import { useRouter } from 'vue-router'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
 import { useAbortableRequest } from '@/composables/useAbortableRequest'
+import { useLoginGuard } from '@/composables/useLoginGuard'
 import FavoriteFolderDrawer from '@/components/FavoriteFolderDrawer/index.vue'
 import SearchWrap from '@/components/SearchWrap/index.vue'
 import QuestionCard from '@/components/business/QuestionCard/index.vue'
@@ -24,6 +25,9 @@ const router = useRouter()
 
 // ── 试题栏（全局 singleton composable，FAB+dialog 由 AppLayout 挂的 <QuestionBasket /> 渲染） ──
 const basket = useQuestionBasket()
+
+// PRD-C-212 D5 — 游客态操作按钮登录引导
+const { ensureLogin } = useLoginGuard()
 
 // ── 题库目录（SubjectDirectory 收放筛选组件）──────────────────
 // 组件解析教材根名 → 学科/学段/版本/年级/册筛选 + 章节树，选中后 emit subjectId（null=全部）。
@@ -163,6 +167,7 @@ function setQuestionFavorite(qid: string, fav: boolean) {
 // ── 试题栏 toggle ────────────────────────────────────────────
 // 通过 composable 完成 — 内部 togglingIds 防连点 + 乐观更新 + 持久化
 async function handleBasketToggle(question: QuestionItem) {
+  if (!(await ensureLogin())) return
   if (basket.isLoading(question.id)) return
   if (basket.basketIds.value.has(question.id)) {
     await basket.remove(question.id)
@@ -189,7 +194,8 @@ const favDrawerVisible = ref(false)
 // PRD-A-013 T2 — 雪花 ID 空态 ''
 const favDrawerQuestionId = ref<string>('')
 
-function handleFavorite(q: QuestionItem) {
+async function handleFavorite(q: QuestionItem) {
+  if (!(await ensureLogin())) return
   if (favoriteLoading.has(q.id)) return
   if (q.isFavorite) {
     // 已收藏 → 直接取消，不弹抽屉

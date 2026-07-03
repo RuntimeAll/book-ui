@@ -28,12 +28,15 @@ import { useUserStore } from '@/store/user'
 import { getCurrentUser } from '@/api/user'
 import { usePaperBasket } from '@/composables/usePaperBasket'
 import { useAbortableRequest } from '@/composables/useAbortableRequest'
+import { useLoginGuard } from '@/composables/useLoginGuard'
 
 const router = useRouter()
 const route = useRoute()
 const userStore = useUserStore()
 const basket = usePaperBasket()
 const dict = useDictStore()
+// PRD-C-212 D5 — 游客态操作按钮登录引导
+const { ensureLogin } = useLoginGuard()
 
 // ══ 分类树（结构化字段驱动）══════════════════════════════════
 const NO_MATCH = 'NONE' // 空学科/学段兜底 subjectId（前缀匹配不到任何分类 → 0 条）
@@ -222,6 +225,7 @@ async function handleDelete(item: PaperListItem) {
 }
 function handleNotOpen() { ElMessage.info('暂未开放') }
 async function handleToggleBasket(item: PaperListItem) {
+  if (!(await ensureLogin())) return
   if (basket.isLoading(item.id)) return
   if (basket.basketIds.value.has(item.id)) { await basket.remove(item.id) } else { await basket.add(item) }
 }

@@ -29,6 +29,15 @@ declare module 'vue-router' {
 // U 卡 段⑧ — /register 加入白名单（注册时不能强制登录）
 const PUBLIC_ROUTES = new Set<string>(['/login', '/register', '/geo-engine-test'])
 
+// PRD-C-212 D5 — 未登录漫游白名单：首页/题库(列表+详情)/卷库(列表+原卷结构)/讲义 可看。
+// 收藏/加篮/组卷/下载/备课台/管理仍需登录（守卫拦 + 页面按钮登录引导 + BE 只放只读端点）。
+const GUEST_EXACT = new Set<string>(['/home', '/question/index', '/papers/index', '/lecture-hub'])
+const GUEST_PREFIXES = ['/question/detail/', '/papers/source/']
+
+function isGuestBrowsable(path: string): boolean {
+  return GUEST_EXACT.has(path) || GUEST_PREFIXES.some((p) => path.startsWith(p))
+}
+
 // 无权限时的重定向落点（已登录但角色不匹配 meta.roles）
 const NO_PERMISSION_REDIRECT = '/question/index'
 
@@ -297,6 +306,10 @@ router.beforeEach(async (to) => {
 
   const userStore = useUserStore()
   if (!userStore.isLoggedIn) {
+    // PRD-C-212 D5 — 游客可漫游白名单页（个人化子请求由 http/request 游客态 401 静默兜底）
+    if (isGuestBrowsable(to.path)) {
+      return true
+    }
     return { path: '/login', query: { redirect: to.fullPath } }
   }
 
