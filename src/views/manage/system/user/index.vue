@@ -4,7 +4,7 @@
       <!-- 部门树 -->
       <el-col :lg="4" :xs="24" style="">
         <el-card shadow="hover">
-          <el-input v-model="deptName" placeholder="请输入部门名称" prefix-icon="Search" clearable />
+          <el-input v-model="deptName" placeholder="请输入机构/部门名称" prefix-icon="Search" clearable />
           <el-tree
             ref="deptTreeRef"
             class="mt-2"
@@ -155,13 +155,13 @@
             </el-form-item>
           </el-col>
           <el-col :span="12" v-if="form.userId == null || form.userId != useUserStore().userId">
-            <el-form-item label="归属部门" prop="deptId">
+            <el-form-item label="归属机构" prop="deptId">
               <el-tree-select
                 v-model="form.deptId"
                 :data="enabledDeptOptions"
                 :props="{ value: 'id', label: 'label', children: 'children' } as any"
                 value-key="id"
-                placeholder="请选择归属部门"
+                placeholder="请选择归属机构"
                 check-strictly
                 @change="handleDeptChange"
               />

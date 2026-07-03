@@ -26,7 +26,7 @@ const MENUS: MenuItem[] = [
   { title: '用户管理', path: '/manage/user', perms: ['system:user:list'] },
   { title: '角色管理', path: '/manage/role', perms: ['system:role:list'] },
   { title: '菜单管理', path: '/manage/menu', perms: ['system:menu:list'] },
-  { title: '部门管理', path: '/manage/dept', perms: ['system:dept:list'] },
+  { title: '机构管理', path: '/manage/dept', perms: ['system:dept:list'] },
   { title: '岗位管理', path: '/manage/post', perms: ['system:post:list'] },
   { title: '字典管理', path: '/manage/dict', perms: ['system:dict:list'] },
   { title: '参数设置', path: '/manage/config', perms: ['system:config:list'] },

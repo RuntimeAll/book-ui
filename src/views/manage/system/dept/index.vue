@@ -4,14 +4,14 @@
       <div v-show="showSearch" class="mb-[10px]">
         <el-card shadow="hover">
           <el-form ref="queryFormRef" :model="queryParams" :inline="true">
-            <el-form-item label="部门名称" prop="deptName">
-              <el-input v-model="queryParams.deptName" placeholder="请输入部门名称" clearable @keyup.enter="handleQuery" />
+            <el-form-item label="机构名称" prop="deptName">
+              <el-input v-model="queryParams.deptName" placeholder="请输入机构名称" clearable @keyup.enter="handleQuery" />
             </el-form-item>
             <el-form-item label="类别编码" prop="deptCategory">
               <el-input v-model="queryParams.deptCategory" placeholder="请输入类别编码" clearable style="width: 240px" @keyup.enter="handleQuery" />
             </el-form-item>
             <el-form-item label="状态" prop="status">
-              <el-select v-model="queryParams.status" placeholder="部门状态" clearable>
+              <el-select v-model="queryParams.status" placeholder="机构状态" clearable>
                 <el-option v-for="dict in sys_normal_disable" :key="dict.value" :label="dict.label" :value="dict.value" />
               </el-select>
             </el-form-item>
@@ -46,7 +46,7 @@
         :tree-props="{ children: 'children', hasChildren: 'hasChildren' }"
         :default-expand-all="isExpandAll"
       >
-        <el-table-column prop="deptName" label="部门名称" width="260"></el-table-column>
+        <el-table-column prop="deptName" label="机构名称" width="260"></el-table-column>
         <el-table-column prop="deptCategory" align="center" label="类别编码" width="200"></el-table-column>
         <el-table-column prop="orderNum" align="center" label="排序" width="200"></el-table-column>
         <el-table-column prop="status" align="center" label="状态" width="100">
@@ -79,20 +79,20 @@
       <el-form ref="deptFormRef" :model="form" :rules="rules" label-width="80px">
         <el-row>
           <el-col v-if="form.parentId !== 0" :span="24">
-            <el-form-item label="上级部门" prop="parentId">
+            <el-form-item label="上级机构" prop="parentId">
               <el-tree-select
                 v-model="form.parentId"
                 :data="deptOptions"
                 :props="{ value: 'deptId', label: 'deptName', children: 'children' } as any"
                 value-key="deptId"
-                placeholder="选择上级部门"
+                placeholder="选择上级机构"
                 check-strictly
               />
             </el-form-item>
           </el-col>
           <el-col :span="12">
-            <el-form-item label="部门名称" prop="deptName">
-              <el-input v-model="form.deptName" placeholder="请输入部门名称" />
+            <el-form-item label="机构名称" prop="deptName">
+              <el-input v-model="form.deptName" placeholder="请输入机构名称" />
             </el-form-item>
           </el-col>
           <el-col :span="12">
@@ -123,7 +123,7 @@
             </el-form-item>
           </el-col>
           <el-col :span="12">
-            <el-form-item label="部门状态">
+            <el-form-item label="机构状态">
               <el-radio-group v-model="form.status">
                 <el-radio v-for="dict in sys_normal_disable" :key="dict.value" :value="dict.value">{{ dict.label }}</el-radio>
               </el-radio-group>
@@ -193,8 +193,8 @@ const initData: PageData<DeptForm, DeptQuery> = {
     status: undefined
   },
   rules: {
-    parentId: [{ required: true, message: '上级部门不能为空', trigger: 'blur' }],
-    deptName: [{ required: true, message: '部门名称不能为空', trigger: 'blur' }],
+    parentId: [{ required: true, message: '上级机构不能为空', trigger: 'blur' }],
+    deptName: [{ required: true, message: '机构名称不能为空', trigger: 'blur' }],
     orderNum: [{ required: true, message: '显示排序不能为空', trigger: 'blur' }],
     email: [{ type: 'email', message: '请输入正确的邮箱地址', trigger: ['blur', 'change'] }],
     phone: [{ pattern: /^1[3456789][0-9]\d{8}$/, message: '请输入正确的手机号码', trigger: 'blur' }]
@@ -215,7 +215,7 @@ const getList = async () => {
   loading.value = false;
 };
 
-/** 查询当前部门的所有用户 */
+/** 查询当前机构的所有用户 */
 async function getDeptAllUser(deptId: any) {
   if (deptId !== null && deptId !== '' && deptId !== undefined) {
     const res = await listUserByDeptId(deptId);
@@ -268,14 +268,14 @@ const handleAdd = async (row?: DeptVO) => {
       form.value.parentId = row?.deptId;
     }
     dialog.visible = true;
-    dialog.title = '添加部门';
+    dialog.title = '添加机构';
   }
 };
 
 /** 修改按钮操作 */
 const handleUpdate = async (row: DeptVO) => {
   reset();
-  //查询当前部门所有用户
+  //查询当前机构所有用户
   getDeptAllUser(row.deptId);
   const res = await getDept(row.deptId);
   form.value = res.data;
@@ -293,7 +293,7 @@ const handleUpdate = async (row: DeptVO) => {
     }
   }
   dialog.visible = true;
-  dialog.title = '修改部门';
+  dialog.title = '修改机构';
 };
 /** 提交按钮 */
 const submitForm = () => {
