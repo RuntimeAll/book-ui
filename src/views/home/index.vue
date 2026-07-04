@@ -18,9 +18,11 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import type { ComponentPublicInstance } from 'vue'
 import { useUserStore } from '@/store/user'
+import { useLoginDialog } from '@/composables/useLoginDialog'
 
 const router = useRouter()
 const userStore = useUserStore()
+const loginDialog = useLoginDialog()
 
 // ══════════════════════════════════════════════════════════════
 // CTA 分流（登录态兼容，零 API 请求 —— isLoggedIn 只读 store 内存态）
@@ -38,7 +40,8 @@ const ctaPrimary = computed<CtaAction>(() =>
 const ctaSecondary = computed<CtaAction>(() =>
   userStore.isLoggedIn
     ? { text: '进入题库', action: () => router.push('/question/index') }
-    : { text: '登录', action: () => router.push('/login') },
+    // PRD-C-212 增量：独立 /login 页下线，原地弹登录框
+    : { text: '登录', action: () => loginDialog.open() },
 )
 
 // ══════════════════════════════════════════════════════════════

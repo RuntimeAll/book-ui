@@ -6,6 +6,8 @@ import { useUserStore as useAdminUserStore } from '@/store/modules/user'
 import { getCurrentUser } from '@/api/user'
 // PRD-C-212 V0 — 管理台地基（雪碧图/globalProperties/指令）懒装载，进 /manage 才拉
 import { ensureAdminFoundation } from '@/plugins/admin-foundation'
+// PRD-C-212 增量 — 页内登录弹窗（独立 /login 页下线）
+import { useLoginDialog } from '@/composables/useLoginDialog'
 
 // ---------------------------------------------------------------------------
 // PRD-A-005 T2 — 路由 meta 类型增强：页面级权限声明 `meta.roles`
@@ -27,7 +29,8 @@ declare module 'vue-router' {
 
 // 无需登录即可访问的白名单
 // U 卡 段⑧ — /register 加入白名单（注册时不能强制登录）
-const PUBLIC_ROUTES = new Set<string>(['/login', '/register', '/geo-engine-test'])
+// PRD-C-212 增量 — 独立 /login 页已下线（登录=页内弹窗），旧 /login 链接在守卫里兼容归一
+const PUBLIC_ROUTES = new Set<string>(['/register', '/geo-engine-test'])
 
 // PRD-C-212 D5 — 未登录漫游白名单：首页/题库(列表+详情)/卷库(列表+原卷结构)/讲义 可看。
 // 收藏/加篮/组卷/下载/备课台/管理仍需登录（守卫拦 + 页面按钮登录引导 + BE 只放只读端点）。
@@ -266,12 +269,8 @@ const router = createRouter({
         },
       ],
     },
-    // 登录页（无 layout 包裹）
-    {
-      path: '/login',
-      name: 'Login',
-      component: () => import('@/views/login/index.vue'),
-    },
+    // 登录页已下线（PRD-C-212 增量：登录=页内弹窗，见 components/LoginDialog）；
+    // 旧 /#/login 书签由守卫兼容：归一到 /home 并自动弹登录框（带 redirect/u 参数透传）。
     // U 卡 段⑧ — 注册页（无 layout 包裹）
     {
       path: '/register',
@@ -304,6 +303,15 @@ const router = createRouter({
 // 直接 `useUserStore()` 安全。
 // ---------------------------------------------------------------------------
 router.beforeEach(async (to) => {
+  // PRD-C-212 增量 — 旧 /#/login 链接兼容：归一到首页并自动弹登录框（redirect/u 参数透传）
+  if (to.path === '/login') {
+    useLoginDialog().open({
+      redirect: typeof to.query.redirect === 'string' ? to.query.redirect : undefined,
+      username: typeof to.query.u === 'string' ? to.query.u : undefined,
+    })
+    return { path: '/home' }
+  }
+
   if (PUBLIC_ROUTES.has(to.path)) {
     return true
   }
@@ -314,7 +322,9 @@ router.beforeEach(async (to) => {
     if (isGuestBrowsable(to.path)) {
       return true
     }
-    return { path: '/login', query: { redirect: to.fullPath } }
+    // 独立登录页已下线：游客直达受限页 → 回首页 + 弹登录框，登录成功刷到原目标
+    useLoginDialog().open({ redirect: to.fullPath })
+    return { path: '/home' }
   }
 
   // userInfo（roles）未就绪时集中回填一次（刷新 / 直达受限页场景）。

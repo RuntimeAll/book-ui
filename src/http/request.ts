@@ -1,9 +1,9 @@
 import axios, { type AxiosResponse } from 'axios'
 import JSONbig from 'json-bigint'
 import { ElMessage } from 'element-plus'
-import router from '@/router'
 import { useUserStore } from '@/store/user'
 import { DEFAULT_CLIENT_ID } from '@/api/auth'
+import { useLoginDialog } from '@/composables/useLoginDialog'
 
 // ---------------------------------------------------------------------------
 // V1 卡（题库去原网站化）：所有请求统一走本地 book-server（无 misikt fallback）。
@@ -79,12 +79,12 @@ instance.interceptors.request.use(
 // Response interceptor — 双源 envelope 分支
 // ---------------------------------------------------------------------------
 function redirectToLogin() {
+  // PRD-C-212 增量：独立 /login 页已下线，登录态失效改为原地弹登录框
+  // （登录成功整页 reload 当前页，会话内数据自然重拉；弹窗自身幂等，重复调用不叠加）
   const userStore = useUserStore()
   userStore.clear()
-  if (router.currentRoute.value.path !== '/login') {
-    ElMessage.warning('登录已失效，请重新登录')
-    router.push({ path: '/login', query: { redirect: router.currentRoute.value.fullPath } })
-  }
+  ElMessage.warning('登录已失效，请重新登录')
+  useLoginDialog().open()
 }
 
 instance.interceptors.response.use(

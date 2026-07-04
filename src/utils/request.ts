@@ -20,7 +20,7 @@ import { tansParams, blobValidate } from '@/utils/ruoyi'
 import cache from '@/plugins/cache'
 import { HttpStatus } from '@/enums/RespEnum'
 import { errorCode } from '@/utils/errorCode'
-import router from '@/router'
+import { useLoginDialog } from '@/composables/useLoginDialog'
 
 let downloadLoadingInstance: LoadingInstance
 // 是否已在跳登录（防多请求并发重复弹）
@@ -98,9 +98,9 @@ function redirectToLogin() {
   const store = useBookUserStore()
   store.clear()
   ElMessage.warning('登录已失效，请重新登录')
-  router
-    .push({ path: '/login', query: { redirect: router.currentRoute.value.fullPath } })
-    .finally(() => (isRelogin.show = false))
+  // PRD-C-212 增量：独立 /login 页已下线，原地弹登录框（登录成功整页刷新当前页）
+  useLoginDialog().open()
+  isRelogin.show = false
 }
 
 // 响应拦截器 —— 返回整个 RuoYi envelope（res.rows/res.total/res.data 语义保留）

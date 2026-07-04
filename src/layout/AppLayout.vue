@@ -6,10 +6,12 @@ import MultiFunctionFab from '@/components/business/MultiFunctionFab/index.vue'
 // PRD-C-212 增量：顶栏简笔画线性图标（设计稿-备课台与顶栏-V1 拍板）
 import LineIcon, { type LineIconName } from '@/components/LineIcon.vue'
 import { useUserStore } from '@/store/user'
+import { useLoginDialog } from '@/composables/useLoginDialog'
 
 const router = useRouter()
 const route = useRoute()
 const userStore = useUserStore()
+const loginDialog = useLoginDialog()
 
 // U-hotfix（2026-05-23）— 头像点击展示用户名 + 退出登录选项。
 // userName 兜底优先级：realName > userName > "用户"
@@ -36,7 +38,9 @@ async function handleLogout() {
   }
   await userStore.logout()
   ElMessage.success('已退出登录')
-  router.push('/login')
+  // PRD-C-212 增量：独立 /login 页已下线，退出后回首页（游客可看门面），整页刷清会话内数据
+  window.location.hash = '#/home'
+  window.location.reload()
 }
 
 function handleDropdownCommand(command: string) {
@@ -47,9 +51,9 @@ function handleDropdownCommand(command: string) {
   }
 }
 
-// PRD-C-212 D5 — 游客点「登录」带 redirect 回跳当前页
+// PRD-C-212 增量 — 游客点「登录」原地弹登录框（登录成功整页刷新当前页，天然"回跳"）
 function goLogin() {
-  router.push({ path: '/login', query: { redirect: route.fullPath } })
+  loginDialog.open()
 }
 
 interface MenuItem {

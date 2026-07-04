@@ -13,17 +13,17 @@
  * 覆盖 type 6(作图)/7(计算)/8(证明)；移除本地硬编码 map。
  */
 import { Plus } from '@element-plus/icons-vue'
-import { useRoute, useRouter } from 'vue-router'
 import type { QuestionNote, QuestionSource } from '@/api/question/index'
 import { useDictStore, DICT_QUESTION_TYPE } from '@/store/dict'
 import { useUserStore } from '@/store/user'
+import { useLoginDialog } from '@/composables/useLoginDialog'
 
 // 审计 P1①（PRD-C-212）：游客态备注区不再裸露可编辑输入框，换成登录提示
 const userStore = useUserStore()
-const router = useRouter()
-const route = useRoute()
+const loginDialog = useLoginDialog()
 function goLogin() {
-  router.push({ path: '/login', query: { redirect: route.fullPath } })
+  // 独立 /login 页已下线：原地弹登录框，登录成功整页刷新当前页
+  loginDialog.open()
 }
 
 defineProps<{

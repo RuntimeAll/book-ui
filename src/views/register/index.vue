@@ -5,14 +5,16 @@ import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { registerTeacher } from '@/api/user'
 import { getCaptcha } from '@/api/auth'
+import { useLoginDialog } from '@/composables/useLoginDialog'
 
 // U 卡 段⑧ — 老师注册页
 //
 // 极简表单：用户名 + 密码 + 确认密码 + 真名（可选）
 // 提交 → BE /teacher/user/register 自动绑 teacher 角色
-// 成功 → ElMessage 提示 + 自动跳 /login 并传 username 预填
+// 成功 → 回首页并弹登录框（PRD-C-212 增量：独立 /login 页下线），用户名预填
 
 const router = useRouter()
+const loginDialog = useLoginDialog()
 
 const formRef = ref<FormInstance | null>(null)
 
@@ -110,8 +112,9 @@ async function onSubmit() {
         : {}),
     })
     ElMessage.success(`注册成功！欢迎 ${result.userName}，请登录`)
-    // 注册后跳登录页 — query 传 username 让 login 页预填
-    await router.push({ path: '/login', query: { u: result.userName } })
+    // 注册后回首页并弹登录框（用户名预填）——独立登录页已下线
+    loginDialog.open({ username: result.userName })
+    await router.push('/home')
   } catch {
     // 拦截器已 ElMessage.error（用户名重复 / 校验失败 / 验证码错）
     // 失败刷新验证码（旧码已失效，避免用户用错码重试）
@@ -122,7 +125,9 @@ async function onSubmit() {
 }
 
 function goLogin() {
-  router.push('/login')
+  // 独立登录页已下线：回首页 + 弹登录框
+  loginDialog.open()
+  router.push('/home')
 }
 </script>
 
