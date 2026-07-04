@@ -35,7 +35,8 @@ interface CtaAction {
 const ctaPrimary = computed<CtaAction>(() =>
   userStore.isLoggedIn
     ? { text: '开始组卷', action: () => router.push('/papers/workbench') }
-    : { text: '免费注册', action: () => router.push('/register') },
+    // PRD-C-212 增量：独立 /register 页下线，原地弹注册框
+    : { text: '免费注册', action: () => loginDialog.open({ mode: 'register' }) },
 )
 const ctaSecondary = computed<CtaAction>(() =>
   userStore.isLoggedIn

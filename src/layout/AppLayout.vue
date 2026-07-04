@@ -155,7 +155,7 @@ const showMultiFunctionFab = computed(() => {
           <!-- PRD-C-212 D5 — 游客态：登录/免费注册 替代头像 -->
           <template v-if="!userStore.isLoggedIn">
             <el-button class="guest-login-btn" size="default" text @click="goLogin">登录</el-button>
-            <el-button class="guest-register-btn" size="default" type="primary" @click="router.push('/register')">免费注册</el-button>
+            <el-button class="guest-register-btn" size="default" type="primary" @click="loginDialog.open({ mode: 'register' })">免费注册</el-button>
           </template>
           <!-- U-hotfix — avatar 改 dropdown，含"退出登录" -->
           <el-dropdown v-if="userStore.isLoggedIn" trigger="click" placement="bottom-end" @command="handleDropdownCommand">

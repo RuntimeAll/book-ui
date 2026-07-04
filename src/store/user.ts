@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import request from '@/http/request'
+import { DEFAULT_CLIENT_ID } from '@/api/auth'
 
 // localStorage key — 命名空间化，避免和其他 app 撞
 const STORAGE_KEY = 'book-ui:auth'
@@ -99,17 +100,23 @@ export const useUserStore = defineStore('user', () => {
 
   /**
    * U-hotfix（2026-05-23）— 退出登录。
-   * 1. 调 BE POST /auth/logout 让 Sa-Token 服务端 token 失效（best-effort，失败不阻塞 FE 登出）
-   * 2. clear() 清本地 LS + 重置 store
+   * PRD-C-212 增量重排序（修退出竞态）：原先「先 BE 注销、后清本地」——BE token 失效到本地
+   * clear 之间的窗口里，页面在途个人请求 401 会命中"登录态失效"分支（弹『登录已失效』+登录框），
+   * 与退出后的整页刷新撞出乱闪。现改为：
+   * 1. 先捕获旧 token 并 clear()（本地瞬时进游客态，窗口期 401 全走游客静默分支）
+   * 2. 再用捕获的 token 显式带头调 BE /auth/logout 让服务端失效（best-effort，失败不阻塞）
    * 调用方：AppLayout avatar dropdown / token 过期等场景。
    */
   async function logout(): Promise<void> {
+    const token = auth.value?.access_token
+    clear()
+    if (!token) return
     try {
-      await request.post('/auth/logout')
+      await request.post('/auth/logout', undefined, {
+        headers: { Authorization: `Bearer ${token}`, clientid: DEFAULT_CLIENT_ID },
+      })
     } catch (e) {
-      console.warn('[user] BE logout failed (本地仍清理):', e)
-    } finally {
-      clear()
+      console.warn('[user] BE logout failed (本地已清理):', e)
     }
   }
 

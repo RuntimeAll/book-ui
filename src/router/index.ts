@@ -28,9 +28,8 @@ declare module 'vue-router' {
 }
 
 // 无需登录即可访问的白名单
-// U 卡 段⑧ — /register 加入白名单（注册时不能强制登录）
-// PRD-C-212 增量 — 独立 /login 页已下线（登录=页内弹窗），旧 /login 链接在守卫里兼容归一
-const PUBLIC_ROUTES = new Set<string>(['/register', '/geo-engine-test'])
+// PRD-C-212 增量 — 独立 /login、/register 页均已下线（登录注册=页内弹窗），旧链接在守卫里兼容归一
+const PUBLIC_ROUTES = new Set<string>(['/geo-engine-test'])
 
 // PRD-C-212 D5 — 未登录漫游白名单：首页/题库(列表+详情)/卷库(列表+原卷结构)/讲义 可看。
 // 收藏/加篮/组卷/下载/备课台/管理仍需登录（守卫拦 + 页面按钮登录引导 + BE 只放只读端点）。
@@ -269,14 +268,8 @@ const router = createRouter({
         },
       ],
     },
-    // 登录页已下线（PRD-C-212 增量：登录=页内弹窗，见 components/LoginDialog）；
-    // 旧 /#/login 书签由守卫兼容：归一到 /home 并自动弹登录框（带 redirect/u 参数透传）。
-    // U 卡 段⑧ — 注册页（无 layout 包裹）
-    {
-      path: '/register',
-      name: 'Register',
-      component: () => import('@/views/register/index.vue'),
-    },
+    // 登录/注册页均已下线（PRD-C-212 增量：登录注册=页内双模式弹窗，见 components/LoginDialog）；
+    // 旧 /#/login、/#/register 书签由守卫兼容：归一到 /home 并自动弹对应模式弹窗。
     // PRD-C-110 B1 — geo-engine 引擎自检页（无 layout，免登录；懒加载，prod 不打进首屏 chunk）
     {
       path: '/geo-engine-test',
@@ -303,9 +296,10 @@ const router = createRouter({
 // 直接 `useUserStore()` 安全。
 // ---------------------------------------------------------------------------
 router.beforeEach(async (to) => {
-  // PRD-C-212 增量 — 旧 /#/login 链接兼容：归一到首页并自动弹登录框（redirect/u 参数透传）
-  if (to.path === '/login') {
+  // PRD-C-212 增量 — 旧 /#/login、/#/register 链接兼容：归一到首页并自动弹对应模式弹窗
+  if (to.path === '/login' || to.path === '/register') {
     useLoginDialog().open({
+      mode: to.path === '/register' ? 'register' : 'login',
       redirect: typeof to.query.redirect === 'string' ? to.query.redirect : undefined,
       username: typeof to.query.u === 'string' ? to.query.u : undefined,
     })
