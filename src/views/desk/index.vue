@@ -17,11 +17,15 @@ interface MenuItem {
 
 const MENUS: MenuItem[] = [
   { title: '概览', path: '/desk/overview' },
-  { title: '我的工作台', path: '/desk/workspace' },
+  // 个人资产（PRD-C-212 增量：我的卷库/我的讲义 从卷库页/讲义页迁入）
   { title: '我的题库', path: '/desk/my-question' },
+  { title: '我的卷库', path: '/desk/my-papers' },
+  { title: '我的讲义', path: '/desk/my-lectures' },
+  { title: '收藏夹', path: '/desk/favorites' },
+  // 工具
   { title: '举一反三', path: '/desk/ai-variant' },
   { title: '几何画板', path: '/desk/geo-board' },
-  { title: '收藏夹', path: '/desk/favorites' },
+  { title: '我的工作台', path: '/desk/workspace' },
 ]
 
 const activePath = computed(() => {

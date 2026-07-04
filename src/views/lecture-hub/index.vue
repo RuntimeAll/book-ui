@@ -10,6 +10,7 @@
  * example 节点仍复用 KgExampleNodeView → /teacher/kg/questions。编辑=P2（本页只读）。
  */
 import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { useRouter } from 'vue-router'
 import { UmoEditor } from '@umoteam/editor'
 // PRD-C-212 V0：Umo 样式从 main.ts 下沉到讲义两页（体积大含字体，别全站买单）
 import '@umoteam/editor/style'
@@ -28,17 +29,34 @@ import {
 const BOOK_ID = 'CC7S'
 const userStore = useUserStore()
 const dict = useDictStore()
+const router = useRouter()
+
+/** PRD-C-212 增量：备课台「我的讲义」分区壳传 true，只看 owner===viewerId 的版本；默认 false=讲义 tab 现行为零变化 */
+const props = withDefaults(defineProps<{ mineOnly?: boolean }>(), { mineOnly: false })
 
 // ── 目录数据（灰置 + 来源 + 上/下课时）─────────────────────────────
 const lessons = ref<CatalogLesson[]>([])
 /** 当前登录者 uid（catalog 响应带回；null=匿名只读官方） */
 const viewerId = ref<number | null>(null)
-/** 课时 subjectId → {badge}，喂给 SubjectDirectory 显"N版"徽标 */
+/** 课时 subjectId → {badge}，喂给 SubjectDirectory 显徽标；mineOnly 时只标"我的"，其余置灰交给 dimUncovered */
 const lessonMeta = computed<Record<string, { badge: string }>>(() => {
   const m: Record<string, { badge: string }> = {}
-  for (const l of lessons.value) m[l.lessonId] = { badge: `${l.sources.length}版` }
+  for (const l of lessons.value) {
+    if (props.mineOnly) {
+      if (viewerId.value != null && l.sources.some((s) => s.owner === viewerId.value)) m[l.lessonId] = { badge: '我的' }
+      continue
+    }
+    m[l.lessonId] = { badge: `${l.sources.length}版` }
+  }
   return m
 })
+/** mineOnly：viewer 是否在整本教辅内拥有至少一份自己的讲义版本（决定是否展示空态引导卡） */
+const hasAnyMine = computed(() =>
+  viewerId.value != null && lessons.value.some((l) => l.sources.some((s) => s.owner === viewerId.value)),
+)
+/** mineOnly 且 viewer 一份"我的版"都没有（含未登录兜底）→ 中栏显示引导卡，替代常规空态提示 */
+const mineEmptyCard = computed(() => props.mineOnly && !hasAnyMine.value)
+function goToLectureHub() { router.push('/lecture-hub') }
 
 // ── KG 知识点索引（编辑保存重切片段用：课时L4 id → 子知识点 [{id,title}]，D13）──
 const kpByLesson = ref<Record<string, { id: string; title: string }[]>>({})
@@ -124,6 +142,15 @@ async function onSelectNode(id: string | null) {
 
 function selectLesson(lesson: CatalogLesson) {
   currentLesson.value = lesson
+  if (props.mineOnly) {
+    // 只看我的来源：来源切换器只喂 owner===viewerId 那份；没有则直接空态（同 resetToHint 文案）
+    const mine = lesson.sources.filter((s) => s.owner === viewerId.value)
+    sources.value = mine
+    activeSourceIdx.value = 0
+    if (mine.length) loadLecture(lesson.lessonId, mine[0].bookId, mine[0].owner)
+    else resetToHint('该课时暂无你的讲义版本')
+    return
+  }
   sources.value = lesson.sources
   activeSourceIdx.value = 0
   // 默认视图不传 owner（BE 覆盖序 我的>本部门管理员>官方）
@@ -501,7 +528,12 @@ onBeforeUnmount(() => { if (scrollHost) scrollHost.removeEventListener('scroll',
 
       <!-- 内容区 -->
       <div class="lh-body">
-        <div v-if="emptyHint" class="lh-empty">
+        <div v-if="mineEmptyCard" class="lh-empty lh-mine-empty">
+          <el-icon class="ic"><Document /></el-icon>
+          <p>你还没有自己的讲义版本——去「讲义」浏览官方版，进入编辑后保存即可生成你的版本</p>
+          <button class="lh-new" @click="goToLectureHub">去「讲义」浏览</button>
+        </div>
+        <div v-else-if="emptyHint" class="lh-empty">
           <el-icon class="ic"><Document /></el-icon>
           <p>{{ emptyHint }}</p>
           <button v-if="canEdit && !docJson" class="lh-new" @click="enterEdit">＋ 新建我的讲义</button>

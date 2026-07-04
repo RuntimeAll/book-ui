@@ -7,6 +7,12 @@
  * 翻标签，不再解析节点名。选中维度 → 定位到分类节点 id → 走 getPaperPage(subjectId 前缀匹配)。
  *
  * scope='public'(公共卷) / 'mine'(我的卷)；?mine=1 query 进入自动选「我的卷库」。
+ *
+ * PRD-C-212 增量「我的卷库转移进备课台」— `mode` prop：
+ *   - undefined（默认）= 现行为不变（顶导航卷库页，类型 seg 可切，?mine=1 生效）。
+ *   - 'public-only' = 卷库顶导航页专用：scope 锁 'public'，类型 seg 不渲染，?mine=1 忽略。
+ *   - 'mine-only' = 备课台「我的卷库」分区专用：scope 锁 'mine'，类型 seg 不渲染。
+ *   固定 mode 下缓存读写走独立 key 后缀，避免与顶导航页缓存互相污染。
  */
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -30,6 +36,11 @@ import { usePaperBasket } from '@/composables/usePaperBasket'
 import { useAbortableRequest } from '@/composables/useAbortableRequest'
 import { useLoginGuard } from '@/composables/useLoginGuard'
 
+const props = defineProps<{
+  /** PRD-C-212 增量：固定 scope 场景（卷库顶导航页 / 备课台我的卷库分区）；不传 = 现行为不变 */
+  mode?: 'public-only' | 'mine-only'
+}>()
+
 const router = useRouter()
 const route = useRoute()
 const userStore = useUserStore()
@@ -49,7 +60,7 @@ const GRADE_NUM: Record<number, string> = { 1: '一', 2: '二', 3: '三', 4: '�
 const STAGE_GRADES: Record<number, number[]> = { 1: [1, 2, 3, 4, 5, 6], 2: [7, 8, 9], 3: [10, 11, 12] }
 
 // ══ 选择状态 ════════════════════════════════════════════════
-const scope = ref<'public' | 'mine'>('public') // 类型
+const scope = ref<'public' | 'mine'>(props.mode === 'mine-only' ? 'mine' : 'public') // 类型
 const subject = ref(1) // 学科（1数学 2科学）
 const stage = ref(2)   // 学段（1小学 2初中 3高中）
 const gradeCode = ref<number | null>(7) // 选中年级（null=走中考）
@@ -130,7 +141,8 @@ const crumb = computed(() => {
 })
 
 // ══ 缓存 ════════════════════════════════════════════════════
-const CACHE_KEY = 'book-ui:paper-dir-sel'
+// mode 固定时用独立 key 后缀，避免与顶导航页（无 mode）/ 另一侧固定 mode 共享缓存互相污染 scope
+const CACHE_KEY = props.mode ? `book-ui:paper-dir-sel:${props.mode}` : 'book-ui:paper-dir-sel'
 interface CacheState { scope: 'public' | 'mine'; subject: number; stage: number; gradeCode: number | null; vol: number; examId: string; paperType: number | '' }
 function readCache(): CacheState | null { try { return JSON.parse(localStorage.getItem(CACHE_KEY) || 'null') } catch { return null } }
 function persist() {
@@ -148,7 +160,7 @@ function applyFilter() {
 }
 
 // ══ 交互 ════════════════════════════════════════════════════
-function pickScope(s: 'public' | 'mine') { scope.value = s; applyFilter() }
+function pickScope(s: 'public' | 'mine') { if (props.mode) return; scope.value = s; applyFilter() } // mode 固定时类型 seg 不渲染，此处兜底防误触
 function pickSubject(code: number) { subject.value = code; normalizeStageGrade(); applyFilter() }
 function pickStage(code: number) { stage.value = code; normalizeStageGrade(); applyFilter(); pickerOpen.value = false } // 选好学段收起前半截
 function pickGrade(g: number) {
@@ -265,15 +277,17 @@ onMounted(async () => {
   // 恢复缓存 > 页面默认（数学·初中·七上）
   const c = readCache()
   if (c) {
-    scope.value = c.scope; subject.value = c.subject; stage.value = c.stage
+    // mode 固定时忽略缓存里的 scope，防止缓存把它拽回另一侧
+    if (!props.mode) scope.value = c.scope
+    subject.value = c.subject; stage.value = c.stage
     gradeCode.value = c.gradeCode; vol.value = c.vol; examId.value = c.examId; paperType.value = c.paperType
     // 缓存的选择在当前数据下若失效则归一化
     if (!isExam.value) normalizeStageGrade()
   } else {
     normalizeStageGrade()
   }
-  // ?mine=1 进入 → 我的卷库
-  if (route.query.mine === '1') scope.value = 'mine'
+  // ?mine=1 进入 → 我的卷库（mode 固定场景跳过，scope 已由 prop 锁死）
+  if (!props.mode && route.query.mine === '1') scope.value = 'mine'
 
   pageParams.subjectId = resolveTargetId()
   fetchPapers()
@@ -294,7 +308,8 @@ onMounted(async () => {
           <div class="ico" :class="isSci ? 'sci' : 'math'">{{ crumbIco }}</div>
           <div class="txt">
             <div class="l1"><span class="main">{{ crumbMain }}</span><span class="ed">{{ crumbTag }}</span></div>
-            <div class="l2">{{ pickerOpen ? '选好学段自动收起 ▴' : '点此切换 类型·学科·学段 ▾' }}</div>
+            <!-- mode 固定（public-only/mine-only）时类型段已隐藏，收起条文案同步不提"类型" -->
+            <div class="l2">{{ pickerOpen ? '选好学段自动收起 ▴' : (props.mode ? '点此切换 学科·学段 ▾' : '点此切换 类型·学科·学段 ▾') }}</div>
           </div>
           <el-icon class="chev"><ArrowDown /></el-icon>
         </div>
@@ -302,8 +317,8 @@ onMounted(async () => {
         <!-- 收放筛选 -->
         <div class="picker" :class="{ collapsed: !pickerOpen }">
         <div class="picker-in">
-        <!-- 类型 -->
-        <div class="grp">
+        <!-- 类型（mode 固定时不渲染切换段） -->
+        <div v-if="!props.mode" class="grp">
           <div class="grp-lab">类型</div>
           <div class="seg">
             <button :class="{ on: scope === 'public' }" @click="pickScope('public')">公共试卷</button>

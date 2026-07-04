@@ -208,6 +208,10 @@ const router = createRouter({
             { path: 'workspace', name: 'Workspace', component: () => import('@/views/workspace/index.vue') },
             // PRD-C-009「我的题库」——只看当前登录老师自己的题（mine:true）
             { path: 'my-question', name: 'MyQuestion', component: () => import('@/views/my-question/index.vue') },
+            // PRD-C-212 增量 — 我的卷库（从卷库页类型切换迁入；PaperLibrary mode=mine-only）
+            { path: 'my-papers', name: 'MyPapers', component: () => import('@/views/desk/my-papers.vue') },
+            // PRD-C-212 增量 — 我的讲义（lecture-hub mineOnly：只看 owner=自己的讲义版本）
+            { path: 'my-lectures', name: 'MyLectures', component: () => import('@/views/desk/my-lectures.vue') },
             // 🔴 举一反三（PRD-C-009）= 图片变式入口（toolkit :8093，vite proxy /agent）
             { path: 'ai-variant', name: 'AiVariant', component: () => import('@/views/variant/index.vue') },
             // 几何画板（GeoBoard）——JSXGraph 引擎，draw 主页 + 只读画廊
@@ -323,6 +327,12 @@ router.beforeEach(async (to) => {
     } catch (e) {
       console.warn('[router] 守卫回填 getCurrentUser 失败:', e)
     }
+  }
+
+  // 审计 P1②（PRD-C-212）：裸 /manage 直敲在 hash 模式下 redirect 链偶发中断
+  // （URL 停在 /manage、内容不导航）——显式归一到默认子路由，守卫在 /manage/user 上重跑完整判权
+  if (to.path === '/manage') {
+    return { path: '/manage/user' }
   }
 
   const requiredRoles = to.meta.roles

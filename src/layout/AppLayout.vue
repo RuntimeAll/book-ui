@@ -3,6 +3,8 @@ import { computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import MultiFunctionFab from '@/components/business/MultiFunctionFab/index.vue'
+// PRD-C-212 增量：顶栏简笔画线性图标（设计稿-备课台与顶栏-V1 拍板）
+import LineIcon, { type LineIconName } from '@/components/LineIcon.vue'
 import { useUserStore } from '@/store/user'
 
 const router = useRouter()
@@ -53,6 +55,8 @@ function goLogin() {
 interface MenuItem {
   label: string
   path: string
+  /** PRD-C-212 增量 — 顶栏简笔图标名（LineIcon） */
+  icon: LineIconName
   /** PRD-A-005 T2 — 可见角色 role_key 集合；省略 = 任意已登录用户可见 */
   roles?: string[]
 }
@@ -60,12 +64,12 @@ interface MenuItem {
 // PRD-C-212 D2 — 导航 9→6：工具箱/个人空间四页（工作台/我的题库/举一反三/几何画板+收藏夹）
 // 收拢进「备课台」壳（/desk，见 views/desk/index.vue），旧路径全部 redirect（router）。
 const allMenuItems: MenuItem[] = [
-  { label: '首页', path: '/home' },
-  { label: '题库', path: '/question/index' },
-  { label: '卷库', path: '/papers/index' },
-  { label: '讲义', path: '/lecture-hub' },               // 🔴 PRD-C-207 教辅讲义只读浏览器
-  { label: '备课台', path: '/desk' },                    // 🔴 PRD-C-212 D3 工具箱+个人空间聚合壳
-  { label: '管理', path: '/manage', roles: ['superadmin', 'org_admin'] },  // PRD-C-211 管理中心
+  { label: '首页', path: '/home', icon: 'home' },
+  { label: '题库', path: '/question/index', icon: 'qbank' },
+  { label: '卷库', path: '/papers/index', icon: 'papers' },
+  { label: '讲义', path: '/lecture-hub', icon: 'lecture' },      // 🔴 PRD-C-207 教辅讲义只读浏览器
+  { label: '备课台', path: '/desk', icon: 'desk' },              // 🔴 PRD-C-212 D3 工具箱+个人空间聚合壳
+  { label: '管理', path: '/manage', icon: 'manage', roles: ['superadmin', 'org_admin'] },  // PRD-C-211 管理中心
   // 资料库：用户 2026-06-04 拍板「暂时隐藏不做开发」→ 菜单隐藏，路由 /materials/index 保留备用。
 ]
 
@@ -137,6 +141,7 @@ const showMultiFunctionFab = computed(() => {
             :class="{ active: isActive(item.path) }"
             @click="router.push(item.path)"
           >
+            <LineIcon :name="item.icon" :size="19" class="nav-ico" />
             {{ item.label }}
           </span>
         </nav>
@@ -276,10 +281,11 @@ const showMultiFunctionFab = computed(() => {
 
 .nav-item {
   position: relative;
-  padding: 0 16px;
+  padding: 0 15px;
   height: 60px;
   display: flex;
   align-items: center;
+  gap: 7px; /* PRD-C-212 增量：图标与文字间距 */
   cursor: pointer;
   font-size: 14px;
   color: #536268; /* ink-500 */
@@ -287,6 +293,19 @@ const showMultiFunctionFab = computed(() => {
   letter-spacing: 0.2px;
   white-space: nowrap;
   transition: color 0.2s ease, background 0.2s ease;
+}
+
+/* PRD-C-212 增量：简笔图标默认灰青，hover/选中随文字变教育青并轻微上浮（唯一动效，克制） */
+.nav-item :deep(.nav-ico) {
+  color: #88a9a5;
+  transition: color 0.18s ease, transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.nav-item:hover :deep(.nav-ico) {
+  color: var(--bk-teal);
+  transform: translateY(-1.5px);
+}
+.nav-item.active :deep(.nav-ico) {
+  color: var(--bk-teal);
 }
 
 .nav-item:hover {

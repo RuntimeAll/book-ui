@@ -187,8 +187,8 @@ function goPaperDetail(paper: PaperListItem) {
 }
 
 function goPaperList() {
-  // 「我的卷库」是卷库左侧目录树底部的合成节点，带 ?mine=1 进入卷库页自动选中该节点
-  router.push('/papers/index?mine=1')
+  // PRD-C-212 增量：「我的卷库」已从卷库顶导航页迁至备课台分区，直接跳该路由
+  router.push('/desk/my-papers')
 }
 
 // PRD-A-005 T6 — 进入收藏管理页（全部收藏，不分夹）
