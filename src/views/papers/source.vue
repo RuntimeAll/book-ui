@@ -110,7 +110,9 @@ const exportPaperName = computed(() => detail.value?.paperName || '试卷')
 // PRD-A-013 T2 — 雪花 string[]
 const exportQuestionIds = computed<string[]>(() => allQuestions.value.map((q) => q.id))
 
-function handleExportPaper() {
+async function handleExportPaper() {
+  // 审计 P0②：游客点导出会打开预览弹窗但内部接口 401，呈现"坏掉的空窗"——先拦登录
+  if (!(await ensureLogin())) return
   if (exportQuestionIds.value.length === 0) {
     ElMessage.warning('试卷暂无题目，无法导出')
     return
@@ -226,7 +228,9 @@ const analysisPapers = computed<WorkbenchPaper[]>(() => {
 
 // ── 草稿纸 ──────────────────────────────────────────────────
 const sketchVisible = ref(false)
-function handleDraft() {
+// 审计 P0①：与同组按钮一致，游客弹登录引导
+async function handleDraft() {
+  if (!(await ensureLogin())) return
   sketchVisible.value = true
 }
 

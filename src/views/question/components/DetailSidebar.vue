@@ -13,8 +13,18 @@
  * 覆盖 type 6(作图)/7(计算)/8(证明)；移除本地硬编码 map。
  */
 import { Plus } from '@element-plus/icons-vue'
+import { useRoute, useRouter } from 'vue-router'
 import type { QuestionNote, QuestionSource } from '@/api/question/index'
 import { useDictStore, DICT_QUESTION_TYPE } from '@/store/dict'
+import { useUserStore } from '@/store/user'
+
+// 审计 P1①（PRD-C-212）：游客态备注区不再裸露可编辑输入框，换成登录提示
+const userStore = useUserStore()
+const router = useRouter()
+const route = useRoute()
+function goLogin() {
+  router.push({ path: '/login', query: { redirect: route.fullPath } })
+}
 
 defineProps<{
   note: QuestionNote | null
@@ -56,7 +66,14 @@ function getQuestionTypeTagType(type: number): 'primary' | 'success' | 'warning'
       <div class="sidebar-card-header">
         <span class="sidebar-card-title">我的备注</span>
       </div>
-      <div class="sidebar-card-body" v-loading="notesLoading">
+      <!-- 审计 P1①：游客态换提示卡，不裸露可编辑输入框 -->
+      <div v-if="!userStore.isLoggedIn" class="sidebar-card-body">
+        <div class="no-notes">
+          <el-link type="primary" :underline="false" @click="goLogin">登录</el-link>
+          后可给这道题添加自己的备注
+        </div>
+      </div>
+      <div v-else class="sidebar-card-body" v-loading="notesLoading">
         <div v-if="!note && !notesLoading" class="no-notes">
           还没有备注
         </div>

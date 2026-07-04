@@ -78,6 +78,7 @@ declare module 'vue' {
     ImageUpload: typeof import('./../components/ImageUpload/index.vue')['default']
     IngestFab: typeof import('./../components/business/IngestFab/index.vue')['default']
     InlineMath: typeof import('./../components/InlineMath.vue')['default']
+    LineIcon: typeof import('./../components/LineIcon.vue')['default']
     MarkdownMath: typeof import('./../components/MarkdownMath.vue')['default']
     MultiFunctionFab: typeof import('./../components/business/MultiFunctionFab/index.vue')['default']
     Pagination: typeof import('./../components/Pagination/index.vue')['default']

@@ -180,7 +180,9 @@ async function handleBasketToggle(question: QuestionItem) {
 const sketchVisible = ref(false)
 
 // ── 空壳按钮 ─────────────────────────────────────────────────
-function handleDraft(_q: QuestionItem) {
+// 审计 P0①：草稿虽纯前端 canvas，但与同组收藏/试题栏行为一致，游客统一弹登录引导
+async function handleDraft(_q: QuestionItem) {
+  if (!(await ensureLogin())) return
   sketchVisible.value = true
 }
 
