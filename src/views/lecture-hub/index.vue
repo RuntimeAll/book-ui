@@ -260,6 +260,13 @@ function enterEdit() {
   if (!canEdit.value) return
   const editor = editorRef.value?.useEditor?.()
   if (!editor || !currentLesson.value) return
+  // PRD-C-212 三角色走查跟进：老师基于别人（含官方）的版本编辑=fork 语义（保存生成"我的版本"，
+  // 原版不动，BE 有 owner 闸兜底 403）。进入时点明，防老师误以为在改官方。
+  const src = activeSource.value
+  const isAdminRole = userStore.roles.includes('superadmin') || userStore.roles.includes('org_admin')
+  if (src && viewerId.value != null && src.owner !== viewerId.value && !isAdminRole) {
+    ElMessage.info('正在基于该版本编辑，保存后将生成你自己的讲义版本，原版不受影响')
+  }
   // 安全闸：切分器依赖该课时的 KG 知识点索引；没有则整份 doc 会塌进课时片段（与官方知识点片段叠加=重复渲染），禁止进入
   if (!kpByLesson.value[currentLesson.value.lessonId]?.length) {
     ElMessage.warning('该课时的知识点索引未就绪（KG 无子知识点或目录树未加载），暂不能编辑')
