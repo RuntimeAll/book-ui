@@ -17,9 +17,10 @@ import {
   renderPrepPack,
   getPrepTodo,
   getTarget,
+  getPlan,
   pageSessions,
   getReview,
-  artifactUrl,
+  downloadArtifact,
   SESSION_TYPE_LABEL,
   PREP_STATUS_LABEL,
   PACK_STATUS_LABEL,
@@ -52,6 +53,8 @@ const packLessonId = ref('')   // 包 key（lesson 级）
 const packSessionId = ref('')  // 包 key（session 级，散课）
 const ctxSessionId = ref('')   // 实际场次 id（肖像 / 回收 上下文）
 const ctxTargetId = ref('')
+// BUG-009：来源标记（plans / overview / targets），驱动返回按钮的去向 + 文案
+const ctxFrom = ref('')
 
 const mode = computed<'select' | 'builder'>(() =>
   packLessonId.value || packSessionId.value ? 'builder' : 'select',
@@ -62,6 +65,7 @@ function readQuery() {
   packSessionId.value = (route.query.sessionId as string) || ''
   ctxSessionId.value = (route.query.sessionId as string) || ''
   ctxTargetId.value = (route.query.targetId as string) || ''
+  ctxFrom.value = (route.query.from as string) || ''
 }
 
 // ── 入口态：待备课次列表 ──────────────────────────────────────────────────────
@@ -91,6 +95,19 @@ function backToList() {
   router.replace({ name: 'PrepPack', query: {} })
 }
 
+// BUG-009：返回按钮按来源决定去向 + 文案；from=plans/targets 回对应聚合页，其余（含
+// from=overview 与无 from）沿用原「回选课次列表态」行为。
+const backLabel = computed(() => {
+  if (ctxFrom.value === 'plans') return '‹ 返回课程计划'
+  if (ctxFrom.value === 'targets') return '‹ 返回学生与班级'
+  return '‹ 选课次'
+})
+function goBack() {
+  if (ctxFrom.value === 'plans') router.push('/desk/plans')
+  else if (ctxFrom.value === 'targets') router.push('/desk/targets')
+  else backToList()
+}
+
 // ── 构建器状态 ────────────────────────────────────────────────────────────────
 const builderLoading = ref(false)
 const packId = ref<string | null>(null)
@@ -105,6 +122,20 @@ let initToken = 0
 
 const ctxTitle = ref('')
 const ctxSub = ref('')
+// BUG-008：身份行专用字段（学生名 / 课次标题），拼装进页头「{学生名} · {课次标题} · 日期时间」
+const ctxTargetName = ref('')
+const ctxLessonTitle = ref('')
+
+// BUG-008：身份行「{学生名} · {课次标题} · M/D 周X HH:mm–HH:mm」；任一段缺失就跳过，
+// 三段都空则不渲染整行（页头优雅退化回 h1 默认标题）。
+// TODO(R1)：课次序号（第N次课）后端暂未返回 lessonSeq 关联信息，此处不杜撰，留待 S1 建模批。
+const identityLine = computed(() => {
+  const parts: string[] = []
+  if (ctxTargetName.value) parts.push(ctxTargetName.value)
+  if (ctxLessonTitle.value) parts.push(ctxLessonTitle.value)
+  if (ctxSub.value) parts.push(ctxSub.value)
+  return parts.join(' · ')
+})
 
 const allSegsHaveQuestions = computed(
   () => segs.value.length > 0 && segs.value.every((s) => (s.question_ids?.length ?? 0) > 0),
@@ -196,23 +227,43 @@ async function resolveContext(token: number) {
   lastReview.value = null
   lastReviewDate.value = ''
   noSession.value = false
+  ctxTargetName.value = ''
+  ctxLessonTitle.value = ''
 
   // targetId：优先 query；否则由场次反查（best-effort）
   let targetId = ctxTargetId.value
-  if (!targetId && ctxSessionId.value) {
+
+  // 🔴 场次展示信息（日期/时间/类型 + 课次标题）与 targetId 兜底反查解耦：
+  // 即便 targetId 已经从 query 拿到（如 overview/待备清单已带 sessionId+targetId），
+  // 仍需查一次场次本身才能填充 ctxSub / 课次标题，否则身份行会缺这一截。
+  if (ctxSessionId.value) {
     try {
       const res = await pageSessions({ pageNum: 1, pageSize: 200 })
       const hit = (res?.rows ?? []).find((s) => String(s.id) === String(ctxSessionId.value))
       if (hit) {
-        targetId = String(hit.targetId)
-        ctxTargetId.value = targetId
+        if (!targetId) {
+          targetId = String(hit.targetId)
+          ctxTargetId.value = targetId
+        }
         fillCtxFromSession(hit)
+        // 课次标题（best-effort）：session 本身不带 lessonTitle，经 planId 查计划详情匹配 planLessonId。
+        if (hit.planId && hit.planLessonId) {
+          try {
+            const plan = await getPlan(hit.planId)
+            const lesson = (plan?.lessons ?? []).find((l) => String(l.id) === String(hit.planLessonId))
+            if (token === initToken && lesson?.title) ctxLessonTitle.value = lesson.title
+          } catch {
+            /* 拿不到课次标题不致命：身份行少一截 */
+          }
+        }
       }
     } catch {
       /* 反查失败 → 侧卡空态 */
     }
   }
   if (token !== initToken) return
+  // TODO(R1-S1)：仅 lessonId 深链（如课程计划页「打开备课包」）无 sessionId/targetId，
+  // 拿不到对象上下文；后端建模批（S1）补 lesson↔session 关联后再补身份行，本轮不做。
   if (!targetId) return // 仅 lessonId 深链无对象上下文 → 侧卡优雅空
 
   // 肖像
@@ -222,7 +273,7 @@ async function resolveContext(token: number) {
     if (token === initToken) {
       portrait.value = t?.profileJson ?? null
       portraitKind.value = t ? TARGET_TYPE_LABEL[t.targetType] || '学生' : '学生'
-      if (!ctxTitle.value && t?.name) ctxSub.value = t.name
+      if (t?.name) ctxTargetName.value = t.name
     }
   } catch {
     /* 空态 */
@@ -331,6 +382,45 @@ async function refreshPack() {
     }
   } catch {
     /* 保留现状 */
+  }
+}
+
+// ── 产物预览 / 下载（BUG-005：裸 <a href> 走浏览器原生导航不带鉴权头必 401，
+//    改走 downloadArtifact 用项目 axios 实例拿 blob，再 objectURL 承接预览/下载）──────
+const previewingFile = ref('')
+const downloadingFile = ref('')
+
+async function previewArtifact(a: PackArtifact) {
+  previewingFile.value = a.file
+  try {
+    const blob = await downloadArtifact(a.file)
+    const objUrl = URL.createObjectURL(blob)
+    window.open(objUrl, '_blank')
+    // 新标签页已接管 blob，延迟释放避免加载中途被回收
+    setTimeout(() => URL.revokeObjectURL(objUrl), 60_000)
+  } catch {
+    ElMessage.error('预览失败，请重试')
+  } finally {
+    previewingFile.value = ''
+  }
+}
+
+async function downloadArtifactFile(a: PackArtifact) {
+  downloadingFile.value = a.file
+  try {
+    const blob = await downloadArtifact(a.file)
+    const objUrl = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = objUrl
+    link.download = `${a.seg}.pdf`
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(objUrl)
+  } catch {
+    ElMessage.error('下载失败，请重试')
+  } finally {
+    downloadingFile.value = ''
   }
 }
 
@@ -458,12 +548,13 @@ function todoWhen(t: PrepTodoVO): string {
     <template v-else>
       <div class="vhead builder-head">
         <div>
+          <el-button class="back-btn" @click="goBack">{{ backLabel }}</el-button>
           <div class="eyebrow">
-            <el-button link size="small" class="back-btn" @click="backToList">‹ 选课次</el-button>
             <span v-if="ctxSub">备课包 · {{ ctxSub }}</span>
             <span v-else>备课包</span>
           </div>
           <h1 class="ph-h1">{{ ctxTitle || '本次课备课包' }}</h1>
+          <p v-if="identityLine" class="ctx-identity">{{ identityLine }}</p>
           <p class="ph-sub">
             <span class="pill flat" :class="statusTone">{{ PACK_STATUS_LABEL[packStatus] }}</span>
             三段装题并生成上课卷后可标「已备好」 ·
@@ -518,8 +609,20 @@ function todoWhen(t: PrepTodoVO): string {
                 <span class="art-seg">{{ a.seg }}</span>
                 <span class="art-pages">{{ a.pages }} 页</span>
                 <span class="spacer"></span>
-                <a :href="a.url || artifactUrl(a.file)" target="_blank" rel="noopener" class="art-link">预览</a>
-                <a :href="a.url || artifactUrl(a.file)" :download="a.seg" class="art-link">下载</a>
+                <el-button
+                  link
+                  size="small"
+                  class="art-link"
+                  :loading="previewingFile === a.file"
+                  @click="previewArtifact(a)"
+                >预览</el-button>
+                <el-button
+                  link
+                  size="small"
+                  class="art-link"
+                  :loading="downloadingFile === a.file"
+                  @click="downloadArtifactFile(a)"
+                >下载</el-button>
               </li>
             </ul>
           </div>
@@ -560,9 +663,11 @@ function todoWhen(t: PrepTodoVO): string {
 .vhead .spacer { flex: 1; }
 .ph-h1 { font-size: 19px; font-weight: 800; margin: 0; }
 .ph-sub { color: #5f716d; font-size: 13px; margin: 6px 0 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.eyebrow { font-size: 12px; letter-spacing: .04em; color: #8ba09a; font-weight: 600; display: flex; align-items: center; gap: 8px; }
-.back-btn { padding: 0; height: auto; }
+.eyebrow { font-size: 12px; letter-spacing: .04em; color: #8ba09a; font-weight: 600; display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+/* BUG-009：返回按钮从 link+small 升级为正常尺寸、可辨识（有边框/背景）的按钮 */
+.back-btn { margin-bottom: 2px; font-weight: 600; }
 .v1-note { color: #8ba09a; }
+.ctx-identity { font-size: 12.5px; color: #5f716d; margin: 4px 0 0; font-weight: 500; }
 
 /* 入口列表 */
 .todo-wrap { min-height: 120px; }
