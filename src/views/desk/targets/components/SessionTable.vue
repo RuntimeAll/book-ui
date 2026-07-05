@@ -6,7 +6,7 @@
  *         标记已上(sessionMarkDone) · 锁定/解锁内容(sessionLock/Unlock) · 改绑课次(sessionUpdate planLessonId)。
  * 请假/取消返回 {deferred,overflow} → message 提示顺延明细。
  */
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   LESSON_TYPE_LABEL,
@@ -16,10 +16,12 @@ import {
   sessionLock,
   sessionUnlock,
   updateSession,
+  getReview,
   type SessionVO,
   type PlanLessonVO,
   type DeferResult,
 } from '@/api/teacher/schedule'
+import ReviewDialog from './ReviewDialog.vue'
 import {
   shortDate,
   weekdayCn,
@@ -68,6 +70,57 @@ const todayStr = (() => {
 
 // —— 行操作 busy 锁（防双触发） ——
 const busyId = ref<string>('')
+
+// —— 回收态（已回收场次集合） ——
+// 打开时探测：对「已上·非外部」场次批量 getReview，命中即标记（BE 无记录须返 code:1+null）。
+// 另在提交成功 / 弹窗探测到既有记录时增量补入。
+const reviewedIds = ref<Set<string>>(new Set())
+
+function isReviewed(s: SessionVO): boolean {
+  return reviewedIds.value.has(s.id)
+}
+
+let probeSeq = 0
+async function probeReviews() {
+  const my = ++probeSeq
+  const targets = props.sessions.filter((s) => s.sessionStatus === '1' && s.sessionType !== '3')
+  if (!targets.length) return
+  const results = await Promise.allSettled(targets.map((s) => getReview(s.id)))
+  if (my !== probeSeq) return
+  const next = new Set(reviewedIds.value)
+  results.forEach((r, i) => {
+    if (
+      r.status === 'fulfilled' &&
+      r.value &&
+      (r.value.version || (r.value.itemResults && r.value.itemResults.length))
+    ) {
+      next.add(targets[i].id)
+    }
+  })
+  reviewedIds.value = next
+}
+
+watch(() => props.sessions, probeReviews, { immediate: true })
+
+// —— 回收弹窗 ——
+const reviewVisible = ref(false)
+const reviewTarget = ref<SessionVO | null>(null)
+
+function openReview(s: SessionVO) {
+  reviewTarget.value = s
+  reviewVisible.value = true
+}
+
+function onReviewSaved(id: string) {
+  reviewedIds.value = new Set(reviewedIds.value).add(id)
+  emit('refresh')
+}
+
+function onReviewDetected(id: string) {
+  if (!reviewedIds.value.has(id)) {
+    reviewedIds.value = new Set(reviewedIds.value).add(id)
+  }
+}
 
 function showDefer(res: DeferResult, verb: string) {
   const parts: string[] = [`已${verb}`]
@@ -273,6 +326,15 @@ async function saveRebind() {
               @click="emit('open-prep', s.id)"
               >备课包</el-button
             >
+            <el-button
+              v-if="s.sessionType !== '3' && s.sessionStatus === '1'"
+              size="small"
+              :type="isReviewed(s) ? 'success' : 'warning'"
+              text
+              bg
+              @click="openReview(s)"
+              >{{ isReviewed(s) ? '已回收' : '回收' }}</el-button
+            >
             <el-dropdown
               trigger="click"
               :disabled="busyId === s.id"
@@ -360,6 +422,14 @@ async function saveRebind() {
         <el-button type="primary" :loading="rbSaving" @click="saveRebind">保存</el-button>
       </template>
     </el-dialog>
+
+    <!-- 课后回收弹窗（B4） -->
+    <ReviewDialog
+      v-model:visible="reviewVisible"
+      :session="reviewTarget"
+      @saved="onReviewSaved"
+      @reviewed-detected="onReviewDetected"
+    />
   </div>
 </template>
 
