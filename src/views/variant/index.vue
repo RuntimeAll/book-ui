@@ -1649,7 +1649,7 @@ async function onPersistMother() {
     const res = await createQuestionWithDna(bo)
     motherQuestionId.value = res?.id ? String(res.id) : ''
     motherPersisted.value = true
-    ElMessage.success('母题已入库（label_status=1，可组卷·可再举一反三）')
+    ElMessage.success('母题已入库，可组卷 · 可再举一反三')
   } catch (e) {
     // 失败 toast 由 http 拦截器已弹（code!==1）；这里只补一条具体反馈
     ElMessage.error(`母题入库失败：${e instanceof Error ? e.message : String(e)}`)
