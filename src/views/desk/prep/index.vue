@@ -84,6 +84,27 @@ async function loadTodo() {
   }
 }
 
+// BUG-007：按日期分组渲染（组头「7/6 周一」式），去掉行内与左列重复的时间串。
+interface TodoGroup {
+  date: string
+  label: string
+  items: PrepTodoVO[]
+}
+const groupedTodo = computed<TodoGroup[]>(() => {
+  const groups: TodoGroup[] = []
+  const byDate = new Map<string, TodoGroup>()
+  for (const t of todoList.value) {
+    let g = byDate.get(t.sessionDate)
+    if (!g) {
+      g = { date: t.sessionDate, label: `${shortDate(t.sessionDate)} ${relativeDay(t.sessionDate) || weekdayCn(t.sessionDate)}`.trim(), items: [] }
+      byDate.set(t.sessionDate, g)
+      groups.push(g)
+    }
+    g.items.push(t)
+  }
+  return groups
+})
+
 function enterTodo(t: PrepTodoVO) {
   const query: Record<string, string> = { sessionId: String(t.id) }
   if (t.planLessonId) query.lessonId = String(t.planLessonId)
@@ -495,12 +516,6 @@ onMounted(() => {
   else loadTodo()
 })
 
-// 入口列表辅助
-function todoWhen(t: PrepTodoVO): string {
-  const rel = relativeDay(t.sessionDate)
-  const d = shortDate(t.sessionDate)
-  return `${d} ${rel} ${timeRange(t.startTime, t.endTime)}`.trim()
-}
 </script>
 
 <template>
@@ -510,7 +525,7 @@ function todoWhen(t: PrepTodoVO): string {
       <div class="vhead">
         <div>
           <h1 class="ph-h1">备课包</h1>
-          <p class="ph-sub">选择细备窗口（未来 14 天）内的待备课次，进入三段构建器装题出卷</p>
+          <p class="ph-sub">选择课次，进入构建器装题出卷</p>
         </div>
       </div>
 
@@ -521,23 +536,25 @@ function todoWhen(t: PrepTodoVO): string {
           :image-size="90"
         />
         <div v-else class="todo-list">
-          <div v-for="t in todoList" :key="t.id" class="todo-row" @click="enterTodo(t)">
-            <div class="tr-when">
-              <b>{{ shortDate(t.sessionDate) }}</b>
-              <span>{{ relativeDay(t.sessionDate) }} · {{ timeRange(t.startTime, t.endTime) }}</span>
-            </div>
-            <div class="tr-main">
-              <div class="tr-title">
-                {{ t.targetName || '（对象）' }}
-                <span class="tr-lesson">{{ t.lessonTitle || SESSION_TYPE_LABEL[t.sessionType] }}</span>
+          <div v-for="g in groupedTodo" :key="g.date" class="todo-group">
+            <div class="todo-group-h">{{ g.label }}</div>
+            <div v-for="t in g.items" :key="t.id" class="todo-row" @click="enterTodo(t)">
+              <div class="tr-when">
+                <b>{{ shortDate(t.sessionDate) }}</b>
+                <span>{{ relativeDay(t.sessionDate) }} · {{ timeRange(t.startTime, t.endTime) }}</span>
               </div>
-              <div class="tr-meta">{{ todoWhen(t) }}</div>
-            </div>
-            <div class="tr-right">
-              <span class="pill flat" :class="prepStatusPill(t.prepStatus).tone">
-                {{ PREP_STATUS_LABEL[t.prepStatus] }}
-              </span>
-              <span class="tr-go">进入备课 ›</span>
+              <div class="tr-main">
+                <div class="tr-title">
+                  {{ t.targetName || '（对象）' }}
+                  <span class="tr-lesson">{{ t.lessonTitle || SESSION_TYPE_LABEL[t.sessionType] }}</span>
+                </div>
+              </div>
+              <div class="tr-right">
+                <span class="pill flat" :class="prepStatusPill(t.prepStatus).tone">
+                  {{ PREP_STATUS_LABEL[t.prepStatus] }}
+                </span>
+                <span class="tr-go">进入备课 ›</span>
+              </div>
             </div>
           </div>
         </div>
@@ -671,7 +688,9 @@ function todoWhen(t: PrepTodoVO): string {
 
 /* 入口列表 */
 .todo-wrap { min-height: 120px; }
-.todo-list { display: flex; flex-direction: column; gap: 10px; }
+.todo-list { display: flex; flex-direction: column; gap: 18px; }
+.todo-group { display: flex; flex-direction: column; gap: 10px; }
+.todo-group-h { font-size: 12px; font-weight: 700; color: #8ba09a; letter-spacing: .04em; padding-left: 2px; }
 .todo-row {
   display: flex; align-items: center; gap: 14px; padding: 13px 16px;
   background: #fff; border: 1px solid var(--bk-line); border-radius: 12px; cursor: pointer;
@@ -684,7 +703,6 @@ function todoWhen(t: PrepTodoVO): string {
 .tr-main { flex: 1; min-width: 0; }
 .tr-title { font-size: 14px; font-weight: 700; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .tr-lesson { font-size: 12.5px; color: var(--bk-teal-deep); font-weight: 600; }
-.tr-meta { font-size: 11.5px; color: #8ba09a; margin-top: 3px; }
 .tr-right { flex: none; display: flex; align-items: center; gap: 12px; }
 .tr-go { font-size: 12.5px; color: var(--bk-teal); font-weight: 600; }
 
