@@ -390,7 +390,7 @@ function close() {
           </div>
 
           <div v-if="!rows.length" class="rv-empty">
-            该场次暂无备课包题目 · 点「手动加行」逐题录入
+            该场次暂无备课材料题目 · 点「手动加行」逐题录入
           </div>
         </div>
 

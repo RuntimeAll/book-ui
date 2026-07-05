@@ -504,7 +504,7 @@ onMounted(async () => {
                 <el-button size="small" :disabled="idx === lessons.length - 1" @click="moveLesson(idx, 1)">下移</el-button>
                 <el-button size="small" type="danger" plain @click="removeLesson(lesson)">删除</el-button>
                 <span class="spacer"></span>
-                <el-button size="small" type="primary" @click="openPrepPack(lesson)">打开备课包</el-button>
+                <el-button size="small" type="primary" @click="openPrepPack(lesson)">打开备课材料</el-button>
                 <el-button size="small" @click="composeByAnchor(lesson)">按锚点组卷</el-button>
                 <el-button size="small" @click="variant">举一反三</el-button>
               </div>

@@ -1,13 +1,15 @@
 <script setup lang="ts">
 /**
- * PRD-C-213 备课包页（/desk/prep）—— FP23 三段构建器 + FP20' 肖像速览 + FP24 上次课回收。
+ * PRD-C-213 备课材料页（/desk/prep，BUG-011 展示层改名：路由/接口/字段名不动）——
+ * FP23 三段构建器 + FP20' 肖像速览 + FP24 上次课回收。
  *
  * 入口态：无 query → getPrepTodo(14) 待备课次列表，点选进构建器；?lessonId= / ?sessionId= 直开。
  * 构建器：getPrepPack 载入已有包 / 无包则从骨架生成；段可编辑（名/style/rules/note）+ 装题 + 排序；
- *         整包 render 出卷（段无题 BE 400 原样弹）；三段都有题才允许「标记已备好」（markReady 双态联动 BE 做）。
+ *         整包 render 出一份 PDF（BUG-010 单文件：三段拼一份、段间强制起新页；段无题 BE 400 原样弹）；
+ *         三段都有题才允许「标记已备好」（markReady 双态联动 BE 做）。
  * 🔴 id 全 string；v1 无解析卷（界面不出现任何解析/答案产物入口）；BE 未起优雅空态。
  */
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
@@ -368,6 +370,10 @@ async function saveDraft() {
   if (ok) ElMessage.success('已保存草稿')
 }
 
+// BUG-010 FE 配套：render 期间构建器整卡 loading 遮罩（模板处 element-loading-text），
+// 成功后滚动定位到产物区（产物在页面下方，不滚动用户感知不到成功）。
+const artifactsRef = ref<HTMLElement | null>(null)
+
 async function doRender(markReady: boolean) {
   if (markReady && !allSegsHaveQuestions.value) {
     ElMessage.warning('三段均需装题后才能标记已备好')
@@ -382,6 +388,8 @@ async function doRender(markReady: boolean) {
     ElMessage.success(markReady ? '已生成并标记已备好' : '上课卷已生成')
     // 刷新包状态（双态联动由 BE 落库，前端重拉显示）
     await refreshPack()
+    await nextTick()
+    artifactsRef.value?.scrollIntoView({ behavior: 'smooth', block: 'center' })
   } catch (e) {
     // 段无题等业务错误：HTTP-4xx 路径拦截器只弹泛化文案 → 这里把 BE 原始 message 兜出来
     const be = (e as { response?: { data?: { message?: string; msg?: string } } })?.response?.data
@@ -433,6 +441,7 @@ async function downloadArtifactFile(a: PackArtifact) {
     const objUrl = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = objUrl
+    // BUG-010/011 单文件契约 seg='备课材料' → 下载名「备课材料.pdf」（单段重渲时为段名.pdf）
     link.download = `${a.seg}.pdf`
     document.body.appendChild(link)
     link.click()
@@ -524,7 +533,7 @@ onMounted(() => {
     <template v-if="mode === 'select'">
       <div class="vhead">
         <div>
-          <h1 class="ph-h1">备课包</h1>
+          <h1 class="ph-h1">备课材料</h1>
           <p class="ph-sub">选择课次，进入构建器装题出卷</p>
         </div>
       </div>
@@ -567,10 +576,10 @@ onMounted(() => {
         <div>
           <el-button class="back-btn" @click="goBack">{{ backLabel }}</el-button>
           <div class="eyebrow">
-            <span v-if="ctxSub">备课包 · {{ ctxSub }}</span>
-            <span v-else>备课包</span>
+            <span v-if="ctxSub">备课材料 · {{ ctxSub }}</span>
+            <span v-else>备课材料</span>
           </div>
-          <h1 class="ph-h1">{{ ctxTitle || '本次课备课包' }}</h1>
+          <h1 class="ph-h1">{{ ctxTitle || '本次课备课材料' }}</h1>
           <p v-if="identityLine" class="ctx-identity">{{ identityLine }}</p>
           <p class="ph-sub">
             <span class="pill flat" :class="statusTone">{{ PACK_STATUS_LABEL[packStatus] }}</span>
@@ -601,7 +610,12 @@ onMounted(() => {
         每段至少装 1 题才能生成整卷（BE 整单校验，段无题不出半卷）；当前可先「保存草稿」。
       </div>
 
-      <div v-loading="builderLoading" class="prep-grid">
+      <!-- BUG-010：render 期间整卡遮罩 + 进度文案（纯 Java 渲染，秒级） -->
+      <div
+        v-loading="builderLoading || rendering"
+        :element-loading-text="rendering ? '正在生成 PDF…' : undefined"
+        class="prep-grid"
+      >
         <!-- 左：三段构建器 -->
         <div class="seg-col">
           <el-empty v-if="!builderLoading && segs.length === 0" description="无段骨架" :image-size="70" />
@@ -618,8 +632,8 @@ onMounted(() => {
             @ai-variant="aiVariant"
           />
 
-          <!-- 产物列表（render 后）-->
-          <div v-if="artifacts.length" class="artifacts card">
+          <!-- 产物区（render 后；BUG-010 单文件契约 = 单条「备课材料 · N 页」）-->
+          <div v-if="artifacts.length" ref="artifactsRef" class="artifacts card">
             <h2 class="gh"><span class="tick"></span>本次课产物</h2>
             <ul class="art-list">
               <li v-for="(a, i) in artifacts" :key="i">

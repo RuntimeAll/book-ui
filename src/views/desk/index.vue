@@ -37,7 +37,7 @@ const MENU_GROUPS: MenuGroup[] = [
       { title: '排课总览', path: '/desk/schedule', icon: 'schedule' },
       { title: '学生与班级', path: '/desk/targets', icon: 'targets' },
       { title: '课程计划', path: '/desk/plans', icon: 'plans' },
-      { title: '备课包', path: '/desk/prep', icon: 'prep' },
+      { title: '备课材料', path: '/desk/prep', icon: 'prep' },
     ],
   },
   {

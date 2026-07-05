@@ -330,7 +330,7 @@ onMounted(async () => {
                   text
                   bg
                   @click="goPrepBySession(e)"
-                  >进入备课包</el-button
+                  >进入备课材料</el-button
                 >
               </div>
             </li>

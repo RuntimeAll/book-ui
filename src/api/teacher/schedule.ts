@@ -118,7 +118,12 @@ export interface PackSeg {
   note?: string
 }
 
-/** 备课包·产物（file=服务端相对路径，url=临时下载 URL） */
+/**
+ * 备课材料·产物（BUG-010 单文件契约）：整包 render = 单条 [{seg:'备课材料', file, pages}]
+ * （三段拼一份 PDF、段间强制起新页）；segIndex 单段重渲时 seg=段名、同样单文件。
+ * file=服务端相对路径（预览/下载走 downloadArtifact blob 通道）；url 已废弃（BE 不再返回），
+ * 仅为兼容历史落库产物 JSON 保留可选位。
+ */
 export interface PackArtifact {
   seg: string
   file: string
@@ -463,13 +468,13 @@ export interface PrepPackQueryParams {
   packId?: string
 }
 
-/** 渲染入参（segIndex 省=全部；markReady 全段成功后置双态已备好） */
+/** 渲染入参（segIndex 省=全部段拼一份 PDF；markReady 全段成功后置双态已备好） */
 export interface PrepPackRenderBo {
   segIndex?: number
   markReady?: boolean
 }
 
-/** 渲染返回 */
+/** 渲染返回（BUG-010 单文件：artifacts 恒为单条） */
 export interface RenderResult {
   artifacts: PackArtifact[]
 }

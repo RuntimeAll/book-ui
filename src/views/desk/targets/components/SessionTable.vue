@@ -351,7 +351,7 @@ async function saveRebind() {
               text
               bg
               @click="emit('open-prep', s.id)"
-              >备课包</el-button
+              >备课材料</el-button
             >
             <el-button
               v-if="s.sessionType !== '3' && s.sessionStatus === '1'"
