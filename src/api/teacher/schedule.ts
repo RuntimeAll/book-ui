@@ -603,9 +603,17 @@ export const pageTargets = (params: TargetPageParams = {}) =>
 export const getTarget = (id: string) =>
   request.get<TargetDetailVO, TargetDetailVO>(`${BASE}/target/${id}`)
 
-/** 归档：POST target/{id}/archive（归档≠删，不进排课选择器） */
+/** 归档联动返回（BUG-015）：cancelled=一并取消的未来未上场次数 */
+export interface ArchiveResult {
+  cancelled: number
+}
+
+/**
+ * 归档：POST target/{id}/archive（归档≠删，不进排课选择器）。
+ * BUG-015：归档联动取消该对象未来未上场次，返回 {cancelled}。
+ */
 export const archiveTarget = (id: string) =>
-  request.post<void, void>(`${BASE}/target/${id}/archive`)
+  request.post<ArchiveResult, ArchiveResult>(`${BASE}/target/${id}/archive`)
 
 /** 取消归档：POST target/{id}/unarchive */
 export const unarchiveTarget = (id: string) =>

@@ -155,21 +155,47 @@ async function onProfileSave(profile: ProfileJson) {
 
 // —— 归档 / 取消归档 ——
 const archiving = ref(false)
+
+/** 今天 YYYY-MM-DD（本地，ISO 日期串可直接字典序比较） */
+function todayStr(): string {
+  const d = new Date()
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+/** 该对象未来未上场次数（本地过滤已加载场次：status='0' 且日期>=今天）——BUG-015 归档联动明细 */
+const futureUnstartedCount = computed(() => {
+  const t = todayStr()
+  return sessions.value.filter((s) => s.sessionStatus === '0' && (s.sessionDate || '') >= t).length
+})
+
 async function toggleArchive() {
-  const verb = archived.value ? '取消归档' : '归档'
-  if (!archived.value) {
-    await ElMessageBox.confirm(
-      '归档后该对象不再进入排课选择器（数据保留，可随时取消归档）。确认归档？',
-      '归档',
-      { type: 'warning' },
-    ).catch(() => Promise.reject('cancel'))
+  // 取消归档：无联动，不恢复场次（要复课走重新排课）
+  if (archived.value) {
+    archiving.value = true
+    try {
+      await unarchiveTarget(props.card.id)
+      ElMessage.success('已取消归档')
+      await loadDetail()
+      emit('refresh-cards')
+    } finally {
+      archiving.value = false
+    }
+    return
   }
+  // BUG-015 归档：弹窗列明未来未上场次数（N），确认后一并取消
+  const n = futureUnstartedCount.value
+  const msg =
+    n > 0
+      ? `该${kindLabel.value}还有 ${n} 场未上课程，归档将一并取消这些场次（已上/请假/历史记录不动）。确认归档？`
+      : '归档后该对象不再进入排课选择器（数据保留，可随时取消归档）。确认归档？'
+  await ElMessageBox.confirm(msg, '归档', { type: 'warning' }).catch(() => Promise.reject('cancel'))
   archiving.value = true
   try {
-    if (archived.value) await unarchiveTarget(props.card.id)
-    else await archiveTarget(props.card.id)
-    ElMessage.success(`已${verb}`)
+    const res = await archiveTarget(props.card.id)
+    const cancelled = res?.cancelled ?? 0
+    ElMessage.success(cancelled > 0 ? `已归档，已取消 ${cancelled} 场未来课程` : '已归档')
     await loadDetail()
+    await loadSessions()
     emit('refresh-cards')
   } finally {
     archiving.value = false
