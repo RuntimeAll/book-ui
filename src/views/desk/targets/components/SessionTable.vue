@@ -58,6 +58,14 @@ function lessonLabel(s: SessionVO): string {
   return s.externalTitle || '未绑定课次'
 }
 
+// BUG-012：「未绑定课次」降噪——只有「有 planId 却没绑 planLessonId」才是异常态（醒目警示色），
+// 单纯没绑计划（该对象根本没建计划）是正常态，降为灰色次要文案。
+function lessonToneClass(s: SessionVO): string {
+  if (s.sessionType === '3' || s.planLessonId) return ''
+  if (s.planId) return 'warn'
+  return 'muted'
+}
+
 /** 课次类型中文（改绑下拉用） */
 function lessonTypeStr(l: PlanLessonVO): string {
   return LESSON_TYPE_LABEL[l.lessonType] || '教学'
@@ -67,6 +75,24 @@ const todayStr = (() => {
   const n = new Date()
   return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`
 })()
+
+// BUG-012：场次表改升序（后端仍倒序返回，前端本地排）；下一场（今天及以后最近一场未取消/未请假
+// 的排定场次）高亮 + 标记，实现从简（不物理置顶，仅样式区分）。
+const sortedSessions = computed(() =>
+  [...props.sessions].sort((a, b) => {
+    const ka = `${a.sessionDate}${(a.startTime || '').slice(0, 5)}`
+    const kb = `${b.sessionDate}${(b.startTime || '').slice(0, 5)}`
+    return ka.localeCompare(kb)
+  }),
+)
+const nextSessionId = computed(
+  () => sortedSessions.value.find((s) => s.sessionDate >= todayStr && s.sessionStatus === '0')?.id || '',
+)
+
+// BUG-003 口径贯通：sessionStatus 非'0'（已排）时行操作（改期/请假/取消/锁定）禁用
+function isVoided(s: SessionVO): boolean {
+  return s.sessionStatus !== undefined && s.sessionStatus !== '0'
+}
 
 // —— 行操作 busy 锁（防双触发） ——
 const busyId = ref<string>('')
@@ -283,18 +309,19 @@ async function saveRebind() {
       </thead>
       <tbody>
         <tr
-          v-for="(s, i) in sessions"
+          v-for="(s, i) in sortedSessions"
           :key="s.id"
-          :class="{ 'row-today': s.sessionDate === todayStr }"
+          :class="{ 'row-today': s.sessionDate === todayStr, 'row-next': s.id === nextSessionId }"
         >
           <td class="seq">{{ i + 1 }}</td>
           <td class="date">
             <b>{{ shortDate(s.sessionDate) }}</b>
             <span>{{ relativeDay(s.sessionDate) || weekdayCn(s.sessionDate) }}</span>
+            <span v-if="s.id === nextSessionId" class="next-badge">下一场</span>
           </td>
           <td class="time">{{ timeRange(s.startTime, s.endTime) }}</td>
           <td class="lesson">
-            <span class="lesson-txt">
+            <span class="lesson-txt" :class="lessonToneClass(s)">
               <span v-if="s.sessionType === '2'" class="ltype-flag">🧪</span>
               <span v-else-if="s.sessionType === '3'" class="ltype-flag">📌</span>
               {{ lessonLabel(s) }}
@@ -343,16 +370,20 @@ async function saveRebind() {
               <el-button size="small" text bg :loading="busyId === s.id">操作</el-button>
               <template #dropdown>
                 <el-dropdown-menu>
-                  <el-dropdown-item command="reschedule">改期</el-dropdown-item>
+                  <el-dropdown-item command="reschedule" :disabled="isVoided(s)">改期</el-dropdown-item>
                   <el-dropdown-item command="rebind">改绑课次</el-dropdown-item>
-                  <el-dropdown-item command="markdone" v-if="s.sessionStatus !== '1'">
+                  <el-dropdown-item
+                    command="markdone"
+                    v-if="s.sessionStatus !== '1'"
+                    :disabled="isVoided(s)"
+                  >
                     标记已上
                   </el-dropdown-item>
-                  <el-dropdown-item command="lock">
+                  <el-dropdown-item command="lock" :disabled="isVoided(s)">
                     {{ s.lessonLocked === '1' ? '解锁内容' : '锁定内容' }}
                   </el-dropdown-item>
-                  <el-dropdown-item command="leave" divided>请假</el-dropdown-item>
-                  <el-dropdown-item command="cancel">取消场次</el-dropdown-item>
+                  <el-dropdown-item command="leave" divided :disabled="isVoided(s)">请假</el-dropdown-item>
+                  <el-dropdown-item command="cancel" :disabled="isVoided(s)">取消场次</el-dropdown-item>
                 </el-dropdown-menu>
               </template>
             </el-dropdown>
@@ -466,6 +497,22 @@ table.sess tr:hover td {
 tr.row-today td {
   background: #f0f7f5;
 }
+tr.row-next td {
+  background: var(--bk-teal-soft);
+}
+.next-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--bk-teal-deep);
+  background: #fff;
+  border: 1px solid var(--bk-teal);
+  border-radius: 99px;
+  padding: 0 6px;
+  line-height: 15px;
+}
 .seq {
   font-family: Georgia, 'Times New Roman', serif;
   color: #8ba09a;
@@ -496,6 +543,13 @@ tr.row-today td {
 }
 .ltype-flag {
   margin-right: 2px;
+}
+.lesson-txt.warn {
+  color: #b45309;
+}
+.lesson-txt.muted {
+  color: #9aa19d;
+  font-weight: 500;
 }
 .lock-tag {
   margin-left: 6px;
