@@ -11,6 +11,7 @@ export type LineIconName =
   | 'home' | 'qbank' | 'papers' | 'lecture' | 'desk' | 'manage'
   | 'overview' | 'my-question' | 'my-papers' | 'my-lectures'
   | 'favorites' | 'ai-variant' | 'geo-board' | 'workspace'
+  | 'schedule' | 'targets' | 'plans' | 'prep'
 </script>
 
 <script setup lang="ts">
@@ -72,6 +73,21 @@ withDefaults(defineProps<{ name: LineIconName; size?: number }>(), { size: 19 })
     </template>
     <template v-else-if="name === 'workspace'">
       <rect x="3.5" y="5" width="17" height="11" rx="2" /><path d="M8 20h8M12 16v4" /><path d="M7.5 9h5M7.5 12h3" />
+    </template>
+    <!-- 教学安排四枚（PRD-C-213）：日历 / 两人 / 课程清单 / 带勾备课夹 -->
+    <template v-else-if="name === 'schedule'">
+      <rect x="3.5" y="5" width="17" height="15.5" rx="2" /><path d="M3.5 9.5h17" /><path d="M8 3v4M16 3v4" />
+      <path d="M7.5 13.5h3M13.5 13.5h3M7.5 17h3" />
+    </template>
+    <template v-else-if="name === 'targets'">
+      <circle cx="9" cy="8.5" r="2.8" /><path d="M4.5 19c.7-3 2.4-4.5 4.5-4.5s3.8 1.5 4.5 4.5" />
+      <circle cx="16.8" cy="9.5" r="2.1" /><path d="M15.8 14.6c1.9.3 3.2 1.7 3.8 4.1" />
+    </template>
+    <template v-else-if="name === 'plans'">
+      <rect x="5" y="4" width="14" height="16" rx="2" /><path d="M9 8.5h6M9 12h6M9 15.5h3.5" />
+    </template>
+    <template v-else-if="name === 'prep'">
+      <rect x="5" y="5" width="14" height="15.5" rx="2" /><path d="M9 5V3.5h6V5" /><path d="M8.8 13.2l2.1 2.1 4.3-4.3" />
     </template>
   </svg>
 </template>
