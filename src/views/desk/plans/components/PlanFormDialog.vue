@@ -15,6 +15,7 @@ import {
   type TargetType,
   type SegTemplateItem,
 } from '@/api/teacher/schedule'
+import { useDictStore } from '@/store/dict'
 import SegTemplateEditor from './SegTemplateEditor.vue'
 
 const props = defineProps<{
@@ -28,7 +29,12 @@ const emit = defineEmits<{
   (e: 'saved', id: string): void
 }>()
 
-const TERM_OPTIONS = ['暑假', '上学期', '寒假', '下学期']
+// PRD-C-213 终审：期段改吃字典 biz_term_tag（暑假/上学期/寒假/下学期，四值封闭，不 allow-create）。
+// 🔴 biz_term_tag 的 value=中文文本本身（与 label 同文），termTag 列 varchar 存中文，直接绑 dictLabel。
+const DICT_TERM_TAG = 'biz_term_tag'
+const dict = useDictStore()
+dict.load(DICT_TERM_TAG)
+const TERM_OPTIONS = computed(() => dict.list(DICT_TERM_TAG).map((d) => d.dictLabel))
 const currentYear = new Date().getFullYear()
 const YEAR_OPTIONS = Array.from({ length: 5 }, (_, i) => currentYear - 1 + i)
 

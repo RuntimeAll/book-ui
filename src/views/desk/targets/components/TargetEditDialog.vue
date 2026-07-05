@@ -17,6 +17,13 @@ import {
   type TargetCreateBo,
   type TargetUpdateBo,
 } from '@/api/teacher/schedule'
+import {
+  useDictStore,
+  DICT_EDU_GRADE,
+  DICT_EDU_SUBJECT,
+  DICT_EDU_EDITION,
+  DICT_EDU_VOLUME,
+} from '@/store/dict'
 
 const props = defineProps<{
   modelValue: boolean
@@ -48,6 +55,26 @@ const form = reactive({
 const saving = ref(false)
 const isClass = computed(() => props.targetType === '1')
 const kindLabel = computed(() => TARGET_TYPE_LABEL[props.targetType])
+
+// PRD-C-213 终审：年级/学科/教材改字典下拉。
+// 🔴 这些业务列 varchar 存中文文本（如「升四」「数学」「人教版三年级下册」），
+//    所以下拉绑定值一律用 dict 的中文 label（非数字 value）；allow-create 保留口语/自定义文本，零数据迁移。
+const dict = useDictStore()
+dict.load(DICT_EDU_GRADE)
+dict.load(DICT_EDU_SUBJECT)
+dict.load(DICT_EDU_EDITION)
+dict.load(DICT_EDU_VOLUME)
+
+const GRADE_OPTIONS = computed(() => dict.list(DICT_EDU_GRADE).map((d) => d.dictLabel))
+const SUBJECT_OPTIONS = computed(() => dict.list(DICT_EDU_SUBJECT).map((d) => d.dictLabel))
+// 教材 = 版本×年级×册 组合，label 拼「{版本}版{年级}{册}」（如 人教版三年级下册，共 48 项）
+const TEXTBOOK_OPTIONS = computed(() => {
+  const out: string[] = []
+  for (const ed of dict.list(DICT_EDU_EDITION))
+    for (const gr of dict.list(DICT_EDU_GRADE))
+      for (const vo of dict.list(DICT_EDU_VOLUME)) out.push(`${ed.dictLabel}版${gr.dictLabel}${vo.dictLabel}`)
+  return out
+})
 
 function resetFrom() {
   if (props.mode === 'edit' && props.detail) {
@@ -93,12 +120,12 @@ async function submit() {
       const bo: TargetCreateBo = {
         targetType: props.targetType,
         name: form.name.trim(),
-        grade: form.grade.trim() || undefined,
-        subject: form.subject.trim() || undefined,
+        grade: (form.grade || '').trim() || undefined,
+        subject: (form.subject || '').trim() || undefined,
         color: form.color || undefined,
       }
       if (!isClass.value) {
-        bo.textbook = form.textbook.trim() || undefined
+        bo.textbook = (form.textbook || '').trim() || undefined
         bo.parentPhone = form.parentPhone.trim() || undefined
       }
       const res = await createTarget(bo)
@@ -106,12 +133,12 @@ async function submit() {
     } else {
       const bo: TargetUpdateBo = {
         name: form.name.trim(),
-        grade: form.grade.trim() || undefined,
-        subject: form.subject.trim() || undefined,
+        grade: (form.grade || '').trim() || undefined,
+        subject: (form.subject || '').trim() || undefined,
         color: form.color || undefined,
       }
       if (!isClass.value) {
-        bo.textbook = form.textbook.trim() || undefined
+        bo.textbook = (form.textbook || '').trim() || undefined
         bo.parentPhone = form.parentPhone.trim() || undefined
       }
       await updateTarget(id, bo)
@@ -143,15 +170,45 @@ async function submit() {
       </el-form-item>
       <div class="ge-row">
         <el-form-item label="年级">
-          <el-input v-model="form.grade" placeholder="如 初一 / 升四" />
+          <el-select
+            v-model="form.grade"
+            filterable
+            allow-create
+            default-first-option
+            clearable
+            placeholder="可选或输入，如 升四"
+            style="width: 100%"
+          >
+            <el-option v-for="g in GRADE_OPTIONS" :key="g" :label="g" :value="g" />
+          </el-select>
         </el-form-item>
         <el-form-item label="学科">
-          <el-input v-model="form.subject" placeholder="如 数学 / 科学" />
+          <el-select
+            v-model="form.subject"
+            filterable
+            allow-create
+            default-first-option
+            clearable
+            placeholder="可选或输入，如 数学"
+            style="width: 100%"
+          >
+            <el-option v-for="s in SUBJECT_OPTIONS" :key="s" :label="s" :value="s" />
+          </el-select>
         </el-form-item>
       </div>
       <template v-if="!isClass">
         <el-form-item label="教材">
-          <el-input v-model="form.textbook" placeholder="如 人教版数学" maxlength="100" />
+          <el-select
+            v-model="form.textbook"
+            filterable
+            allow-create
+            default-first-option
+            clearable
+            placeholder="可选或输入，如 人教版三年级下册"
+            style="width: 100%"
+          >
+            <el-option v-for="tb in TEXTBOOK_OPTIONS" :key="tb" :label="tb" :value="tb" />
+          </el-select>
         </el-form-item>
         <el-form-item label="家长电话">
           <el-input v-model="form.parentPhone" placeholder="用于家长版导出" maxlength="20" />
