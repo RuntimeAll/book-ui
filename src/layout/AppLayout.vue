@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import MultiFunctionFab from '@/components/business/MultiFunctionFab/index.vue'
@@ -24,6 +24,32 @@ const avatarChar = computed(() => {
   const name = displayName.value
   return name ? name.charAt(0).toUpperCase() : '师'
 })
+
+// PRD-C-213 终审修订 — 顶栏对齐设计稿：用户块角色副行（教研 · 管理员/机构管理/老师）
+const roleLabel = computed(() => {
+  const roles = userStore.roles
+  if (roles.includes('superadmin')) return '教研 · 管理员'
+  if (roles.includes('org_admin')) return '教研 · 机构管理'
+  return '教研 · 老师'
+})
+
+// PRD-C-213 终审修订 — 顶栏搜索胶囊：入口直达题库（题库页自带搜索），Ctrl K 全局快捷键
+function goSearch() {
+  if (route.path !== '/question/index') router.push('/question/index')
+}
+function onGlobalKeydown(e: KeyboardEvent) {
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
+    e.preventDefault()
+    goSearch()
+  }
+}
+onMounted(() => window.addEventListener('keydown', onGlobalKeydown))
+onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown))
+
+// 通知中心：设计稿占位，功能后置
+function onBellClick() {
+  ElMessage.info('通知中心建设中')
+}
 
 async function handleLogout() {
   try {
@@ -133,6 +159,7 @@ const showMultiFunctionFab = computed(() => {
           </div>
           <div class="logo-text-group">
             <span class="logo-title"><span class="logo-ai">AI</span>·备课帮</span>
+            <span class="logo-slogan">教研 · 一站备课</span>
           </div>
         </div>
 
@@ -152,20 +179,38 @@ const showMultiFunctionFab = computed(() => {
 
         <!-- Right actions（PRD-C-212 D2：会员体系不做，「升级会员」按钮删除） -->
         <div class="header-right">
+          <!-- PRD-C-213 终审修订 — 顶栏对齐设计稿：搜索胶囊（Ctrl K）+ 通知铃 + 分隔线 + 用户块 -->
+          <button type="button" class="top-search" title="全局搜索" @click="goSearch">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></svg>
+            <span class="ts-text">搜题目 / 试卷 / 讲义</span>
+            <kbd class="ts-kbd">Ctrl K</kbd>
+          </button>
           <!-- PRD-C-212 D5 — 游客态：登录/免费注册 替代头像 -->
           <template v-if="!userStore.isLoggedIn">
             <el-button class="guest-login-btn" size="default" text @click="goLogin">登录</el-button>
             <el-button class="guest-register-btn" size="default" type="primary" @click="loginDialog.open({ mode: 'register' })">免费注册</el-button>
           </template>
+          <template v-if="userStore.isLoggedIn">
+            <button type="button" class="top-bell" title="通知" aria-label="通知" @click="onBellClick">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 9a6 6 0 1 0-12 0c0 6-2.5 7-2.5 7h17S18 15 18 9z" /><path d="M10 20a2.2 2.2 0 0 0 4 0" /></svg>
+              <i class="bell-dot"></i>
+            </button>
+            <span class="top-divider"></span>
+          </template>
           <!-- U-hotfix — avatar 改 dropdown，含"退出登录" -->
           <el-dropdown v-if="userStore.isLoggedIn" trigger="click" placement="bottom-end" @command="handleDropdownCommand">
-            <div class="avatar-wrap">
+            <div class="avatar-wrap top-user">
               <el-avatar
                 :size="34"
                 class="user-avatar"
               >
                 {{ avatarChar }}
               </el-avatar>
+              <span class="u-meta">
+                <span class="u-name">{{ displayName }}</span>
+                <span class="u-role">{{ roleLabel }}</span>
+              </span>
+              <svg class="u-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 9l6 6 6-6" /></svg>
             </div>
             <template #dropdown>
               <el-dropdown-menu>
@@ -273,6 +318,73 @@ const showMultiFunctionFab = computed(() => {
   color: var(--bk-teal);
   font-weight: 600;
 }
+
+/* PRD-C-213 终审修订 — 品牌副标语（对齐设计稿 brand-slogan） */
+.logo-slogan {
+  font-size: 11px;
+  color: #7b8b93;
+  letter-spacing: 1.5px;
+  margin-top: 1px;
+}
+
+/* ── 顶栏右侧（PRD-C-213 终审修订：搜索胶囊/通知铃/分隔线/用户块，对齐设计稿 top-right）── */
+.top-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid #e3e9e9;
+  background: #f7fafa;
+  color: #8a9aa2;
+  font-size: 12.5px;
+  border-radius: 999px;
+  padding: 7px 8px 7px 12px;
+  cursor: pointer;
+  transition: border-color .18s ease, color .18s ease;
+  white-space: nowrap;
+}
+.top-search:hover { border-color: var(--bk-teal); color: var(--bk-teal); }
+.top-search svg { width: 15px; height: 15px; flex-shrink: 0; }
+.ts-kbd {
+  font-family: Consolas, monospace;
+  font-size: 10.5px;
+  color: #93a5ad;
+  border: 1px solid #e3e9e9;
+  background: #fff;
+  border-radius: 5px;
+  padding: 2px 5px;
+  line-height: 1;
+}
+.top-bell {
+  position: relative;
+  border: 0;
+  background: transparent;
+  color: #67787f;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease;
+}
+.top-bell:hover { background: #eef6f5; color: var(--bk-teal); }
+.top-bell svg { width: 17px; height: 17px; }
+.bell-dot {
+  position: absolute;
+  top: 7px;
+  right: 8px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #e5484d;
+  border: 1.5px solid #fff;
+}
+.top-divider { width: 1px; height: 22px; background: #e3e9e9; }
+.top-user { display: flex; align-items: center; gap: 8px; }
+.u-meta { display: flex; flex-direction: column; line-height: 1.25; }
+.u-name { font-size: 13px; font-weight: 600; color: #1d2a2e; }
+.u-role { font-size: 11px; color: #7b8b93; }
+.u-chev { width: 14px; height: 14px; color: #93a5ad; }
 
 /* ── 导航菜单 ── */
 .nav-menu {
