@@ -280,7 +280,8 @@ async function moveLesson(index: number, dir: -1 | 1) {
 
 // ── FP19 课次动作 ───────────────────────────────────────────────────────────
 function openPrepPack(lesson: PlanLessonVO) {
-  router.push({ name: 'PrepPack', query: { lessonId: lesson.id } })
+  // BUG-009：from=plans 供备课包页返回按钮回跳课程计划
+  router.push({ name: 'PrepPack', query: { lessonId: lesson.id, from: 'plans' } })
 }
 function composeByAnchor(lesson: PlanLessonVO) {
   // 组卷工作台（PapersWorkbench）现按 route.params.id 走，不消费 kg query；带锚点参数备用。
@@ -289,7 +290,7 @@ function composeByAnchor(lesson: PlanLessonVO) {
   router.push({ name: 'PapersWorkbench', query })
 }
 function variant() {
-  ElMessage.info('举一反三入口待接入（占位）')
+  ElMessage.info('举一反三功能开发中，敬请期待')
 }
 
 // ── FP22 家长版导出 ─────────────────────────────────────────────────────────

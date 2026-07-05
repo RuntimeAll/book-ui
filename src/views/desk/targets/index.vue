@@ -135,7 +135,10 @@ function onRefreshCards() {
 }
 
 function openPrep(sessionId: string) {
-  router.push({ path: '/desk/prep', query: { sessionId } })
+  // BUG-008/BUG-009：补 targetId（供身份行拼装）+ from（供返回按钮溯源）
+  const query: Record<string, string> = { sessionId, from: 'targets' }
+  if (selectedId.value) query.targetId = selectedId.value
+  router.push({ path: '/desk/prep', query })
 }
 
 onMounted(async () => {

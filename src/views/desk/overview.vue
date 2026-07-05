@@ -168,7 +168,10 @@ async function onMarkDone(e: CalendarSessionVO) {
   }
 }
 function goPrepBySession(e: CalendarSessionVO) {
-  router.push({ path: '/desk/prep', query: { sessionId: e.id } })
+  const query: Record<string, string> = { sessionId: e.id, from: 'overview' }
+  if (e.targetId) query.targetId = e.targetId
+  if (e.planLessonId) query.lessonId = e.planLessonId
+  router.push({ path: '/desk/prep', query })
 }
 
 // ── FP2 待备提醒条 ──────────────────────────────────────────
@@ -187,10 +190,11 @@ async function fetchTodo() {
   }
 }
 function goTodo(t: PrepTodoVO) {
-  router.push({
-    path: '/desk/prep',
-    query: t.planLessonId ? { lessonId: t.planLessonId } : { sessionId: t.id },
-  })
+  // BUG-008/BUG-009：补 sessionId + targetId（供身份行拼装）+ from（供返回按钮溯源）
+  const query: Record<string, string> = { sessionId: String(t.id), from: 'overview' }
+  if (t.planLessonId) query.lessonId = String(t.planLessonId)
+  if (t.targetId) query.targetId = String(t.targetId)
+  router.push({ path: '/desk/prep', query })
 }
 
 // ── FP3 统计卡 ×4 ──────────────────────────────────────────
