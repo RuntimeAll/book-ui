@@ -174,7 +174,7 @@ function goPrepBySession(e: CalendarSessionVO) {
   router.push({ path: '/desk/prep', query })
 }
 
-// ── FP2 待备提醒条 ──────────────────────────────────────────
+// ── FP2 明日课程（BUG-006：由「细备窗口·N场待备」大列表改为明日课程，去催备语义）──────
 const todoList = ref<PrepTodoVO[]>([])
 const todoLoading = ref(false)
 async function fetchTodo() {
@@ -189,6 +189,14 @@ async function fetchTodo() {
     todoLoading.value = false
   }
 }
+// 明天日期字符串 + 明日待备课过滤（getPrepTodo 口径本身只含未备/备课中场次，
+// 已备好的明日课不会出现在这里，天然满足「已备好则不显示角标」）
+const tomorrowStr = computed(() => {
+  const d = new Date(now)
+  d.setDate(d.getDate() + 1)
+  return fmtDate(d)
+})
+const tomorrowList = computed(() => todoList.value.filter((t) => t.sessionDate === tomorrowStr.value))
 function goTodo(t: PrepTodoVO) {
   // BUG-008/BUG-009：补 sessionId + targetId（供身份行拼装）+ from（供返回按钮溯源）
   const query: Record<string, string> = { sessionId: String(t.id), from: 'overview' }
@@ -330,24 +338,21 @@ onMounted(async () => {
           <div v-else-if="!calLoading" class="ov-empty">今天没有排课</div>
         </section>
 
-        <!-- FP2 待备提醒条 -->
+        <!-- FP2 明日课程 -->
         <section class="prep-strip" v-loading="todoLoading">
           <div class="ps-head">
             <span class="ps-ic"><el-icon><Bell /></el-icon></span>
-            <b v-if="todoList.length">细备窗口 · {{ todoList.length }} 场待备</b>
-            <b v-else>未来 7 天暂无待备课</b>
-            <span class="ps-hint">只提醒未来 7 天内的课，更远的按大纲放着就行</span>
+            <b>明日课程</b>
           </div>
-          <ul v-if="todoList.length" class="ps-list">
-            <li v-for="t in todoList" :key="t.id" @click="goTodo(t)">
-              <span class="ps-when">{{ relDay(t.sessionDate) }} {{ hhmm(t.startTime) }}</span>
+          <ul v-if="tomorrowList.length" class="ps-list">
+            <li v-for="t in tomorrowList" :key="t.id" @click="goTodo(t)">
+              <span class="ps-when">{{ hhmm(t.startTime) }}</span>
               <span class="ps-name">{{ t.targetName || '未命名对象' }}</span>
               <span class="ps-what">{{ t.lessonTitle || SESSION_TYPE_LABEL[t.sessionType] }}</span>
-              <span class="pill" :class="PREP_PILL[t.prepStatus]">
-                {{ PREP_STATUS_LABEL[t.prepStatus] }}
-              </span>
+              <span class="pill todo">未备</span>
             </li>
           </ul>
+          <div v-else-if="!todoLoading" class="ps-empty">明天暂无排课</div>
         </section>
 
         <!-- FP3 统计卡 ×4 -->
@@ -596,9 +601,10 @@ onMounted(async () => {
   font-size: 13px;
   color: var(--bk-teal-deep);
 }
-.ps-hint {
-  font-size: 11.5px;
-  color: #6b7a77;
+.ps-empty {
+  padding: 10px 4px 2px;
+  font-size: 12px;
+  color: #8ba09a;
 }
 .ps-list {
   list-style: none;
