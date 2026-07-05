@@ -153,10 +153,15 @@ async function initBuilder() {
 }
 
 function cloneSeg(s: PackSeg): PackSeg {
+  // 🔴 BE 返回的 segs 是 biz_prep_pack.segs JSON 列原样透传（PrepPackService.packVo 不走 DTO 再序列化），
+  // 历史/种子数据里段的题目键可能是 camelCase `questionIds`（如 pack id=4，status='2' 已备好）。
+  // 与 BE render 路径 qids() 同口径两读（question_ids | questionIds），FE 仍统一写回 snake_case 契约字段。
+  const rawIds =
+    s.question_ids ?? (s as unknown as { questionIds?: unknown[] }).questionIds ?? []
   return {
     name: s.name ?? '',
     style: s.style ?? '',
-    question_ids: [...(s.question_ids ?? [])].map(String),
+    question_ids: [...rawIds].map(String),
     rules: s.rules ?? '',
     note: s.note ?? '',
   }
