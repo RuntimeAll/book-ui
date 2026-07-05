@@ -175,9 +175,6 @@ async function toggleArchive() {
   }
 }
 
-function onRebindPlanInfo() {
-  ElMessage.info('计划绑定在「排课总览」批量排课时设置（session.plan_id）')
-}
 </script>
 
 <template>
@@ -216,7 +213,6 @@ function onRebindPlanInfo() {
           <div class="prog"><i :style="{ width: progPct + '%', background: color }" /></div>
           <span class="pb-c">{{ progText }}</span>
         </div>
-        <el-button size="small" text @click="onRebindPlanInfo">换绑</el-button>
       </div>
     </div>
 
