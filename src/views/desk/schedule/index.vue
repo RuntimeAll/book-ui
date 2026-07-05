@@ -23,6 +23,7 @@ import type {
   CalendarSessionVO,
   PrepTodoVO,
   PrepStatus,
+  SessionStatus,
   SessionType,
 } from '@/api/teacher/schedule'
 import BatchScheduleWizard from './components/BatchScheduleWizard.vue'
@@ -94,6 +95,8 @@ interface CalEvent {
   name: string
   title: string
   sessionType: SessionType
+  sessionStatus: SessionStatus
+  lessonLocked?: string
   prepStatus: PrepStatus
   externalTitle?: string
   lessonTitle?: string
@@ -118,6 +121,8 @@ const normalized = computed<CalEvent[]>(() =>
       name,
       title,
       sessionType: e.sessionType,
+      sessionStatus: e.sessionStatus,
+      lessonLocked: e.lessonLocked,
       prepStatus: e.prepStatus,
       externalTitle: e.externalTitle,
       lessonTitle: e.lessonTitle,
@@ -200,6 +205,11 @@ function tint(hex: string, a: number): string {
   const b = parseInt(h.slice(4, 6), 16)
   return `rgba(${r},${g},${b},${a})`
 }
+// BUG-003：已取消（'3'）/ 请假（'2'）场次灰显 + 删除线可辨，与外部占位同色调但加删除线区分语义；
+// 已上（'1'）保持现有 tint 样式不动。
+function isVoided(e: CalEvent): boolean {
+  return e.sessionStatus === '2' || e.sessionStatus === '3'
+}
 function evtStyle(e: CalEvent) {
   if (e.sessionType === '3') {
     return {
@@ -207,6 +217,15 @@ function evtStyle(e: CalEvent) {
       color: '#7d8f8b',
       borderLeftColor: '#c3cecb',
       fontWeight: '500',
+    }
+  }
+  if (isVoided(e)) {
+    return {
+      background: 'var(--el-fill-color-light)',
+      color: '#9aa19d',
+      borderLeftColor: '#c3cecb',
+      fontWeight: '500',
+      textDecoration: 'line-through',
     }
   }
   return { background: tint(e.color, 0.12), color: e.color, borderLeftColor: e.color }
@@ -231,13 +250,13 @@ async function fetchTodo() {
 
 const PREP_PILL: Record<PrepStatus, string> = { '2': 'ok', '1': 'mid', '0': 'todo' }
 
-function relLabel(dateStr: string): { rel: string; time: string } {
-  const d = new Date(dateStr + 'T00:00:00')
-  const diff = Math.round((d.getTime() - todayDate.getTime()) / 86400000)
-  if (diff === 0) return { rel: '今天', time: '' }
-  if (diff === 1) return { rel: '明天', time: '' }
-  return { rel: `${d.getMonth() + 1}/${d.getDate()} ${WEEK_CN[d.getDay()]}`, time: '' }
-}
+// BUG-006：右栏「接下来 7 天」收敛为「明天」——全站去 N 场待备大列表语义，只提示明天课程。
+const tomorrowStr = computed(() => {
+  const d = new Date(todayDate)
+  d.setDate(d.getDate() + 1)
+  return fmtDate(d)
+})
+const tomorrowTodoList = computed(() => todoList.value.filter((t) => t.sessionDate === tomorrowStr.value))
 
 // ── 抽屉 / 向导 ─────────────────────────────────────────────────
 const drawerVisible = ref(false)
@@ -256,10 +275,10 @@ function openFromEvent(e: CalEvent) {
     start: e.start,
     end: e.endTime,
     sessionType: e.sessionType,
-    sessionStatus: undefined,
+    sessionStatus: e.sessionStatus,
     prepStatus: e.prepStatus,
     title: e.lessonTitle || e.externalTitle,
-    lessonLocked: undefined,
+    lessonLocked: e.lessonLocked,
   }
   drawerVisible.value = true
 }
@@ -370,8 +389,10 @@ onMounted(() => {
               >
                 <time v-if="e.start">{{ e.start }}</time>
                 <span class="sc-evt-name">{{ e.name }}</span>
+                <span v-if="e.sessionStatus === '2'" class="sc-void-pill">请假</span>
+                <span v-else-if="e.sessionStatus === '3'" class="sc-void-pill">已取消</span>
                 <span
-                  v-if="e.sessionType !== '3'"
+                  v-else-if="e.sessionType !== '3'"
                   class="sc-pdot"
                   :class="PREP_DOT[e.prepStatus]"
                 />
@@ -401,13 +422,13 @@ onMounted(() => {
 
       <!-- 右栏 -->
       <div class="sc-rail">
-        <!-- FP10 接下来 7 天 -->
+        <!-- FP10 明天（BUG-006：由「接下来 7 天」收敛，去催备大列表语义） -->
         <div class="sc-card sc-rail-card" v-loading="todoLoading">
-          <h2 class="sc-h2"><span class="sc-tick" />接下来 7 天</h2>
-          <ul v-if="todoList.length" class="sc-up-list">
-            <li v-for="t in todoList" :key="t.id" @click="openFromTodo(t)">
+          <h2 class="sc-h2"><span class="sc-tick" />明天</h2>
+          <ul v-if="tomorrowTodoList.length" class="sc-up-list">
+            <li v-for="t in tomorrowTodoList" :key="t.id" @click="openFromTodo(t)">
               <span class="sc-up-when">
-                <b>{{ relLabel(t.sessionDate).rel }}</b>{{ (t.startTime || '').slice(0, 5) }}
+                <b>{{ (t.startTime || '').slice(0, 5) }}</b>
               </span>
               <span class="sc-up-bar" style="background: var(--bk-teal)" />
               <span class="sc-up-body">
@@ -419,7 +440,7 @@ onMounted(() => {
               </span>
             </li>
           </ul>
-          <div v-else-if="!todoLoading" class="sc-rail-empty">未来 7 天暂无待备课场次</div>
+          <div v-else-if="!todoLoading" class="sc-rail-empty">明天暂无排课</div>
         </div>
 
         <!-- FP11 冲突说明卡 -->
@@ -650,6 +671,18 @@ onMounted(() => {
 }
 .sc-pdot.p-todo {
   background: #ba3a2a;
+}
+.sc-void-pill {
+  margin-left: auto;
+  flex: none;
+  font-size: 9.5px;
+  font-weight: 700;
+  padding: 0 5px;
+  line-height: 14px;
+  border-radius: 99px;
+  background: #eef1f0;
+  color: #7d8f8b;
+  text-decoration: none;
 }
 .sc-evt-more {
   font-size: 11px;

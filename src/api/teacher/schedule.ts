@@ -398,6 +398,8 @@ export interface CalendarSessionVO {
   sessionType: SessionType
   sessionStatus: SessionStatus
   prepStatus: PrepStatus
+  /** 内容锁定（'1' 顺延时保持原课次）——BE 每场次 VO 都返，BUG-003 修复前 FE 曾漏映射 */
+  lessonLocked?: string
   planLessonId?: string
   /** planLesson 标题 */
   lessonTitle?: string

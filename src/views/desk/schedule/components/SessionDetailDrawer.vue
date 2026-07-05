@@ -80,6 +80,14 @@ watch(
   { immediate: true },
 )
 
+// BUG-003：sessionStatus 存在且非'0'（已排）时禁用改期/请假/取消/锁定/标记已上；
+// status undefined（老入口，如从待备清单开抽屉）视为可操作，行为不变。
+const disableReason = computed(() => {
+  const st = props.session?.sessionStatus
+  if (!st || st === '0') return ''
+  return `${SESSION_STATUS_LABEL[st]}的场次不可操作`
+})
+
 function reportDefer(r: DeferResult | undefined, okMsg: string) {
   const parts: string[] = []
   if (r?.deferred?.length) parts.push(`${r.deferred.length} 场课次顺延`)
@@ -273,15 +281,27 @@ async function submitReschedule() {
         </div>
       </div>
 
-      <!-- 操作组 -->
+      <!-- 操作组：sessionStatus 非'0'（已排）时禁用，title 给禁用原因 -->
       <div v-else class="sd-actions">
-        <el-button :disabled="busy" @click="rescheduling = true">改期</el-button>
-        <el-button :disabled="busy" @click="doMarkDone">标记已上</el-button>
-        <el-button :disabled="busy" @click="doLeave">请假</el-button>
-        <el-button :disabled="busy" @click="toggleLock">
+        <el-button :disabled="busy || !!disableReason" :title="disableReason" @click="rescheduling = true">
+          改期
+        </el-button>
+        <el-button :disabled="busy || !!disableReason" :title="disableReason" @click="doMarkDone">
+          标记已上
+        </el-button>
+        <el-button :disabled="busy || !!disableReason" :title="disableReason" @click="doLeave">请假</el-button>
+        <el-button :disabled="busy || !!disableReason" :title="disableReason" @click="toggleLock">
           {{ locked ? '解锁内容' : '锁定内容' }}
         </el-button>
-        <el-button :disabled="busy" type="danger" plain @click="doCancel">取消场次</el-button>
+        <el-button
+          :disabled="busy || !!disableReason"
+          :title="disableReason"
+          type="danger"
+          plain
+          @click="doCancel"
+        >
+          取消场次
+        </el-button>
       </div>
     </div>
     <el-empty v-else description="无场次数据" />
