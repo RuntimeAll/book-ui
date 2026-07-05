@@ -713,3 +713,11 @@ export const pageQuestionPool = (params: QuestionPoolParams = {}) =>
  */
 export const artifactUrl = (path: string): string =>
   `/api${BASE}/artifact?path=${encodeURIComponent(path)}`
+
+/**
+ * BUG-005 修复：产物预览/下载改走带鉴权头的 axios 实例（原裸 `<a :href>` 走浏览器原生导航，
+ * 不带 Authorization/clientid，BE @SaCheckLogin 必 401）。responseType='blob'，
+ * http/request.ts 响应拦截器对 blob 响应短路跳过 envelope 解包，直接透传原始 blob。
+ */
+export const downloadArtifact = (path: string): Promise<Blob> =>
+  request.get<Blob, Blob>(`${BASE}/artifact`, { params: { path }, responseType: 'blob' })

@@ -89,6 +89,12 @@ function redirectToLogin() {
 
 instance.interceptors.response.use(
   (response) => {
+    // BUG-005 修复：blob/arraybuffer 响应（如 downloadArtifact）不是 misikt/RuoYi envelope
+    // JSON 结构，直接透传原始数据，不走下面的 code 判错逻辑（否则会把二进制当 envelope 解析报错）。
+    if (response.config.responseType === 'blob' || response.config.responseType === 'arraybuffer') {
+      return response.data as unknown as AxiosResponse
+    }
+
     const url = response.config.url ?? ''
 
     // 分支 1：RuoYi 原 envelope（/auth/* 与 /system/*：未经 MisiktEnvelopeAdvice，code===200）
