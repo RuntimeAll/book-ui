@@ -287,6 +287,8 @@ function openPrepPack(lesson: PlanLessonVO) {
   if (d?.targetId) query.targetId = String(d.targetId)
   if (lesson.lessonSeq != null) query.lessonSeq = String(lesson.lessonSeq)
   if (lesson.title) query.lessonTitle = lesson.title
+  // BUG-014：课次知识单元锚点直传（备课材料选题器按此预筛圈子树）
+  if (lesson.kgNodeIds?.length) query.kgNodeIds = lesson.kgNodeIds.join(',')
   router.push({ name: 'PrepPack', query })
 }
 function composeByAnchor(lesson: PlanLessonVO) {

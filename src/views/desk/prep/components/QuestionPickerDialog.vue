@@ -17,6 +17,18 @@ const props = defineProps<{
   segName?: string
   /** 已在段内的题 id（禁重复加入） */
   excludeIds: string[]
+  /**
+   * BUG-014 备课上下文预筛：课次/学生的前置条件带进题库检索。
+   * kgNodeIds = 课次知识单元锚点（biz_subject 树节点 id），传给 /teacher/question/page 的 subjectId
+   *   做前缀圈子树预筛；多锚点默认取第一个、chips 可切换；用户移除 → 回到无预筛全库。
+   * subjectLabel/gradeLabel 仅作范围提示文案。拿不到 kgNodeIds 时不显示 chips、不预筛。
+   */
+  context?: {
+    kgNodeIds?: string[]
+    kgNodeNames?: string[]
+    subjectLabel?: string
+    gradeLabel?: string
+  }
 }>()
 
 const emit = defineEmits<{
@@ -52,6 +64,33 @@ function freshSignal(): AbortSignal {
   return abortCtl.signal
 }
 
+// ── BUG-014 上下文预筛（subjectId = KG 锚点，前缀圈子树）───────────────────────
+// anchorChips = 课次知识单元锚点（可切换 chips）；activeAnchor = 当前生效的 subjectId 预筛（空=全库）。
+interface AnchorChip {
+  id: string
+  name: string
+}
+const activeAnchor = ref<string>('')
+const anchorChips = computed<AnchorChip[]>(() => {
+  const ids = props.context?.kgNodeIds ?? []
+  const names = props.context?.kgNodeNames ?? []
+  return ids.map((id, i) => ({ id: String(id), name: names[i] || `本课知识点${ids.length > 1 ? i + 1 : ''}`.trim() }))
+})
+// 范围提示文案（年级 · 学科）
+const ctxScope = computed(() =>
+  [props.context?.gradeLabel, props.context?.subjectLabel].filter(Boolean).join(' · '),
+)
+function switchAnchor(id: string) {
+  if (activeAnchor.value === id) return
+  activeAnchor.value = id
+  onBankSearch()
+}
+function clearAnchor() {
+  if (!activeAnchor.value) return
+  activeAnchor.value = ''
+  onBankSearch()
+}
+
 // ── tab1 题库检索 ──────────────────────────────────────────────
 const bankLoading = ref(false)
 const bankList = ref<QuestionItem[]>([])
@@ -71,6 +110,8 @@ async function searchBank() {
         pageSize: PAGE_SIZE,
         notTaskQuestion: 0,
         notUsedQuestion: 0,
+        // BUG-014：有生效锚点 → 按 KG 树节点（前缀圈子树）预筛
+        ...(activeAnchor.value ? { subjectId: activeAnchor.value } : {}),
         ...(bankKeyword.value.trim() ? { keyWord: bankKeyword.value.trim() } : {}),
         ...(bankType.value !== '' ? { questionType: Number(bankType.value) } : {}),
         ...(bankDiff.value !== '' ? { difficult: Number(bankDiff.value) } : {}),
@@ -146,6 +187,8 @@ watch(
     }
     picked.value = new Map()
     activeTab.value = 'bank'
+    // BUG-014：默认取第一个 KG 锚点做预筛（多锚点 chips 可切换；无锚点=全库）
+    activeAnchor.value = props.context?.kgNodeIds?.[0] ? String(props.context.kgNodeIds[0]) : ''
     bankPage.value = 1
     bankKeyword.value = ''
     bankType.value = ''
@@ -196,6 +239,20 @@ function typeLabel(t?: number | null): string {
     <el-tabs v-model="activeTab" class="qp-tabs">
       <!-- tab1 题库检索 -->
       <el-tab-pane label="题库检索" name="bank">
+        <!-- BUG-014：备课上下文预筛 chips（按本课知识单元圈子树；可切换 / 可移除回全库）-->
+        <div v-if="anchorChips.length" class="qp-ctx">
+          <span class="qp-ctx-label">按本课预筛<template v-if="ctxScope">（{{ ctxScope }}）</template>：</span>
+          <button
+            v-for="c in anchorChips"
+            :key="c.id"
+            class="qp-chip"
+            :class="{ on: activeAnchor === c.id }"
+            @click="switchAnchor(c.id)"
+          >
+            {{ c.name }}
+          </button>
+          <button v-if="activeAnchor" class="qp-chip clear" @click="clearAnchor">✕ 全库</button>
+        </div>
         <div class="qp-filter">
           <el-input
             v-model="bankKeyword"
@@ -346,6 +403,17 @@ function typeLabel(t?: number | null): string {
 
 <style scoped>
 .qp-tabs { margin-top: -8px; }
+/* BUG-014 上下文预筛 chips */
+.qp-ctx { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.qp-ctx-label { font-size: 12px; color: #8ba09a; }
+.qp-chip {
+  font-size: 12px; line-height: 20px; padding: 0 10px; border-radius: 99px; cursor: pointer;
+  border: 1px solid var(--bk-line); background: #fff; color: #5f716d; transition: all .15s;
+}
+.qp-chip:hover { border-color: var(--bk-teal); color: var(--bk-teal-deep); }
+.qp-chip.on { border-color: var(--bk-teal); background: var(--bk-teal-soft); color: var(--bk-teal-deep); font-weight: 600; }
+.qp-chip.clear { color: #ba3a2a; border-style: dashed; }
+.qp-chip.clear:hover { border-color: #ba3a2a; color: #ba3a2a; }
 .qp-filter { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
 .qp-list { min-height: 220px; max-height: 440px; overflow-y: auto; }
 .qp-empty { text-align: center; color: #b7c4c0; padding: 44px 0; font-size: 13px; }

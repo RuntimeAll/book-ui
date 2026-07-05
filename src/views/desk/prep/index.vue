@@ -60,6 +60,8 @@ const ctxFrom = ref('')
 // R5·FAIL-1：课程计划入口直传的课次展示参数（身份行「第N次课·标题」优先消费，免反查）
 const qLessonSeq = ref('')
 const qLessonTitle = ref('')
+// BUG-014：课程计划入口直传的课次知识单元锚点（逗号分隔），选题器预筛用
+const qKgNodeIds = ref<string[]>([])
 
 const mode = computed<'select' | 'builder'>(() =>
   packLessonId.value || packSessionId.value ? 'builder' : 'select',
@@ -73,6 +75,10 @@ function readQuery() {
   ctxFrom.value = (route.query.from as string) || ''
   qLessonSeq.value = (route.query.lessonSeq as string) || ''
   qLessonTitle.value = (route.query.lessonTitle as string) || ''
+  qKgNodeIds.value = ((route.query.kgNodeIds as string) || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
 }
 
 // ── 入口态：待备课次列表 ──────────────────────────────────────────────────────
@@ -153,6 +159,17 @@ const ctxSub = ref('')
 // BUG-008：身份行专用字段（学生名 / 课次标题），拼装进页头「{学生名} · {课次标题} · 日期时间」
 const ctxTargetName = ref('')
 const ctxLessonTitle = ref('')
+// BUG-014：选题器预筛上下文——课次知识单元锚点 + 学生学科/年级标签
+const ctxKgNodeIds = ref<string[]>([])
+const ctxSubjectLabel = ref('')
+const ctxGradeLabel = ref('')
+
+// BUG-014：传给 QuestionPickerDialog 的备课上下文（无锚点则 kgNodeIds 空 → 弹窗不显 chips、不预筛）
+const pickerContext = computed(() => ({
+  kgNodeIds: ctxKgNodeIds.value,
+  subjectLabel: ctxSubjectLabel.value || undefined,
+  gradeLabel: ctxGradeLabel.value || undefined,
+}))
 
 // BUG-008：身份行「{学生名} · {课次标题} · M/D 周X HH:mm–HH:mm」；任一段缺失就跳过，
 // 三段都空则不渲染整行（页头优雅退化回 h1 默认标题）。
@@ -257,6 +274,10 @@ async function resolveContext(token: number) {
   noSession.value = false
   ctxTargetName.value = ''
   ctxLessonTitle.value = ''
+  // BUG-014：预筛上下文——锚点先吃 query 直传（课程计划入口在手），学科/年级标签由 getTarget 补
+  ctxKgNodeIds.value = [...qKgNodeIds.value]
+  ctxSubjectLabel.value = ''
+  ctxGradeLabel.value = ''
 
   // R5·FAIL-1：query 直传的课次序号/标题优先（课程计划入口在手，无需经 session→plan 反查）
   if (qLessonSeq.value || qLessonTitle.value) {
@@ -282,13 +303,19 @@ async function resolveContext(token: number) {
         fillCtxFromSession(hit)
         // 课次标题（best-effort）：session 本身不带 lessonTitle，经 planId 查计划详情匹配 planLessonId。
         // query 已直传时（R5）不再反查覆盖。
-        if (!ctxLessonTitle.value && hit.planId && hit.planLessonId) {
+        // BUG-014：非 plans 入口（无 query 锚点）时，best-effort 从课次 kgNodeIds 取预筛锚点。
+        if ((!ctxLessonTitle.value || ctxKgNodeIds.value.length === 0) && hit.planId && hit.planLessonId) {
           try {
             const plan = await getPlan(hit.planId)
             const lesson = (plan?.lessons ?? []).find((l) => String(l.id) === String(hit.planLessonId))
-            if (token === initToken && lesson?.title) ctxLessonTitle.value = lesson.title
+            if (token === initToken && lesson) {
+              if (!ctxLessonTitle.value && lesson.title) ctxLessonTitle.value = lesson.title
+              if (ctxKgNodeIds.value.length === 0 && lesson.kgNodeIds?.length) {
+                ctxKgNodeIds.value = lesson.kgNodeIds.map(String)
+              }
+            }
           } catch {
-            /* 拿不到课次标题不致命：身份行少一截 */
+            /* 拿不到课次标题/锚点不致命：身份行少一截 / 选题器不预筛 */
           }
         }
       }
@@ -309,6 +336,9 @@ async function resolveContext(token: number) {
       portrait.value = t?.profileJson ?? null
       portraitKind.value = t ? TARGET_TYPE_LABEL[t.targetType] || '学生' : '学生'
       if (t?.name) ctxTargetName.value = t.name
+      // BUG-014：学科/年级标签（选题器预筛范围提示）
+      if (t?.subjectLabel || t?.subject) ctxSubjectLabel.value = t.subjectLabel || t.subject
+      if (t?.grade) ctxGradeLabel.value = t.grade
     }
   } catch {
     /* 空态 */
@@ -694,6 +724,7 @@ onMounted(() => {
       v-model:visible="pickerVisible"
       :seg-name="segs[pickerSegIndex]?.name"
       :exclude-ids="excludeForPicker"
+      :context="pickerContext"
       @pick="onPick"
     />
   </div>
