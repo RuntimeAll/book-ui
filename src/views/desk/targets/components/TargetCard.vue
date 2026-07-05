@@ -58,7 +58,8 @@ const next = computed(() => props.card.nextSession || null)
           <span v-if="isClass" class="mini-badge">班课</span>
           <span v-if="archived" class="mini-badge grey">已归档</span>
         </b>
-        <span class="sub">{{ [card.grade, card.subject].filter(Boolean).join(' · ') || '—' }}</span>
+        <!-- R1a：grade=BE 推导串；学科显示中文标签（subject 现为字典码） -->
+        <span class="sub">{{ [card.grade, card.subjectLabel || card.subject].filter(Boolean).join(' · ') || '—' }}</span>
       </div>
       <el-button class="edit-btn" size="small" text @click.stop="emit('edit', card.id)">编辑</el-button>
     </div>

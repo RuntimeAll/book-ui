@@ -3,7 +3,9 @@
  * PRD-C-213 FP12 · 建档 / 编辑弹窗（学生与班级两套字段）。
  * - create：createTarget → 若班级且选了学员再 setClassStudents。
  * - edit：updateTarget（targetType 不可改）→ 若班级同步 setClassStudents。
- * 班级隐藏 textbook / parentPhone；color 可选（留空则服务端色板轮转）。
+ * 班级隐藏 教材版本 / parentPhone；color 可选（留空则服务端色板轮转）。
+ * 🔴 R1a 建模：年级=gradeNo 数字码 + gradeYear（隐藏缺省当年）；学科/教材版本=字典码；
+ *    显示层用 BE 推导串（VO grade/textbook/subjectLabel），本弹窗只管写原始码。
  */
 import { ref, reactive, watch, computed } from 'vue'
 import { ElMessage } from 'element-plus'
@@ -17,13 +19,7 @@ import {
   type TargetCreateBo,
   type TargetUpdateBo,
 } from '@/api/teacher/schedule'
-import {
-  useDictStore,
-  DICT_EDU_GRADE,
-  DICT_EDU_SUBJECT,
-  DICT_EDU_EDITION,
-  DICT_EDU_VOLUME,
-} from '@/store/dict'
+import { useDictStore, DICT_EDU_GRADE, DICT_EDU_SUBJECT, DICT_EDU_EDITION } from '@/store/dict'
 
 const props = defineProps<{
   modelValue: boolean
@@ -42,11 +38,19 @@ const emit = defineEmits<{
 
 const PALETTE = ['#0f766e', '#b45309', '#5455b8', '#8a6d3b', '#0e7490', '#9d174d', '#4d7c0f']
 
+/** 缺省学年 = 当年（R1a：gradeYear 隐藏缺省，暑期录「升X」即 当年学年就读 X 年级） */
+const CURRENT_YEAR = new Date().getFullYear()
+
 const form = reactive({
   name: '',
-  grade: '',
+  /** 年级 1-12（字典 biz_edu_grade 数字码；null = 未选） */
+  gradeNo: null as number | null,
+  /** 学年起始年（隐藏缺省当年；编辑时保留原值） */
+  gradeYear: CURRENT_YEAR as number | null,
+  /** 学科字典码（biz_edu_subject：'1'数学…） */
   subject: '',
-  textbook: '',
+  /** 教材版本字典码（biz_edu_edition：'1'浙教/'2'人教…） */
+  textbookEdition: '',
   parentPhone: '',
   color: '',
   studentIds: [] as string[],
@@ -56,41 +60,35 @@ const saving = ref(false)
 const isClass = computed(() => props.targetType === '1')
 const kindLabel = computed(() => TARGET_TYPE_LABEL[props.targetType])
 
-// PRD-C-213 终审：年级/学科/教材改字典下拉。
-// 🔴 这些业务列 varchar 存中文文本（如「升四」「数学」「人教版三年级下册」），
-//    所以下拉绑定值一律用 dict 的中文 label（非数字 value）；allow-create 保留口语/自定义文本，零数据迁移。
+// R1a 建模：年级/学科/教材版本 = 字典下拉存码（biz_edu_grade / biz_edu_subject / biz_edu_edition），
+// 不再 allow-create 存自由文本；显示层用 BE 推导串（VO grade/textbook/subjectLabel）。
+// 🔴 字典走前端进程内缓存：BE 重启/字典变更后首次拉取才有新值，异常时刷新页面重拉。
 const dict = useDictStore()
 dict.load(DICT_EDU_GRADE)
 dict.load(DICT_EDU_SUBJECT)
 dict.load(DICT_EDU_EDITION)
-dict.load(DICT_EDU_VOLUME)
 
-const GRADE_OPTIONS = computed(() => dict.list(DICT_EDU_GRADE).map((d) => d.dictLabel))
-const SUBJECT_OPTIONS = computed(() => dict.list(DICT_EDU_SUBJECT).map((d) => d.dictLabel))
-// 教材 = 版本×年级×册 组合，label 拼「{版本}版{年级}{册}」（如 人教版三年级下册，共 48 项）
-const TEXTBOOK_OPTIONS = computed(() => {
-  const out: string[] = []
-  for (const ed of dict.list(DICT_EDU_EDITION))
-    for (const gr of dict.list(DICT_EDU_GRADE))
-      for (const vo of dict.list(DICT_EDU_VOLUME)) out.push(`${ed.dictLabel}版${gr.dictLabel}${vo.dictLabel}`)
-  return out
-})
+const GRADE_OPTIONS = computed(() => dict.list(DICT_EDU_GRADE))
+const SUBJECT_OPTIONS = computed(() => dict.list(DICT_EDU_SUBJECT))
+const EDITION_OPTIONS = computed(() => dict.list(DICT_EDU_EDITION))
 
 function resetFrom() {
   if (props.mode === 'edit' && props.detail) {
     const d = props.detail
     form.name = d.name ?? ''
-    form.grade = d.grade ?? ''
+    form.gradeNo = d.gradeNo ?? null
+    form.gradeYear = d.gradeYear ?? CURRENT_YEAR
     form.subject = d.subject ?? ''
-    form.textbook = d.textbook ?? ''
+    form.textbookEdition = d.textbookEdition ?? ''
     form.parentPhone = d.parentPhone ?? ''
     form.color = d.color ?? ''
     form.studentIds = d.studentIds ? [...d.studentIds] : []
   } else {
     form.name = ''
-    form.grade = ''
+    form.gradeNo = null
+    form.gradeYear = CURRENT_YEAR
     form.subject = ''
-    form.textbook = ''
+    form.textbookEdition = ''
     form.parentPhone = ''
     form.color = ''
     form.studentIds = []
@@ -116,16 +114,21 @@ async function submit() {
   saving.value = true
   try {
     let id = props.detail?.id ?? ''
+    // R1a：选了年级才带 gradeYear（隐藏缺省当年）；学科/教材版本传字典码
+    const eduDims = {
+      gradeNo: form.gradeNo ?? undefined,
+      gradeYear: form.gradeNo != null ? (form.gradeYear ?? CURRENT_YEAR) : undefined,
+      subject: form.subject || undefined,
+      textbookEdition: form.textbookEdition || undefined,
+    }
     if (props.mode === 'create') {
       const bo: TargetCreateBo = {
         targetType: props.targetType,
         name: form.name.trim(),
-        grade: (form.grade || '').trim() || undefined,
-        subject: (form.subject || '').trim() || undefined,
+        ...eduDims,
         color: form.color || undefined,
       }
       if (!isClass.value) {
-        bo.textbook = (form.textbook || '').trim() || undefined
         bo.parentPhone = form.parentPhone.trim() || undefined
       }
       const res = await createTarget(bo)
@@ -133,12 +136,10 @@ async function submit() {
     } else {
       const bo: TargetUpdateBo = {
         name: form.name.trim(),
-        grade: (form.grade || '').trim() || undefined,
-        subject: (form.subject || '').trim() || undefined,
+        ...eduDims,
         color: form.color || undefined,
       }
       if (!isClass.value) {
-        bo.textbook = (form.textbook || '').trim() || undefined
         bo.parentPhone = form.parentPhone.trim() || undefined
       }
       await updateTarget(id, bo)
@@ -170,44 +171,28 @@ async function submit() {
       </el-form-item>
       <div class="ge-row">
         <el-form-item label="年级">
-          <el-select
-            v-model="form.grade"
-            filterable
-            allow-create
-            default-first-option
-            clearable
-            placeholder="可选或输入，如 升四"
-            style="width: 100%"
-          >
-            <el-option v-for="g in GRADE_OPTIONS" :key="g" :label="g" :value="g" />
+          <!-- R1a：存 gradeNo 数字码（字典 biz_edu_grade）；学年隐藏缺省当年（暑期录「升四」=选 四年级） -->
+          <el-select v-model="form.gradeNo" filterable clearable placeholder="如 升四 选「四年级」" style="width: 100%">
+            <el-option
+              v-for="g in GRADE_OPTIONS"
+              :key="g.dictValue"
+              :label="g.dictLabel"
+              :value="Number(g.dictValue)"
+            />
           </el-select>
         </el-form-item>
         <el-form-item label="学科">
-          <el-select
-            v-model="form.subject"
-            filterable
-            allow-create
-            default-first-option
-            clearable
-            placeholder="可选或输入，如 数学"
-            style="width: 100%"
-          >
-            <el-option v-for="s in SUBJECT_OPTIONS" :key="s" :label="s" :value="s" />
+          <!-- 存字典码 biz_edu_subject（'1'数学…） -->
+          <el-select v-model="form.subject" filterable clearable placeholder="请选择学科" style="width: 100%">
+            <el-option v-for="s in SUBJECT_OPTIONS" :key="s.dictValue" :label="s.dictLabel" :value="s.dictValue" />
           </el-select>
         </el-form-item>
       </div>
       <template v-if="!isClass">
-        <el-form-item label="教材">
-          <el-select
-            v-model="form.textbook"
-            filterable
-            allow-create
-            default-first-option
-            clearable
-            placeholder="可选或输入，如 人教版三年级下册"
-            style="width: 100%"
-          >
-            <el-option v-for="tb in TEXTBOOK_OPTIONS" :key="tb" :label="tb" :value="tb" />
+        <el-form-item label="教材版本">
+          <!-- 存字典码 biz_edu_edition（'2'人教…）；具体册次由 年级+学年 推导显示 -->
+          <el-select v-model="form.textbookEdition" filterable clearable placeholder="如 人教" style="width: 100%">
+            <el-option v-for="e in EDITION_OPTIONS" :key="e.dictValue" :label="e.dictLabel" :value="e.dictValue" />
           </el-select>
         </el-form-item>
         <el-form-item label="家长电话">

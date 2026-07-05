@@ -57,7 +57,8 @@ const kindLabel = computed(() => (isClass.value ? '班级' : '学生'))
 const headSub = computed(() => {
   const d = detail.value
   if (!d) return ''
-  const parts = [d.grade, d.textbook, d.subject].filter(Boolean)
+  // R1a：grade/textbook=BE 推导串；学科显示中文标签（subject 现为字典码）
+  const parts = [d.grade, d.textbook, d.subjectLabel || d.subject].filter(Boolean)
   let s = parts.join(' · ')
   if (!isClass.value && d.parentPhone) s += `${s ? ' · ' : ''}家长 ${maskPhone(d.parentPhone)}`
   return s || '—'

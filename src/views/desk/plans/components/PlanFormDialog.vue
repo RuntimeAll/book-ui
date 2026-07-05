@@ -3,16 +3,19 @@
  * PRD-C-213 FP16 — 计划新建 / 编辑弹窗（含 default_seg_template 三段默认配置编辑）。
  * 新建（plan=null）走 createPlan，编辑走 updatePlan。保存成功 emit saved 让父页刷新。
  * 契约：批0 §三 课程计划 POST plan / PUT plan/{id}；termTag 字典 = 暑假·上学期·寒假·下学期。
+ * 🔴 R1a·S1：计划有归属——新建必选归属对象（targetType+targetId，BE 强校验）；编辑不可改归属。
  */
 import { ref, reactive, watch, computed } from 'vue'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import {
   createPlan,
   updatePlan,
+  pageTargets,
   TARGET_TYPE_LABEL,
   type PlanVO,
   type PlanBo,
   type TargetType,
+  type TargetCardVO,
   type SegTemplateItem,
 } from '@/api/teacher/schedule'
 import { useDictStore } from '@/store/dict'
@@ -52,6 +55,8 @@ const submitting = ref(false)
 interface FormState {
   name: string
   targetType: TargetType
+  /** R1a·S1 归属对象 id（新建必选） */
+  targetId: string
   termTag: string
   year: number
   materialNote: string
@@ -61,6 +66,7 @@ interface FormState {
 const form = reactive<FormState>({
   name: '',
   targetType: '0',
+  targetId: '',
   termTag: '暑假',
   year: currentYear,
   materialNote: '',
@@ -70,9 +76,34 @@ const form = reactive<FormState>({
 const rules: FormRules<FormState> = {
   name: [{ required: true, message: '请填写计划名', trigger: 'blur' }],
   targetType: [{ required: true, message: '请选择对象类型', trigger: 'change' }],
+  targetId: [{ required: true, message: '请选择归属对象', trigger: 'change' }],
   termTag: [{ required: true, message: '请选择学期', trigger: 'change' }],
   year: [{ required: true, message: '请选择年份', trigger: 'change' }],
 }
+
+// ── R1a·S1 归属对象选择器（从简：按对象类型拉卡片墙，不含已归档）──
+const targetOptions = ref<TargetCardVO[]>([])
+const targetLoading = ref(false)
+async function loadTargetOptions(tt: TargetType) {
+  targetLoading.value = true
+  try {
+    const res = await pageTargets({ targetType: tt, pageNum: 1, pageSize: 200 })
+    targetOptions.value = res?.rows ?? []
+  } catch {
+    targetOptions.value = []
+  } finally {
+    targetLoading.value = false
+  }
+}
+// 切对象类型 → 归属选项跟着换、已选清空（编辑态不动）
+watch(
+  () => form.targetType,
+  (tt) => {
+    if (isEdit.value) return
+    form.targetId = ''
+    void loadTargetOptions(tt)
+  },
+)
 
 // 打开时回填 / 重置
 watch(
@@ -83,13 +114,17 @@ watch(
     if (props.plan) {
       form.name = props.plan.name
       form.targetType = props.plan.targetType
+      form.targetId = props.plan.targetId ?? ''
       form.termTag = props.plan.termTag || '暑假'
       form.year = props.plan.year || currentYear
       form.materialNote = props.plan.materialNote || ''
       form.defaultSegTemplate = (props.plan.defaultSegTemplate || []).map((s) => ({ ...s }))
+      void loadTargetOptions(props.plan.targetType) // 编辑态只为回显归属名
     } else {
       form.name = ''
       form.targetType = '0'
+      form.targetId = ''
+      void loadTargetOptions('0')
       form.termTag = '暑假'
       form.year = currentYear
       form.materialNote = ''
@@ -108,6 +143,8 @@ async function submit() {
   const bo: PlanBo = {
     name: form.name.trim(),
     targetType: form.targetType,
+    // R1a·S1：新建必传归属；编辑带上原值（BE 归属不可改语义以服务端为准）
+    targetId: form.targetId || undefined,
     termTag: form.termTag,
     year: form.year,
     materialNote: form.materialNote.trim() || undefined,
@@ -145,6 +182,25 @@ async function submit() {
           <el-radio-button value="1">{{ TARGET_TYPE_LABEL['1'] }}</el-radio-button>
         </el-radio-group>
         <span v-if="isEdit" class="form-hint">对象类型不可改</span>
+      </el-form-item>
+      <el-form-item label="归属对象" prop="targetId">
+        <!-- R1a·S1：计划必须归属一个学生/班级（BE 强校验）；编辑不可改归属 -->
+        <el-select
+          v-model="form.targetId"
+          filterable
+          :loading="targetLoading"
+          :disabled="isEdit"
+          placeholder="选择这份计划教谁"
+          style="width: 100%"
+        >
+          <el-option
+            v-for="t in targetOptions"
+            :key="t.id"
+            :value="t.id"
+            :label="`${t.name}${t.grade ? '（' + t.grade + '）' : ''}`"
+          />
+        </el-select>
+        <span v-if="isEdit" class="form-hint">归属不可改（换绑走对象卡片「换绑计划」）</span>
       </el-form-item>
       <el-form-item label="学期 / 年份" prop="termTag">
         <div class="term-row">

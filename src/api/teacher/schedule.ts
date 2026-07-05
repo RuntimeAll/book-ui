@@ -169,36 +169,56 @@ export interface PageQuery {
 
 // —— 对象档案 ——
 
-/** 建档入参（POST target；class 无 textbook/parentPhone 可省） */
+/** 建档入参（POST target；class 无 parentPhone 可省）。
+ *  🔴 R1a 建模：年级/教材不传文本，传 gradeNo+gradeYear+字典码（暑期录「升四」= gradeNo 4 + gradeYear 2026）。 */
 export interface TargetCreateBo {
   targetType: TargetType
   name: string
-  grade?: string
+  /** 年级 1-12（字典 biz_edu_grade） */
+  gradeNo?: number
+  /** gradeNo 生效学年起始年（如 2026 = 2026-09-01 起学年；缺省=当年） */
+  gradeYear?: number
+  /** 教材版本字典码（biz_edu_edition：1浙教/2人教/3北师大/4苏教） */
+  textbookEdition?: string
+  /** 学科字典码（biz_edu_subject：1数学/2科学/3语文/4英语） */
   subject?: string
-  textbook?: string
   parentPhone?: string
   /** 空则服务端从色板轮转分配 */
   color?: string
   profileJson?: ProfileJson
 }
 
-/** 改基本维入参（PUT target/{id}；不含 targetType，类型不可改） */
+/** 改基本维入参（PUT target/{id}；不含 targetType，类型不可改）。字段口径同 TargetCreateBo（R1a） */
 export interface TargetUpdateBo {
   name?: string
-  grade?: string
+  gradeNo?: number
+  gradeYear?: number
+  textbookEdition?: string
+  /** 学科字典码 */
   subject?: string
-  textbook?: string
   parentPhone?: string
   color?: string
 }
 
-/** 对象详情（GET target/{id}，含 profile；班级含成员 studentIds） */
+/** 对象详情（GET target/{id}，含 profile；班级含成员 studentIds）。
+ *  R1a：原始码（gradeNo/gradeYear/textbookEdition/subject）与推导串（grade/textbook/subjectLabel）双输出。 */
 export interface TargetDetailVO {
   id: string
   targetType: TargetType
   name: string
-  grade: string
+  /** 原始码：年级 1-12 */
+  gradeNo?: number | null
+  /** 原始码：学年起始年 */
+  gradeYear?: number | null
+  /** 原始码：教材版本字典码 */
+  textbookEdition?: string | null
+  /** 🔴 学科字典码（显示用 subjectLabel） */
   subject: string
+  /** 学科中文标签（BE 推导） */
+  subjectLabel?: string
+  /** 推导串（如「三年级·暑假」，显示用；写走 gradeNo/gradeYear） */
+  grade: string
+  /** 推导串（如「人教版四年级上册」，显示用；写走 textbookEdition） */
   textbook: string
   parentPhone: string
   color: string
@@ -215,8 +235,12 @@ export interface TargetCardVO {
   id: string
   targetType: TargetType
   name: string
+  /** 推导串（如「三年级·暑假」） */
   grade: string
+  /** 学科字典码（显示用 subjectLabel） */
   subject: string
+  /** 学科中文标签（BE 推导） */
+  subjectLabel?: string
   color: string
   archived: string
   /** 已排场次数 */
@@ -293,6 +317,8 @@ export interface PlanVO {
   id: string
   name: string
   targetType: TargetType
+  /** S1 计划归属对象 id（R1a 起必有） */
+  targetId?: string | null
   /** 字典：暑假·上学期·寒假·下学期 */
   termTag: string
   year: number
@@ -307,11 +333,13 @@ export interface PlanVO {
   updateTime?: string
 }
 
-/** 计划建/改入参（POST plan / PUT plan/{id}） */
+/** 计划建/改入参（POST plan / PUT plan/{id}）。🔴 R1a·S1：新建必传 targetType+targetId 归属 */
 export interface PlanBo {
   id?: string
   name: string
   targetType: TargetType
+  /** S1 计划归属对象 id（新建必传，BE 强校验对象存在且归我） */
+  targetId?: string
   termTag: string
   year: number
   materialNote?: string
