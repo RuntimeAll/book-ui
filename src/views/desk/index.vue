@@ -26,6 +26,11 @@ const MENUS: MenuItem[] = [
   { title: '举一反三', path: '/desk/ai-variant' },
   { title: '几何画板', path: '/desk/geo-board' },
   { title: '我的工作台', path: '/desk/workspace' },
+  // 教学安排（PRD-C-213）—— MENUS 为平铺结构，暂无分组语义，按现有结构平铺追加四项
+  { title: '排课总览', path: '/desk/schedule' },
+  { title: '学生与班级', path: '/desk/targets' },
+  { title: '课程计划', path: '/desk/plans' },
+  { title: '备课包', path: '/desk/prep' },
 ]
 
 const activePath = computed(() => {

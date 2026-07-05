@@ -221,6 +221,12 @@ const router = createRouter({
             { path: 'geo-board/gallery', name: 'GeoBoardGallery', component: () => import('@/views/geo-board/gallery.vue') },
             // PRD-A-005 T6 — 收藏管理页
             { path: 'favorites', name: 'FavoritesIndex', component: () => import('@/views/favorites/index.vue') },
+            // 🔴 PRD-C-213 教学安排与备课闭环（脚手架四页；批0 §六-1 路由拍板）
+            { path: 'schedule', name: 'ScheduleOverview', component: () => import('@/views/desk/schedule/index.vue') },
+            { path: 'targets', name: 'TeachTargets', component: () => import('@/views/desk/targets/index.vue') },
+            { path: 'plans', name: 'CoursePlans', component: () => import('@/views/desk/plans/index.vue') },
+            // 备课包：支持 ?lessonId= 直开构建器（批0 §六-1）
+            { path: 'prep', name: 'PrepPack', component: () => import('@/views/desk/prep/index.vue') },
           ],
         },
         // PRD-C-207 退役：旧「讲义查看」单课时页 → 重定向到新讲义浏览器（兜老书签）

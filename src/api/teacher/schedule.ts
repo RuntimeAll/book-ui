@@ -1,0 +1,715 @@
+import request from '@/http/request'
+
+// ===========================================================================
+// PRD-C-213 教学安排与备课闭环 —— API 客户端（批0 契约冻结正本，脚手架冻结件）。
+//
+// 走 /api → book-server :8090（misikt envelope，code===1 判成功，http/request 拦截器
+// 统一解包返回 response）。全部端点 @SaCheckLogin，owner/create_by 由服务端登录态取，不传 body。
+//
+// 🔴 id 一律 string（雪花 19 位，json-bigint 保精度，禁 number 截尾）。
+// 🔴 本文件 commit 后即冻结，页面 agent 只读不改；枚举码 + 中文映射直接吃这里的导出。
+// 契约正本 = workplace/.prd_ccw/PRD-C/PRD-C-213/artifacts/契约/批0-契约冻结.md（§一枚举 / §三接口）。
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// 一、枚举冻结（char(1) 存码 + 中文映射，页面 agent 直接吃 *_LABEL 渲染）
+// ---------------------------------------------------------------------------
+
+/** 对象类型：'0' 学生 / '1' 班级 */
+export type TargetType = '0' | '1'
+export const TARGET_TYPE_LABEL: Record<TargetType, string> = { '0': '学生', '1': '班级' }
+
+/** 场次类型：'1' 正课 / '2' 测试 / '3' 外部占位（外部占位无备课点） */
+export type SessionType = '1' | '2' | '3'
+export const SESSION_TYPE_LABEL: Record<SessionType, string> = { '1': '正课', '2': '测试', '3': '外部占位' }
+
+/** 场次状态：'0' 已排 / '1' 已上 / '2' 请假 / '3' 取消（改期=改时间不改状态） */
+export type SessionStatus = '0' | '1' | '2' | '3'
+export const SESSION_STATUS_LABEL: Record<SessionStatus, string> = { '0': '已排', '1': '已上', '2': '请假', '3': '取消' }
+
+/** session 级·场次备课态：'0' 未备 / '1' 备课中 / '2' 已备好 */
+export type PrepStatus = '0' | '1' | '2'
+export const PREP_STATUS_LABEL: Record<PrepStatus, string> = { '0': '未备', '1': '备课中', '2': '已备好' }
+
+/** lesson 级·内容态：'0' 大纲态 / '1' 细备中 / '2' 已备好 */
+export type PrepState = '0' | '1' | '2'
+export const PREP_STATE_LABEL: Record<PrepState, string> = { '0': '大纲态', '1': '细备中', '2': '已备好' }
+
+/** 计划状态：'0' 草稿 / '1' 启用 / '2' 归档 */
+export type PlanStatus = '0' | '1' | '2'
+export const PLAN_STATUS_LABEL: Record<PlanStatus, string> = { '0': '草稿', '1': '启用', '2': '归档' }
+
+/** 备课包状态：'0' 装配中 / '1' 已生成 / '2' 已备好 */
+export type PackStatus = '0' | '1' | '2'
+export const PACK_STATUS_LABEL: Record<PackStatus, string> = { '0': '装配中', '1': '已生成', '2': '已备好' }
+
+/** 课次类型：'0' 教学 / '1' 测试 */
+export type LessonType = '0' | '1'
+export const LESSON_TYPE_LABEL: Record<LessonType, string> = { '0': '教学', '1': '测试' }
+
+/** 星级（挂题）：'1'/'2'/'3' ↔ ★/★★/★★★ */
+export type StarLevel = '1' | '2' | '3'
+export const STAR_LEVEL_LABEL: Record<StarLevel, string> = { '1': '★', '2': '★★', '3': '★★★' }
+
+/** 回收判定结果（字面存中文） */
+export type ReviewResult = '对' | '错' | '卡'
+/** 错因归类（字面存中文） */
+export type ReviewCause = '计算' | '概念辨析' | '策略' | '其他'
+/** 错题信号确认态 */
+export type ErrorSignalStatus = 'pending' | 'confirmed'
+export const ERROR_SIGNAL_STATUS_LABEL: Record<ErrorSignalStatus, string> = { pending: '待确认', confirmed: '已确认' }
+/** 错题信号来源 */
+export type ErrorSignalBy = 'system' | 'teacher'
+
+// ---------------------------------------------------------------------------
+// 二、JSON schema 冻结（存进 json 列 / 传输 DTO，键沿用契约 snake_case）
+// ---------------------------------------------------------------------------
+
+/** 肖像·历史条目 */
+export interface ProfileHistoryItem {
+  topic: string
+  /** 吃透 | 讲过未吃透 */
+  status: string
+  src: string
+}
+
+/** 错题信号（profile_json.error_signals 元素；review.portrait_delta 同构） */
+export interface ErrorSignal {
+  tag: string
+  evidence: string
+  /** 溯源场次 id（雪花，传输为 string；历史数据可能为 number） */
+  session_id: string | number
+  /** YYYY-MM-DD */
+  ts: string
+  by: ErrorSignalBy
+  status: ErrorSignalStatus
+}
+
+/** 肖像·水平 */
+export interface ProfileLevel {
+  desc: string
+  target_layer: string
+}
+
+/** profile_json（student/class 同构；UI 四格 = traits/level.desc/level.target_layer/error_signals） */
+export interface ProfileJson {
+  traits: string[]
+  level: ProfileLevel
+  /** 进度环境：外部班课等 */
+  env: string
+  history: ProfileHistoryItem[]
+  error_signals: ErrorSignal[]
+}
+
+/** 分段模板项（plan.default_seg_template 与 lesson.seg_template 同构，2-4 段可变形） */
+export interface SegTemplateItem {
+  name: string
+  style: string
+  /** 该段主题（课内同步主题落第三段 topic） */
+  topic: string
+}
+
+/** 备课包·段（question_id 一律 string 防雪花截尾） */
+export interface PackSeg {
+  name: string
+  style: string
+  question_ids: string[]
+  rules?: string
+  note?: string
+}
+
+/** 备课包·产物（file=服务端相对路径，url=临时下载 URL） */
+export interface PackArtifact {
+  seg: string
+  file: string
+  pages: number
+  url?: string
+}
+
+/** 回收·单题结果 */
+export interface ReviewItemResult {
+  question_id?: string
+  seg: string
+  seq: number
+  result: ReviewResult
+  cause: ReviewCause
+}
+
+// ---------------------------------------------------------------------------
+// 三、实体 / 聚合 VO（字段基于 §二 DDL 列 camelCase + §三接口聚合描述）
+// ---------------------------------------------------------------------------
+
+/** 通用 {id} 返回 */
+export interface IdVO {
+  id: string
+}
+
+/** 文件产物返回（parent-export / render 用） */
+export interface FileUrlVO {
+  file: string
+  url: string
+}
+
+/** RuoYi 分页返回（/page 端点，misikt envelope 内层 TableDataInfo） */
+export interface PageResult<T> {
+  rows: T[]
+  total: number
+}
+
+/** 分页公共入参 */
+export interface PageQuery {
+  pageNum?: number
+  pageSize?: number
+}
+
+// —— 对象档案 ——
+
+/** 建档入参（POST target；class 无 textbook/parentPhone 可省） */
+export interface TargetCreateBo {
+  targetType: TargetType
+  name: string
+  grade?: string
+  subject?: string
+  textbook?: string
+  parentPhone?: string
+  /** 空则服务端从色板轮转分配 */
+  color?: string
+  profileJson?: ProfileJson
+}
+
+/** 改基本维入参（PUT target/{id}；不含 targetType，类型不可改） */
+export interface TargetUpdateBo {
+  name?: string
+  grade?: string
+  subject?: string
+  textbook?: string
+  parentPhone?: string
+  color?: string
+}
+
+/** 对象详情（GET target/{id}，含 profile；班级含成员 studentIds） */
+export interface TargetDetailVO {
+  id: string
+  targetType: TargetType
+  name: string
+  grade: string
+  subject: string
+  textbook: string
+  parentPhone: string
+  color: string
+  profileJson: ProfileJson
+  archived: string
+  /** 班级成员 id（targetType='1' 时） */
+  studentIds?: string[]
+  createTime?: string
+  updateTime?: string
+}
+
+/** 对象卡片（GET target/page，含实时聚合） */
+export interface TargetCardVO {
+  id: string
+  targetType: TargetType
+  name: string
+  grade: string
+  subject: string
+  color: string
+  archived: string
+  /** 已排场次数 */
+  scheduledCount: number
+  /** 已上场次数 */
+  doneCount: number
+  /** 请假场次数 */
+  leaveCount: number
+  /** 绑定计划 id */
+  planId?: string
+  /** 绑定计划名 */
+  planName?: string
+  /** 进度 n（已上课次） */
+  progressDone?: number
+  /** 进度 total（计划课次总数） */
+  progressTotal?: number
+  /** 下一课 */
+  nextSession?: {
+    sessionId: string
+    sessionDate: string
+    startTime: string
+    title?: string
+  } | null
+  /** 班课学员数（targetType='1' 时） */
+  studentCount?: number
+}
+
+/** 对象卡片墙查询入参 */
+export interface TargetPageParams extends PageQuery {
+  targetType?: TargetType
+  keyword?: string
+  /** 是否含已归档（归档不进排课选择器） */
+  includeArchived?: boolean
+}
+
+// —— 课程计划 ——
+
+/** 计划课次（biz_course_plan_lesson） */
+export interface PlanLessonVO {
+  id: string
+  planId: string
+  lessonSeq: number
+  title: string
+  lessonType: LessonType
+  /** 自由标签（吃透课①走这） */
+  tag?: string
+  sourceRef?: string
+  thinkingAction?: string
+  layerTarget?: string
+  parentCopy?: string
+  /** biz_subject id 数组 */
+  kgNodeIds?: string[]
+  segTemplate?: SegTemplateItem[]
+  prepState: PrepState
+}
+
+/** 计划课次 upsert 入参（id 空=新增） */
+export interface PlanLessonBo {
+  id?: string
+  lessonSeq?: number
+  title: string
+  lessonType?: LessonType
+  tag?: string
+  sourceRef?: string
+  thinkingAction?: string
+  layerTarget?: string
+  parentCopy?: string
+  kgNodeIds?: string[]
+  segTemplate?: SegTemplateItem[]
+}
+
+/** 课程计划（biz_course_plan；GET plan/{id} 含 lessons 全量） */
+export interface PlanVO {
+  id: string
+  name: string
+  targetType: TargetType
+  /** 字典：暑假·上学期·寒假·下学期 */
+  termTag: string
+  year: number
+  materialNote?: string
+  defaultSegTemplate?: SegTemplateItem[]
+  status: PlanStatus
+  /** GET plan/{id} 全量返回 */
+  lessons?: PlanLessonVO[]
+  /** page 实时聚合课次数（无 total_lessons 列） */
+  lessonCount?: number
+  createTime?: string
+  updateTime?: string
+}
+
+/** 计划建/改入参（POST plan / PUT plan/{id}） */
+export interface PlanBo {
+  id?: string
+  name: string
+  targetType: TargetType
+  termTag: string
+  year: number
+  materialNote?: string
+  defaultSegTemplate?: SegTemplateItem[]
+  status?: PlanStatus
+}
+
+/** 计划列表查询入参 */
+export interface PlanPageParams extends PageQuery {
+  targetType?: TargetType
+  keyword?: string
+  status?: PlanStatus
+}
+
+// —— 排课 ——
+
+/** 排课批量·单项 */
+export interface SessionBatchItem {
+  date: string
+  start: string
+  end: string
+  planLessonId?: string
+  sessionType?: SessionType
+  externalTitle?: string
+  note?: string
+}
+
+/** 排课批量入参（autoBind=按 lesson_seq 顺序自动绑未排课次；force=命中冲突强存） */
+export interface SessionBatchBo {
+  targetType: TargetType
+  targetId: string
+  planId?: string
+  autoBind?: boolean
+  force?: boolean
+  items: SessionBatchItem[]
+}
+
+/** 场次（biz_schedule_session） */
+export interface SessionVO {
+  id: string
+  targetType: TargetType
+  targetId: string
+  planId?: string
+  planLessonId?: string
+  sessionDate: string
+  startTime: string
+  endTime: string
+  sessionType: SessionType
+  sessionStatus: SessionStatus
+  prepStatus: PrepStatus
+  /** 内容锁定（'1' 顺延时保持原课次） */
+  lessonLocked: string
+  externalTitle?: string
+  note?: string
+  createTime?: string
+  updateTime?: string
+}
+
+/** 冲突明细项（老师撞场=create_by 同人时间重叠；学生撞场=同 target 重叠） */
+export interface ConflictItem {
+  date: string
+  start: string
+  end: string
+  kind: '老师撞场' | '学生撞场'
+  withSessionId: string
+  withTitle: string
+}
+
+/** 排课批量返回 */
+export interface SessionBatchResult {
+  created: SessionVO[]
+  conflicts: ConflictItem[]
+}
+
+/** 冲突预检返回 */
+export interface ConflictCheckResult {
+  conflicts: ConflictItem[]
+}
+
+/** 月历场次（GET session/calendar） */
+export interface CalendarSessionVO {
+  id: string
+  targetId: string
+  targetName: string
+  color: string
+  sessionDate: string
+  startTime: string
+  endTime: string
+  sessionType: SessionType
+  sessionStatus: SessionStatus
+  prepStatus: PrepStatus
+  planLessonId?: string
+  /** planLesson 标题 */
+  lessonTitle?: string
+  externalTitle?: string
+}
+
+/** 月历查询入参 */
+export interface CalendarParams {
+  start: string
+  end: string
+  targetId?: string
+}
+
+/** 场次表查询入参 */
+export interface SessionPageParams extends PageQuery {
+  targetId?: string
+  status?: SessionStatus
+}
+
+/** 通用改场次入参（date/start/end=改期不触发顺延；rebind planLessonId=改绑只改本场） */
+export interface SessionUpdateBo {
+  date?: string
+  start?: string
+  end?: string
+  note?: string
+  /** 改绑课次（只改本场） */
+  planLessonId?: string
+}
+
+/** 顺延返回（leave/cancel 触发；overflow=末位悬空需补排提示） */
+export interface DeferResult {
+  deferred: { sessionId: string; newLessonId: string }[]
+  overflow: string[]
+}
+
+// —— 备课包 ——
+
+/** 备课包（biz_prep_pack；planLessonId 与 sessionId 二选一） */
+export interface PrepPackVO {
+  id: string
+  planLessonId?: string
+  sessionId?: string
+  segs: PackSeg[]
+  artifacts?: PackArtifact[]
+  status: PackStatus
+  createTime?: string
+  updateTime?: string
+}
+
+/** 建备课包入参（planLessonId 与 sessionId 二选一，1:1 已存在则返已有） */
+export interface PrepPackCreateBo {
+  planLessonId?: string
+  sessionId?: string
+  segs: PackSeg[]
+}
+
+/** 备课包查询入参（lessonId | sessionId | packId 三选一） */
+export interface PrepPackQueryParams {
+  lessonId?: string
+  sessionId?: string
+  packId?: string
+}
+
+/** 渲染入参（segIndex 省=全部；markReady 全段成功后置双态已备好） */
+export interface PrepPackRenderBo {
+  segIndex?: number
+  markReady?: boolean
+}
+
+/** 渲染返回 */
+export interface RenderResult {
+  artifacts: PackArtifact[]
+}
+
+// —— 回收与统计 ——
+
+/** 回收提交入参 */
+export interface ReviewSubmitBo {
+  itemResults: ReviewItemResult[]
+  teacherNote?: string
+  /** LLM 润色位，传入则覆盖模板拼装 */
+  parentMsgOverride?: string
+}
+
+/** 回收提交返回 */
+export interface ReviewSubmitResult {
+  parentMsg: string
+  /** 错/卡 items 按 cause 聚合的 error_signals（by=system,status=pending） */
+  portraitDelta: ErrorSignal[]
+}
+
+/** 回收记录（GET session/{id}/review） */
+export interface ReviewVO {
+  id: string
+  sessionId: string
+  itemResults: ReviewItemResult[]
+  teacherNote?: string
+  parentMsg?: string
+  portraitDelta?: ErrorSignal[]
+  /** 重复提交=覆盖并把上一版整体快照进 prevJson，version+1 */
+  version: number
+  createTime?: string
+  updateTime?: string
+}
+
+/** 概览统计（GET stat/overview） */
+export interface StatOverviewVO {
+  studentCount: number
+  /** 本周（周一起）场次数 */
+  weekSessionCount: number
+  todoPrepCount: number
+  myQuestionCount: number
+}
+
+/** 待备清单项（GET prep/todo） */
+export interface PrepTodoVO {
+  id: string
+  targetId: string
+  targetName?: string
+  sessionDate: string
+  startTime: string
+  endTime: string
+  sessionType: SessionType
+  prepStatus: PrepStatus
+  planLessonId?: string
+  lessonTitle?: string
+}
+
+/** 私有题池检索入参（GET /teacher/question/pool，create_by=我 且 is_public=0） */
+export interface QuestionPoolParams extends PageQuery {
+  topicTag?: string
+  starLevel?: StarLevel
+  keyword?: string
+}
+
+/** 私有题池·题项 */
+export interface QuestionPoolItem {
+  id: string
+  stem?: string
+  topicTag?: string
+  starLevel?: StarLevel
+  sourceRef?: string
+  questionType?: string
+  difficulty?: string
+}
+
+// ---------------------------------------------------------------------------
+// 四、API 客户端（全挂 /teacher/schedule/**，除 question/pool；id 全 string）
+// ---------------------------------------------------------------------------
+
+const BASE = '/teacher/schedule'
+
+// —— 对象档案 ——
+
+/** 建档：POST target → {id}（color 空则服务端色板轮转） */
+export const createTarget = (bo: TargetCreateBo) =>
+  request.post<IdVO, IdVO>(`${BASE}/target`, bo)
+
+/** 改基本维：PUT target/{id} */
+export const updateTarget = (id: string, bo: TargetUpdateBo) =>
+  request.put<void, void>(`${BASE}/target/${id}`, bo)
+
+/** 卡片墙：GET target/page（含实时聚合） */
+export const pageTargets = (params: TargetPageParams = {}) =>
+  request.get<PageResult<TargetCardVO>, PageResult<TargetCardVO>>(`${BASE}/target/page`, { params })
+
+/** 详情：GET target/{id}（含 profile） */
+export const getTarget = (id: string) =>
+  request.get<TargetDetailVO, TargetDetailVO>(`${BASE}/target/${id}`)
+
+/** 归档：POST target/{id}/archive（归档≠删，不进排课选择器） */
+export const archiveTarget = (id: string) =>
+  request.post<void, void>(`${BASE}/target/${id}/archive`)
+
+/** 取消归档：POST target/{id}/unarchive */
+export const unarchiveTarget = (id: string) =>
+  request.post<void, void>(`${BASE}/target/${id}/unarchive`)
+
+/** 覆写肖像：PUT target/{id}/profile（整体覆写 profile_json，含转正/删 pending 信号） */
+export const updateTargetProfile = (id: string, profileJson: ProfileJson) =>
+  request.put<void, void>(`${BASE}/target/${id}/profile`, { profileJson })
+
+/** 设班级成员：POST class/{id}/students */
+export const setClassStudents = (classId: string, studentIds: string[]) =>
+  request.post<void, void>(`${BASE}/class/${classId}/students`, { studentIds })
+
+// —— 课程计划 ——
+
+/** 建计划：POST plan → {id} */
+export const createPlan = (bo: PlanBo) =>
+  request.post<IdVO, IdVO>(`${BASE}/plan`, bo)
+
+/** 改计划：PUT plan/{id} */
+export const updatePlan = (id: string, bo: PlanBo) =>
+  request.put<void, void>(`${BASE}/plan/${id}`, bo)
+
+/** 计划列表：GET plan/page */
+export const pagePlans = (params: PlanPageParams = {}) =>
+  request.get<PageResult<PlanVO>, PageResult<PlanVO>>(`${BASE}/plan/page`, { params })
+
+/** 计划详情：GET plan/{id}（含 lessons 全量） */
+export const getPlan = (id: string) =>
+  request.get<PlanVO, PlanVO>(`${BASE}/plan/${id}`)
+
+/** 深拷贝计划：POST plan/{id}/copy（含课次） → 新计划 */
+export const copyPlan = (id: string) =>
+  request.post<PlanVO, PlanVO>(`${BASE}/plan/${id}/copy`)
+
+/** 批量 upsert 课次：POST plan/{id}/lessons（id 空=新增；body=课次数组） */
+export const upsertLessons = (planId: string, lessons: PlanLessonBo[]) =>
+  request.post<PlanLessonVO[], PlanLessonVO[]>(`${BASE}/plan/${planId}/lessons`, lessons)
+
+/** 删课次：DELETE plan/lesson/{id} */
+export const deleteLesson = (lessonId: string) =>
+  request.delete<void, void>(`${BASE}/plan/lesson/${lessonId}`)
+
+/** 课次重排：PUT plan/{id}/lessons/reorder（按序重排 lesson_seq） */
+export const reorderLessons = (planId: string, lessonIds: string[]) =>
+  request.put<void, void>(`${BASE}/plan/${planId}/lessons/reorder`, { lessonIds })
+
+/** 家长版长图导出：POST plan/{id}/parent-export?targetId= → {file,url}（900px 两列长图） */
+export const parentExport = (planId: string, targetId: string) =>
+  request.post<FileUrlVO, FileUrlVO>(`${BASE}/plan/${planId}/parent-export`, null, { params: { targetId } })
+
+// —— 排课 ——
+
+/** 批量排课：POST session/batch → {created,conflicts}（命中冲突且 !force 一条不落） */
+export const batchSchedule = (bo: SessionBatchBo) =>
+  request.post<SessionBatchResult, SessionBatchResult>(`${BASE}/session/batch`, bo)
+
+/** 冲突预检：POST session/conflict-check → {conflicts} */
+export const conflictCheck = (bo: SessionBatchBo) =>
+  request.post<ConflictCheckResult, ConflictCheckResult>(`${BASE}/session/conflict-check`, bo)
+
+/** 月历：GET session/calendar?start&end&targetId? */
+export const getCalendar = (params: CalendarParams) =>
+  request.get<CalendarSessionVO[], CalendarSessionVO[]>(`${BASE}/session/calendar`, { params })
+
+/** 场次表：GET session/page?targetId&status? */
+export const pageSessions = (params: SessionPageParams = {}) =>
+  request.get<PageResult<SessionVO>, PageResult<SessionVO>>(`${BASE}/session/page`, { params })
+
+/** 通用改场次：PUT session/{id}（改期/改绑/备注） */
+export const updateSession = (id: string, bo: SessionUpdateBo) =>
+  request.put<void, void>(`${BASE}/session/${id}`, bo)
+
+/** 请假：POST session/{id}/leave → 触发顺延 {deferred,overflow} */
+export const sessionLeave = (id: string) =>
+  request.post<DeferResult, DeferResult>(`${BASE}/session/${id}/leave`)
+
+/** 取消：POST session/{id}/cancel → 触发顺延 {deferred,overflow} */
+export const sessionCancel = (id: string) =>
+  request.post<DeferResult, DeferResult>(`${BASE}/session/${id}/cancel`)
+
+/** 标已上：POST session/{id}/mark-done */
+export const sessionMarkDone = (id: string) =>
+  request.post<void, void>(`${BASE}/session/${id}/mark-done`)
+
+/** 锁定内容：POST session/{id}/lock */
+export const sessionLock = (id: string) =>
+  request.post<void, void>(`${BASE}/session/${id}/lock`)
+
+/** 解锁内容：POST session/{id}/unlock */
+export const sessionUnlock = (id: string) =>
+  request.post<void, void>(`${BASE}/session/${id}/unlock`)
+
+// —— 备课包 ——
+
+/** 建备课包：POST prep-pack → {id}（1:1，已存在返已有） */
+export const createPrepPack = (bo: PrepPackCreateBo) =>
+  request.post<IdVO, IdVO>(`${BASE}/prep-pack`, bo)
+
+/** 查备课包：GET prep-pack?lessonId|sessionId|packId */
+export const getPrepPack = (params: PrepPackQueryParams) =>
+  request.get<PrepPackVO, PrepPackVO>(`${BASE}/prep-pack`, { params })
+
+/** 改段配置：PUT prep-pack/{id}/segs */
+export const updatePrepPackSegs = (id: string, segs: PackSeg[]) =>
+  request.put<void, void>(`${BASE}/prep-pack/${id}/segs`, { segs })
+
+/** 渲染出卷：POST prep-pack/{id}/render → {artifacts}（段无题整单 400 不出半卷） */
+export const renderPrepPack = (id: string, bo: PrepPackRenderBo = {}) =>
+  request.post<RenderResult, RenderResult>(`${BASE}/prep-pack/${id}/render`, bo)
+
+// —— 回收与统计 ——
+
+/** 提交回收：POST session/{id}/review → {parentMsg,portraitDelta}（同时置 session 已上） */
+export const submitReview = (sessionId: string, bo: ReviewSubmitBo) =>
+  request.post<ReviewSubmitResult, ReviewSubmitResult>(`${BASE}/session/${sessionId}/review`, bo)
+
+/** 查回收：GET session/{id}/review */
+export const getReview = (sessionId: string) =>
+  request.get<ReviewVO, ReviewVO>(`${BASE}/session/${sessionId}/review`)
+
+/** 概览统计：GET stat/overview */
+export const getStatOverview = () =>
+  request.get<StatOverviewVO, StatOverviewVO>(`${BASE}/stat/overview`)
+
+/** 待备清单：GET prep/todo?days=（默认 14=细备窗口；概览提醒条/统计卡传 7） */
+export const getPrepTodo = (days = 14) =>
+  request.get<PrepTodoVO[], PrepTodoVO[]>(`${BASE}/prep/todo`, { params: { days } })
+
+/** 私有题池检索：GET /teacher/question/pool（create_by=我 且 is_public=0；注意非 schedule 前缀） */
+export const pageQuestionPool = (params: QuestionPoolParams = {}) =>
+  request.get<PageResult<QuestionPoolItem>, PageResult<QuestionPoolItem>>('/teacher/question/pool', { params })
+
+// —— artifact 下载助手 ——
+
+/**
+ * 拼 artifact 下载 URL（二进制流不走 envelope，用于 <a href> / window.open 直接下载）。
+ * GET /teacher/schedule/artifact?path=，走 /api 前缀（vite proxy rewrite → :8090）。
+ * 限 artifact-dir 内防穿越，path=服务端相对路径（来自 PackArtifact.file）。
+ */
+export const artifactUrl = (path: string): string =>
+  `/api${BASE}/artifact?path=${encodeURIComponent(path)}`
