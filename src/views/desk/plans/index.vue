@@ -281,7 +281,13 @@ async function moveLesson(index: number, dir: -1 | 1) {
 // ── FP19 课次动作 ───────────────────────────────────────────────────────────
 function openPrepPack(lesson: PlanLessonVO) {
   // BUG-009：from=plans 供备课包页返回按钮回跳课程计划
-  router.push({ name: 'PrepPack', query: { lessonId: lesson.id, from: 'plans' } })
+  // R5·FAIL-1：补 targetId（计划对象归属 → 备课页肖像速览/学生名）+ lessonSeq/lessonTitle（身份行「第N次课·标题」）
+  const query: Record<string, string> = { lessonId: lesson.id, from: 'plans' }
+  const d = planDetail.value
+  if (d?.targetId) query.targetId = String(d.targetId)
+  if (lesson.lessonSeq != null) query.lessonSeq = String(lesson.lessonSeq)
+  if (lesson.title) query.lessonTitle = lesson.title
+  router.push({ name: 'PrepPack', query })
 }
 function composeByAnchor(lesson: PlanLessonVO) {
   // 组卷工作台（PapersWorkbench）现按 route.params.id 走，不消费 kg query；带锚点参数备用。

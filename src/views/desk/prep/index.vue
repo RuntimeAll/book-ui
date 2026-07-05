@@ -57,6 +57,9 @@ const ctxSessionId = ref('')   // 实际场次 id（肖像 / 回收 上下文）
 const ctxTargetId = ref('')
 // BUG-009：来源标记（plans / overview / targets），驱动返回按钮的去向 + 文案
 const ctxFrom = ref('')
+// R5·FAIL-1：课程计划入口直传的课次展示参数（身份行「第N次课·标题」优先消费，免反查）
+const qLessonSeq = ref('')
+const qLessonTitle = ref('')
 
 const mode = computed<'select' | 'builder'>(() =>
   packLessonId.value || packSessionId.value ? 'builder' : 'select',
@@ -68,6 +71,8 @@ function readQuery() {
   ctxSessionId.value = (route.query.sessionId as string) || ''
   ctxTargetId.value = (route.query.targetId as string) || ''
   ctxFrom.value = (route.query.from as string) || ''
+  qLessonSeq.value = (route.query.lessonSeq as string) || ''
+  qLessonTitle.value = (route.query.lessonTitle as string) || ''
 }
 
 // ── 入口态：待备课次列表 ──────────────────────────────────────────────────────
@@ -151,7 +156,7 @@ const ctxLessonTitle = ref('')
 
 // BUG-008：身份行「{学生名} · {课次标题} · M/D 周X HH:mm–HH:mm」；任一段缺失就跳过，
 // 三段都空则不渲染整行（页头优雅退化回 h1 默认标题）。
-// TODO(R1)：课次序号（第N次课）后端暂未返回 lessonSeq 关联信息，此处不杜撰，留待 S1 建模批。
+// R5·FAIL-1：课程计划入口经 query 直传 lessonSeq/lessonTitle → 课次段显示「第N次课·标题」（无时间段可省）。
 const identityLine = computed(() => {
   const parts: string[] = []
   if (ctxTargetName.value) parts.push(ctxTargetName.value)
@@ -253,6 +258,12 @@ async function resolveContext(token: number) {
   ctxTargetName.value = ''
   ctxLessonTitle.value = ''
 
+  // R5·FAIL-1：query 直传的课次序号/标题优先（课程计划入口在手，无需经 session→plan 反查）
+  if (qLessonSeq.value || qLessonTitle.value) {
+    const seq = qLessonSeq.value ? `第${qLessonSeq.value}次课` : ''
+    ctxLessonTitle.value = [seq, qLessonTitle.value].filter(Boolean).join('·')
+  }
+
   // targetId：优先 query；否则由场次反查（best-effort）
   let targetId = ctxTargetId.value
 
@@ -270,7 +281,8 @@ async function resolveContext(token: number) {
         }
         fillCtxFromSession(hit)
         // 课次标题（best-effort）：session 本身不带 lessonTitle，经 planId 查计划详情匹配 planLessonId。
-        if (hit.planId && hit.planLessonId) {
+        // query 已直传时（R5）不再反查覆盖。
+        if (!ctxLessonTitle.value && hit.planId && hit.planLessonId) {
           try {
             const plan = await getPlan(hit.planId)
             const lesson = (plan?.lessons ?? []).find((l) => String(l.id) === String(hit.planLessonId))
@@ -285,9 +297,9 @@ async function resolveContext(token: number) {
     }
   }
   if (token !== initToken) return
-  // TODO(R1-S1)：仅 lessonId 深链（如课程计划页「打开备课包」）无 sessionId/targetId，
-  // 拿不到对象上下文；后端建模批（S1）补 lesson↔session 关联后再补身份行，本轮不做。
-  if (!targetId) return // 仅 lessonId 深链无对象上下文 → 侧卡优雅空
+  // R5·FAIL-1：课程计划入口（仅 lessonId 深链）现已随 query 直传 targetId（S1 计划归属落地），
+  // 走下方肖像/回收分支；仅当老深链完全无 targetId 时才优雅空。
+  if (!targetId) return // 无对象上下文 → 侧卡优雅空
 
   // 肖像
   portraitLoading.value = true
