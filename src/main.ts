@@ -12,6 +12,12 @@ import App from './App.vue'
 import router from './router'
 import { safeHtml } from '@/directives/safeHtml'
 import './style.css'
+// BUG-002 修复：全项目 40+ 文件显式 `import { ElMessage/ElMessageBox/ElNotification } from 'element-plus'`
+// 绕过 unplugin-vue-components resolver 的按需样式注入 —— 命令式弹窗（confirm/toast/notification）
+// 裸渲染无样式。这三个组件全局补样式（体量小，值得常驻；其余组件仍走 resolver 按需）。
+import 'element-plus/es/components/message/style/css'
+import 'element-plus/es/components/message-box/style/css'
+import 'element-plus/es/components/notification/style/css'
 // PRD-A-017 举一反三换皮设计 token（作用域 .variant-page，不污染其它页）
 import '@/views/variant/variant-theme.css'
 
