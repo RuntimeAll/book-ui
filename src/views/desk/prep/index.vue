@@ -468,7 +468,7 @@ function moveQuestion(index: number, id: string, dir: -1 | 1) {
 }
 
 function aiVariant() {
-  ElMessage.info('AI 变式：交由 LLM 会话代办（H6 占位，本页暂不实现）')
+  ElMessage.info('AI 变式功能开发中，敬请期待')
 }
 
 const excludeForPicker = computed<string[]>(() =>
