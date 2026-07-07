@@ -21,7 +21,9 @@ import { createSvgIconsPlugin } from 'vite-plugin-svg-icons'
 // 🔴 端口归属（2026-07-07 ai-bkb 迁移定版）：新区 = 909x 段（BE :9090 / dev :9091 / toolkit :9093），
 //    与旧区 book-ai 809x 并行共存。唯一事实源 = ai-bkb/workspaces.json，改端口先改 registry 再同步此处。
 //    历史：旧区 master=A线 BE:8080/dev:5173；master-ai=C线 BE:8090/dev:8091。跨分支合并后必查本段常量（污染坑）。
-const BOOK_SERVER_TARGET = 'http://localhost:9090'
+// 🔴 四线并行(ai-bkb): 端口用环境变量运行期覆盖(BKB_BE_PORT/BKB_FE_PORT/BKB_TK_PORT), 代码里只留 C 线默认值——
+//    别再往各线代码里改端口常量(旧区"合并污染端口"坑的根源)。各线端口注册=ai-bkb/workspaces.json(A=919x/B=929x/O=939x)。
+const BOOK_SERVER_TARGET = `http://localhost:${process.env.BKB_BE_PORT || 9090}`
 
 // 🗂️ 2026-07-03 归档：AI 编排服务 ai-orchestrator（:8092 组卷）已退役 → _归档代码/ai-orchestrator-C线组卷-2026-07/；
 //    组卷职责转 L3 MCP compose_paper（走 :8090 落库）。前端 /ai→:8092 消费者（AI 助手页）2026-06-30 已删。
@@ -33,7 +35,7 @@ const BOOK_SERVER_TARGET = 'http://localhost:9090'
 //    data:{type:token|message|...} + data:[DONE]）。同源绕 CORS；toolkit 未设 AUTH_SECRET 故免鉴权。
 //    与 /ai(:8092)、/api 三条调用链互不复用拦截器（src/api/variant 独立封装）。
 //    🔴 端口归属：ai-bkb 新区 toolkit = :9093（旧区 C线:8093 / A线副本:8095），跨分支合并以目标分支线为准。
-const AI_TOOLKIT_TARGET = 'http://localhost:9093'
+const AI_TOOLKIT_TARGET = `http://localhost:${process.env.BKB_TK_PORT || 9093}`
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -63,7 +65,7 @@ export default defineConfig({
     },
   },
   server: {
-    port: 9091,
+    port: Number(process.env.BKB_FE_PORT) || 9091,
     proxy: {
       '/api': {
         target: BOOK_SERVER_TARGET,
