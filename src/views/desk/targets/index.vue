@@ -134,11 +134,11 @@ function onRefreshCards() {
   detailTick.value++
 }
 
-function openPrep(sessionId: string) {
-  // BUG-008/BUG-009：补 targetId（供身份行拼装）+ from（供返回按钮溯源）
-  const query: Record<string, string> = { sessionId, from: 'targets' }
+function openPrep(_sessionId: string) {
+  // PRD-B-101 V5/G9：退役 /desk/prep → 跳课程计划页，按对象 best-effort 定位其计划
+  const query: Record<string, string> = { from: 'targets' }
   if (selectedId.value) query.targetId = selectedId.value
-  router.push({ path: '/desk/prep', query })
+  router.push({ path: '/desk/plans', query })
 }
 
 onMounted(async () => {

@@ -100,6 +100,7 @@ interface CalEvent {
   prepStatus: PrepStatus
   externalTitle?: string
   lessonTitle?: string
+  planLessonId?: string
   endTime: string
 }
 
@@ -126,6 +127,7 @@ const normalized = computed<CalEvent[]>(() =>
       prepStatus: e.prepStatus,
       externalTitle: e.externalTitle,
       lessonTitle: e.lessonTitle,
+      planLessonId: e.planLessonId,
     }
   }),
 )
@@ -279,6 +281,8 @@ function openFromEvent(e: CalEvent) {
     prepStatus: e.prepStatus,
     title: e.lessonTitle || e.externalTitle,
     lessonLocked: e.lessonLocked,
+    targetId: e.targetId,
+    planLessonId: e.planLessonId,
   }
   drawerVisible.value = true
 }
@@ -296,6 +300,8 @@ function openFromTodo(t: PrepTodoVO) {
     prepStatus: t.prepStatus,
     title: t.lessonTitle,
     lessonLocked: undefined,
+    targetId: t.targetId,
+    planLessonId: t.planLessonId,
   }
   drawerVisible.value = true
 }

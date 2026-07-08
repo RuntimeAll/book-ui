@@ -6,7 +6,7 @@
  * 教学安排区块（对照设计稿 v-overview）：
  *   FP1 今日课程时间线：从本周 getCalendar 过滤当天；外部占位灰显无备课按钮；
  *        已结束且未标已上 → 「标记已上」(sessionMarkDone)。
- *   FP2 待备提醒条：getPrepTodo(7) 聚合；点行跳 /desk/prep?lessonId=。
+ *   FP2 待备提醒条：getPrepTodo(7) 聚合；点行跳 /desk/plans 定位课次（PRD-B-101 退役 /desk/prep）。
  *   FP3 统计卡 ×4：getStatOverview()（我的学生 / 本周课次 / 待备课 / 我的题库）。
  *   FP4 本周课表：与 FP1 同源 getCalendar（周一–周日一次拉，前端过滤渲染），🔴 禁另造接口。
  *   保留原「快捷入口」卡（最近动态位）。
@@ -167,11 +167,12 @@ async function onMarkDone(e: CalendarSessionVO) {
     markingId.value = ''
   }
 }
+// PRD-B-101 V5/G9：退役 /desk/prep → 跳课程计划页并定位/展开对应课次（B2b 升级为开备课语境）
 function goPrepBySession(e: CalendarSessionVO) {
-  const query: Record<string, string> = { sessionId: e.id, from: 'overview' }
+  const query: Record<string, string> = { from: 'overview' }
   if (e.targetId) query.targetId = e.targetId
   if (e.planLessonId) query.lessonId = e.planLessonId
-  router.push({ path: '/desk/prep', query })
+  router.push({ path: '/desk/plans', query })
 }
 
 // ── FP2 明日课程（BUG-006：由「细备窗口·N场待备」大列表改为明日课程，去催备语义）──────
@@ -198,11 +199,11 @@ const tomorrowStr = computed(() => {
 })
 const tomorrowList = computed(() => todoList.value.filter((t) => t.sessionDate === tomorrowStr.value))
 function goTodo(t: PrepTodoVO) {
-  // BUG-008/BUG-009：补 sessionId + targetId（供身份行拼装）+ from（供返回按钮溯源）
-  const query: Record<string, string> = { sessionId: String(t.id), from: 'overview' }
+  // PRD-B-101 V5/G9：跳课程计划页定位对应课次（targetId+lessonId best-effort 展开）
+  const query: Record<string, string> = { from: 'overview' }
   if (t.planLessonId) query.lessonId = String(t.planLessonId)
   if (t.targetId) query.targetId = String(t.targetId)
-  router.push({ path: '/desk/prep', query })
+  router.push({ path: '/desk/plans', query })
 }
 
 // ── FP3 统计卡 ×4 ──────────────────────────────────────────
@@ -229,7 +230,7 @@ interface StatCard {
 const statCards = computed<StatCard[]>(() => [
   { label: '我的学生', value: () => stat.value?.studentCount ?? null, unit: '人', path: '/desk/targets' },
   { label: '本周课次', value: () => stat.value?.weekSessionCount ?? null, unit: '场', path: '/desk/schedule' },
-  { label: '待备课', value: () => stat.value?.todoPrepCount ?? null, unit: '场', path: '/desk/prep', warm: true },
+  { label: '待备课', value: () => stat.value?.todoPrepCount ?? null, unit: '场', path: '/desk/plans', warm: true },
   { label: '我的题库', value: () => stat.value?.myQuestionCount ?? null, unit: '题', path: '/desk/my-question' },
 ])
 function goCard(path: string) {
@@ -330,7 +331,7 @@ onMounted(async () => {
                   text
                   bg
                   @click="goPrepBySession(e)"
-                  >进入备课材料</el-button
+                  >去备课</el-button
                 >
               </div>
             </li>

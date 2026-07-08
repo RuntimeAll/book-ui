@@ -8,6 +8,7 @@
  * 操作只依赖 session.id，缺 lessonLocked 时锁定态本地维护。
  */
 import { computed, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   updateSession,
@@ -39,6 +40,9 @@ export interface DrawerSession {
   prepStatus: PrepStatus
   title?: string
   lessonLocked?: string
+  /** PRD-B-101：去备课定位用（跳课程计划页展开对应课次） */
+  targetId?: string
+  planLessonId?: string
 }
 
 const props = defineProps<{
@@ -51,10 +55,23 @@ const emit = defineEmits<{
   (e: 'changed'): void
 }>()
 
+const router = useRouter()
+
 const innerVisible = computed({
   get: () => props.visible,
   set: (v) => emit('update:visible', v),
 })
+
+// PRD-B-101 V5：去备课 → 跳课程计划页并定位/展开对应课次（B2b 升级为开备课语境）
+function goPrep() {
+  const s = props.session
+  if (!s) return
+  const query: Record<string, string> = { from: 'schedule' }
+  if (s.targetId) query.targetId = s.targetId
+  if (s.planLessonId) query.lessonId = s.planLessonId
+  innerVisible.value = false
+  router.push({ path: '/desk/plans', query })
+}
 
 // 本地锁定态（数据源可能不带 lessonLocked）
 const locked = ref(false)
@@ -246,6 +263,9 @@ async function submitReschedule() {
         </div>
       </dl>
 
+      <!-- PRD-B-101 V5：去备课（跳课程计划页定位课次 · 卷位清单）-->
+      <el-button type="primary" class="sd-goprep" :disabled="busy" @click="goPrep">去备课</el-button>
+
       <!-- 改期子表单 -->
       <div v-if="rescheduling" class="sd-reform">
         <div class="sd-reform-t">改期</div>
@@ -355,6 +375,10 @@ async function submitReschedule() {
   font-weight: 600;
   margin: 0;
   font-variant-numeric: tabular-nums;
+}
+.sd-goprep {
+  width: 100%;
+  margin: 0;
 }
 .sd-actions {
   display: grid;
