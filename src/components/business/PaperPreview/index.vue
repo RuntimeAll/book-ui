@@ -6,8 +6,8 @@
 //             → 按 freeTags[0].name 分组（"其他"段末尾）→ v-html 渲染 → typesetPaperPreview
 //   段⑤ PDF 工艺：本组件不实现，按钮 click handler stub（开发组长波 3 自接手）
 // ────────────────────────────────────────────────────────────────────────────
-import { ref, computed, nextTick, watch, onMounted, onUnmounted } from 'vue'
-import { ElMessage, ElNotification } from 'element-plus'
+import { ref, computed, nextTick, watch, onMounted } from 'vue'
+import { ElMessage } from 'element-plus'
 import { Download } from '@element-plus/icons-vue'
 import {
   questionListByIds,
@@ -19,11 +19,9 @@ import { exportPaperToPdf } from '@/utils/pdf-export'
 import { proxyImage } from '@/utils/image-proxy'
 import { parseBlockDoc, type QuestionBlockDoc } from '@/utils/blockSchema'
 import QuestionBlockRender from '@/components/business/QuestionBlockRender/index.vue'
+import QuestionContent from '@/components/business/QuestionContent/index.vue'
 import { useUserStore } from '@/store/user'
 import { getCurrentUser } from '@/api/user'
-// PRD-A-014 异步导出 API（2026-06-11 用户拍板去掉导出配置弹窗：导出直接用页面状态——
-// 标题可编辑=文件名、显示答案/解析勾选=导出内容、水印开关；点导出即提交+原地赛跑轮询）
-import { submitExport, getExportRecord, type ExportRecordVO } from '@/api/export'
 
 const props = defineProps<{
   visible: boolean
@@ -77,6 +75,15 @@ function answerDocOf(q: QuestionDetail): QuestionBlockDoc | null {
 }
 function analyzeDocOf(q: QuestionDetail): QuestionBlockDoc | null {
   return parseBlockDoc(q.analyzeBlockJson)
+}
+
+/**
+ * 纯文本题干（无 blockJson 无 stemImg 时的兜底）：优先富文本 stemTextContent，回落旧 stemText。
+ * 有值 → 走 QuestionContent（renderRichText：markdown + KaTeX，同步入 DOM，html2canvas 可截）。
+ */
+function stemTextOf(q: QuestionDetail): string | null {
+  const t = q.stemTextContent || q.stemText
+  return t && t.trim().length > 0 ? t : null
 }
 
 /** 手机号脱敏 138****1234 */
@@ -252,6 +259,7 @@ async function handleExportPdf() {
     await exportPaperToPdf({
       root: previewRoot.value,
       filename,
+      watermark: watermark.value ? watermarkText.value : null,
       onProgress: (msg) => { exportProgress.value = msg },
     })
     ElMessage.success(`PDF 已导出：${filename}.pdf`)
@@ -262,134 +270,6 @@ async function handleExportPdf() {
   } finally {
     exporting.value = false
     exportProgress.value = ''
-  }
-}
-
-// ── PRD-A-014 异步导出（2026-06-11 弹窗去除版：导出直接用页面状态） ─────────────
-// 赛跑窗口：提交 → 1s 间隔轮询 ≤10 次；10s 内 done → 直接下载；超时 → 转后台 + 通知去向；
-// 失败 → 错误提示。轮询不因关预览中断（用户发起的导出照常送达）。
-
-const MAX_POLL = 10        // 最多 10 次 = 10 秒
-const POLL_INTERVAL = 1000 // 1 秒
-
-let pollTimer: ReturnType<typeof setTimeout> | null = null
-
-function clearPoll() {
-  if (pollTimer !== null) {
-    clearTimeout(pollTimer)
-    pollTimer = null
-  }
-}
-
-onUnmounted(clearPoll)
-
-/** 触发浏览器下载 */
-function triggerDownload(fileUrl: string, name: string) {
-  const a = document.createElement('a')
-  a.href = fileUrl
-  a.download = name.endsWith('.pdf') ? name : `${name}.pdf`
-  a.target = '_blank'
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-}
-
-/** 把 estimatedSeconds 换算成人话 */
-function humanizeSeconds(secs: number): string {
-  if (secs <= 0) return '稍后'
-  if (secs < 60) return `约 ${secs} 秒`
-  return `约 ${Math.round(secs / 60)} 分钟`
-}
-
-function finishExportState() {
-  exporting.value = false
-  exportProgress.value = ''
-}
-
-/** 轮询单条记录直到 done/failed/超次数（超时转后台通知） */
-function pollRecord(recordId: string, estimatedSeconds: number, name: string) {
-  let count = 0
-
-  const doOnePoll = async () => {
-    count++
-    let record: ExportRecordVO | null = null
-    try {
-      record = await getExportRecord(recordId)
-    } catch (e) {
-      // 网络抖动：继续轮询，但不超总次数
-      console.warn('[PaperPreview] export poll failed', e)
-    }
-
-    if (record?.status === '2') {
-      clearPoll()
-      finishExportState()
-      triggerDownload(record.fileUrl!, name)
-      ElMessage.success(`PDF 已生成：${name}.pdf`)
-      return
-    }
-
-    if (record?.status === '3') {
-      clearPoll()
-      finishExportState()
-      ElMessage.error(`导出失败：${record.errorMsg || '未知错误'}`)
-      return
-    }
-
-    if (count >= MAX_POLL) {
-      // 10s 未完 → 转后台，通知去向
-      clearPoll()
-      finishExportState()
-      ElNotification({
-        title: `《${name}》正在后台生成`,
-        message: `预计 ${humanizeSeconds(estimatedSeconds)}，完成后请前往 我的工作台→导出记录 下载。`,
-        type: 'info',
-        duration: 0,
-        onClick: () => {
-          import('@/router').then(({ default: router }) => {
-            router.push('/desk/workspace')
-          })
-        },
-      })
-      return
-    }
-
-    pollTimer = setTimeout(doOnePoll, POLL_INTERVAL)
-  }
-
-  // 第一次延迟 1s 再查（刚提交立刻查大概率还在排队）
-  pollTimer = setTimeout(doOnePoll, POLL_INTERVAL)
-}
-
-/** 「导出 PDF」直接提交异步任务（无弹窗，所见即所得） */
-async function handleAsyncExport() {
-  if (exporting.value) return
-  const name = fileName.value.trim()
-  if (!name) {
-    ElMessage.warning('请先填写试卷标题（即导出文件名）')
-    return
-  }
-  if (props.ids.length === 0 || groups.value.length === 0) {
-    ElMessage.warning('暂无试题数据，无法导出')
-    return
-  }
-
-  exporting.value = true
-  exportProgress.value = '提交中…'
-  try {
-    const resp = await submitExport({
-      paperId: props.paperId,
-      ids: props.ids,
-      fileName: name,
-      showAnswer: showAnswer.value,
-      showExplain: showExplain.value,
-      watermark: watermark.value,
-    })
-    exportProgress.value = '生成中…'
-    pollRecord(resp.recordId, resp.estimatedSeconds, name)
-  } catch (e) {
-    // BE 业务错误（如并发 1 限制）拦截器已弹 toast，此处只收尾状态
-    console.error('[PaperPreview] submitExport failed', e)
-    finishExportState()
   }
 }
 </script>
@@ -428,13 +308,13 @@ async function handleAsyncExport() {
           </span>
           <el-divider direction="vertical" />
           <span v-if="exporting" class="pp-export-progress">{{ exportProgress }}</span>
-          <!-- 2026-06-11 弹窗去除：导出直接用页面当前状态提交异步任务（赛跑窗口） -->
+          <!-- 导出直接走前端 jsPDF + html2canvas 无损链路（所见即所得，含公式/图片/水印） -->
           <el-button
             type="primary"
             :icon="Download"
             :loading="exporting"
             :disabled="loading || groups.length === 0"
-            @click="handleAsyncExport"
+            @click="handleExportPdf"
           >
             导出 PDF
           </el-button>
@@ -493,10 +373,12 @@ async function handleAsyncExport() {
                   alt="题干图"
                   class="stem-img"
                 />
-                <!-- 纯文本题（AI 变式 / 举一反三入库）无题干图，但有 stemText → 提示「功能未覆盖」而非「系统故障」 -->
-                <span v-else-if="q.stemText" class="pp-q-textonly">
-                  AI 生成题为纯文本题，PDF 图片导出暂不支持（文本渲染开发中）；可在线查看或在组卷工作台使用
-                </span>
+                <!-- 纯文本题（AI 变式 / 举一反三入库）无题干图，但有文本 → 按富文本渲染（markdown + LaTeX），进预览也进 PDF -->
+                <QuestionContent
+                  v-else-if="stemTextOf(q)"
+                  :text="stemTextOf(q)"
+                  class="pp-q-textonly"
+                />
                 <!-- 真题确实缺图（图与文本皆空）→ 保留运维提示 -->
                 <span v-else class="pp-q-missing">该题缺题干图（请联系管理员补图）</span>
               </div>
@@ -806,15 +688,11 @@ async function handleAsyncExport() {
   color: #ff9000;
   font-size: 13px;
 }
-/* 纯文本题（AI 变式）导出暂不支持：信息提示而非错误红，弱化为中性灰蓝 */
-.pp-q-textonly {
-  display: inline-block;
-  padding: 6px 10px;
-  background: #f4f6f8;
-  border: 1px dashed #c0c8d0;
-  border-radius: 4px;
-  color: #5b6770;
-  font-size: 13px;
+/* 纯文本题（AI 变式 / 举一反三入库）：按题干正文渲染，字号与图题题干对齐 */
+.pp-q-textonly :deep(.qc-richtext) {
+  font-size: 14px;
+  line-height: 1.8;
+  color: #1d2129;
 }
 
 .pp-export-progress {
