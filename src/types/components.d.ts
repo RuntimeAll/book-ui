@@ -90,6 +90,7 @@ declare module 'vue' {
     PaperBasketFab: typeof import('./../components/business/PaperBasketFab/index.vue')['default']
     PaperLibrary: typeof import('./../components/business/PaperLibrary/index.vue')['default']
     PaperPreview: typeof import('./../components/business/PaperPreview/index.vue')['default']
+    PrepContextBanner: typeof import('./../components/business/PrepContextBanner/index.vue')['default']
     QuestionBasket: typeof import('./../components/business/QuestionBasket/index.vue')['default']
     QuestionBlockRender: typeof import('./../components/business/QuestionBlockRender/index.vue')['default']
     QuestionCard: typeof import('./../components/business/QuestionCard/index.vue')['default']

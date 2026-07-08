@@ -3,6 +3,8 @@ import { computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import MultiFunctionFab from '@/components/business/MultiFunctionFab/index.vue'
+// PRD-B-101 备课语境常驻横幅（语境激活时全站顶部可见）
+import PrepContextBanner from '@/components/business/PrepContextBanner/index.vue'
 // PRD-C-212 增量：顶栏简笔画线性图标（设计稿-备课台与顶栏-V1 拍板）
 import LineIcon, { type LineIconName } from '@/components/LineIcon.vue'
 import { useUserStore } from '@/store/user'
@@ -231,6 +233,9 @@ const showMultiFunctionFab = computed(() => {
         </div>
       </div>
     </el-header>
+
+    <!-- PRD-B-101 备课语境常驻横幅（语境激活时显示，header 下方吸顶） -->
+    <PrepContextBanner />
 
     <!-- Main Content -->
     <el-main class="app-main">
