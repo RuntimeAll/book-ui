@@ -54,11 +54,14 @@ export function usePrepEntry() {
     await upsertLessons(planId, [bo])
   }
 
-  function fallbackToPlans(input: PrepEntryInput) {
+  // resolvedPlanId：解析阶段已定位的计划 id（多计划学生时唯一正确来源，优先于 input.planId）。
+  // 无解析结果才回退 input.planId；两者皆空时 plans 页按 targetId best-effort（单计划场景仍准）。
+  function fallbackToPlans(input: PrepEntryInput, resolvedPlanId?: string) {
     const query: Record<string, string> = { from: input.from ?? 'overview' }
     if (input.targetId) query.targetId = String(input.targetId)
     if (input.lessonId) query.lessonId = String(input.lessonId)
-    if (input.planId) query.planId = String(input.planId)
+    const planId = resolvedPlanId ?? input.planId
+    if (planId) query.planId = String(planId)
     router.push({ path: '/desk/plans', query })
   }
 
@@ -112,8 +115,8 @@ export function usePrepEntry() {
         return
       }
     }
-    // 全绑 / 零卷位 / 解析失败 → 跳课程计划页定位
-    fallbackToPlans(input)
+    // 全绑 / 零卷位 / 解析失败 → 跳课程计划页定位（用已解析的 planId 修多计划学生定位错计划）
+    fallbackToPlans(input, resolved?.planId)
   }
 
   return { goPrepForLesson }
