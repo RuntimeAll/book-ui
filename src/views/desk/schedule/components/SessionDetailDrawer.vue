@@ -8,7 +8,6 @@
  * 操作只依赖 session.id，缺 lessonLocked 时锁定态本地维护。
  */
 import { computed, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   updateSession,
@@ -27,6 +26,7 @@ import type {
   PrepStatus,
   DeferResult,
 } from '@/api/teacher/schedule'
+import { usePrepEntry } from '@/composables/usePrepEntry'
 
 export interface DrawerSession {
   id: string
@@ -55,22 +55,25 @@ const emit = defineEmits<{
   (e: 'changed'): void
 }>()
 
-const router = useRouter()
+const { goPrepForLesson } = usePrepEntry()
 
 const innerVisible = computed({
   get: () => props.visible,
   set: (v) => emit('update:visible', v),
 })
 
-// PRD-B-101 V5：去备课 → 跳课程计划页并定位/展开对应课次（B2b 升级为开备课语境）
+// PRD-B-101 V5/D6：去备课 → 有空卷位开备课语境定位第一个空位跳题库；全绑/零卷位跳课程计划页定位
 function goPrep() {
   const s = props.session
   if (!s) return
-  const query: Record<string, string> = { from: 'schedule' }
-  if (s.targetId) query.targetId = s.targetId
-  if (s.planLessonId) query.lessonId = s.planLessonId
   innerVisible.value = false
-  router.push({ path: '/desk/plans', query })
+  void goPrepForLesson({
+    targetId: s.targetId,
+    lessonId: s.planLessonId,
+    studentName: s.targetName,
+    lessonDate: s.date,
+    from: 'schedule',
+  })
 }
 
 // 本地锁定态（数据源可能不带 lessonLocked）

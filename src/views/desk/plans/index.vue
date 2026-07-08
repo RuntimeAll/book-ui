@@ -37,7 +37,9 @@ import {
   type PlanPageParams,
   type PaperSlot,
 } from '@/api/teacher/schedule'
+import { getTarget } from '@/api/teacher/schedule'
 import { lazyTree, getPaperDetail, type SubjectNode } from '@/api/question/index'
+import { usePrepContextStore } from '@/store/prepContext'
 import PlanFormDialog from './components/PlanFormDialog.vue'
 import LessonEditDialog from './components/LessonEditDialog.vue'
 import ParentExportDialog from './components/ParentExportDialog.vue'
@@ -45,6 +47,23 @@ import PaperPickerDialog from './components/PaperPickerDialog.vue'
 
 const router = useRouter()
 const route = useRoute()
+const prepCtx = usePrepContextStore()
+
+// 计划归属对象名缓存（PlanVO 无 targetName，横幅「学生」项 best-effort 取档案名）
+const targetNameCache = new Map<string, string>()
+async function resolveTargetName(targetId?: string | null): Promise<string> {
+  if (!targetId) return ''
+  const key = String(targetId)
+  if (targetNameCache.has(key)) return targetNameCache.get(key) || ''
+  try {
+    const t = await getTarget(key)
+    const name = t?.name ?? ''
+    targetNameCache.set(key, name)
+    return name
+  } catch {
+    return ''
+  }
+}
 
 // 备课态三色 + 文案（PRD-B-101 换权威 = paper_slots 推导：0未备/1备课中/2已备好）
 const PREP_LABEL: Record<string, string> = { '0': '未备', '1': '备课中', '2': '已备好' }
@@ -430,9 +449,24 @@ async function removeSlot(lesson: PlanLessonVO, slot: PaperSlot) {
   if (ok) ElMessage.success('卷位已删除')
 }
 
-// 未绑·「组这张卷」占位（B2b 接备课语境真流程）
-function composeForSlot() {
-  ElMessage.info('「组这张卷」备课语境将在下一批接线')
+// 未绑·「组这张卷」→ 开备课语境（含该卷位配方 + 课次/学生信息）→ 跳题库挑题（PRD-B-101 V2/D6）
+async function composeForSlot(lesson: PlanLessonVO, slot: PaperSlot) {
+  // 继承态卷位先物化，否则创建时绑定端点定位不到卷位
+  if (!(await ensureOwnSlots(lesson))) return
+  const tId = planDetail.value?.targetId ? String(planDetail.value.targetId) : ''
+  const studentName = await resolveTargetName(tId)
+  prepCtx.open({
+    planId: selectedPlanId.value ?? '',
+    targetId: tId,
+    lessonId: lesson.id,
+    lessonTitle: lesson.title,
+    studentName,
+    lessonDate: '',
+    // 物化后 lesson.paperSlots 已是自有卷位快照
+    slots: (lesson.paperSlots ?? []).map((s) => ({ ...s })),
+    slotSeq: slot.slot_seq,
+  })
+  router.push({ name: 'QuestionIndex' })
 }
 
 // 未绑·「挂已有卷」（D7 兜底）
@@ -719,7 +753,7 @@ onMounted(async () => {
                       <el-button link size="small" type="warning" @click="unbindSlot(lesson, slot)">重组</el-button>
                     </template>
                     <template v-else>
-                      <el-button link size="small" type="primary" @click="composeForSlot()">组这张卷</el-button>
+                      <el-button link size="small" type="primary" @click="composeForSlot(lesson, slot)">组这张卷</el-button>
                       <el-button link size="small" @click="openPicker(lesson, slot)">挂已有卷</el-button>
                     </template>
                     <el-button link size="small" type="danger" title="删除卷位" @click="removeSlot(lesson, slot)">✕</el-button>

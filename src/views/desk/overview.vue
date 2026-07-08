@@ -33,9 +33,11 @@ import {
   type PrepStatus,
 } from '@/api/teacher/schedule'
 import BatchScheduleWizard from './schedule/components/BatchScheduleWizard.vue'
+import { usePrepEntry } from '@/composables/usePrepEntry'
 
 const router = useRouter()
 const userStore = useUserStore()
+const { goPrepForLesson } = usePrepEntry()
 
 // ── 日期工具（纯字符串拼装，避免时区漂移）──────────────────────────
 const WEEK_CN = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
@@ -167,12 +169,15 @@ async function onMarkDone(e: CalendarSessionVO) {
     markingId.value = ''
   }
 }
-// PRD-B-101 V5/G9：退役 /desk/prep → 跳课程计划页并定位/展开对应课次（B2b 升级为开备课语境）
+// PRD-B-101 V5/D6：去备课 → 有空卷位则开备课语境定位第一个空位跳题库；全绑/零卷位跳课程计划页定位
 function goPrepBySession(e: CalendarSessionVO) {
-  const query: Record<string, string> = { from: 'overview' }
-  if (e.targetId) query.targetId = e.targetId
-  if (e.planLessonId) query.lessonId = e.planLessonId
-  router.push({ path: '/desk/plans', query })
+  void goPrepForLesson({
+    targetId: e.targetId,
+    lessonId: e.planLessonId,
+    studentName: e.targetName,
+    lessonDate: e.sessionDate,
+    from: 'overview',
+  })
 }
 
 // ── FP2 明日课程（BUG-006：由「细备窗口·N场待备」大列表改为明日课程，去催备语义）──────
@@ -199,11 +204,14 @@ const tomorrowStr = computed(() => {
 })
 const tomorrowList = computed(() => todoList.value.filter((t) => t.sessionDate === tomorrowStr.value))
 function goTodo(t: PrepTodoVO) {
-  // PRD-B-101 V5/G9：跳课程计划页定位对应课次（targetId+lessonId best-effort 展开）
-  const query: Record<string, string> = { from: 'overview' }
-  if (t.planLessonId) query.lessonId = String(t.planLessonId)
-  if (t.targetId) query.targetId = String(t.targetId)
-  router.push({ path: '/desk/plans', query })
+  // PRD-B-101 V5/D6：去备课 → 有空卷位开语境定位第一个空位跳题库；否则跳课程计划页定位
+  void goPrepForLesson({
+    targetId: t.targetId,
+    lessonId: t.planLessonId ? String(t.planLessonId) : undefined,
+    studentName: t.targetName,
+    lessonDate: t.sessionDate,
+    from: 'overview',
+  })
 }
 
 // ── FP3 统计卡 ×4 ──────────────────────────────────────────
