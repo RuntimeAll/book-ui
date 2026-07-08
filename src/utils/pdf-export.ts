@@ -39,19 +39,38 @@ const SCALE = 2
 // 单带 CSS 高度预算：×SCALE 后须 < Chrome 65535 维度上限，留足余量取 28000（×2=56000）。
 const BAND_BUDGET_CSS = 28000
 
+// 图片等待超时（PRD-B-101 B2a 兜底）：单张图 stall（load/error 都不触发，如 OSS 挂起）
+// 会让 Promise.all 永久 pending → 整个导出卡死。加超时后继续导出并 warn 未就绪图片数。
+const IMG_WAIT_TIMEOUT_MS = 10000
+
 async function waitAllImagesLoaded(root: HTMLElement): Promise<void> {
   const imgs = Array.from(root.querySelectorAll('img'))
+  let timedOut = 0
   await Promise.all(
     imgs.map(img => {
       // 🔴 坑 #7：CORS fail 时 img.complete=true 但 naturalWidth=0，event 已发生不再触发 — 必须只判 complete
       if (img.complete) return Promise.resolve()
       return new Promise<void>(resolve => {
-        const done = () => resolve()
-        img.addEventListener('load', done, { once: true })
-        img.addEventListener('error', done, { once: true })
+        let settled = false
+        const finish = () => {
+          if (settled) return
+          settled = true
+          clearTimeout(timer)
+          resolve()
+        }
+        // stall 兜底：超时视为「不再等」，继续导出（图片位可能空/破，但不卡死整份）
+        const timer = setTimeout(() => {
+          timedOut++
+          finish()
+        }, IMG_WAIT_TIMEOUT_MS)
+        img.addEventListener('load', finish, { once: true })
+        img.addEventListener('error', finish, { once: true })
       })
     })
   )
+  if (timedOut > 0) {
+    console.warn(`[pdf-export] ${timedOut} 张图片 ${IMG_WAIT_TIMEOUT_MS}ms 内未就绪，已跳过继续导出（可能空白/破图）`)
+  }
 }
 
 // 在页 canvas 上平铺旋转水印（html2canvas 截不到预览水印层，故导出时在截图根之外合成，

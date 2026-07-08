@@ -79,6 +79,11 @@ export interface PaperPageParams {
    */
   scope?: 'public' | 'mine'
   /**
+   * PRD-B-101 卷型筛（仅 scope='mine' 生效）：'2'=备课卷 tab / '1'=普通卷；空=不过滤（全量含备课卷）。
+   * 🔴 scope≠mine 时 BE 恒排除 paper_kind='2'（公共库查不到备课卷，G6 反性）。
+   */
+  paperKind?: '1' | '2'
+  /**
    * @deprecated 旧字段，已被 scope='mine' 取代。
    * 保留以兼容 workspace 聚合页的历史调用，新代码不再使用。
    */
@@ -124,6 +129,13 @@ export interface CreateExamPaperParams {
   name: string
   questionIds: string[]
   paperCategoryId?: string | null
+  /**
+   * PRD-B-101 备课语境·课次 id（本批只定义，B2b 组卷创建时传）。
+   * 🔴 与 slotSeq 必须同现（只传一个 → BE 400）；同现时卷 paper_kind='2' 且自动绑该卷位。不传 → 普通卷。
+   */
+  lessonId?: string
+  /** PRD-B-101 备课语境·卷位序号（与 lessonId 必须同现，本批只定义） */
+  slotSeq?: number
 }
 
 // PRD-A-013 T2 — paperId 雪花 string

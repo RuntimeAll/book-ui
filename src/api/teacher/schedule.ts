@@ -109,6 +109,28 @@ export interface SegTemplateItem {
   topic: string
 }
 
+/**
+ * PRD-B-101 专项卷位（lesson.paper_slots / plan.default_paper_slots 同构）。
+ * 🔴 键名 snake_case（存 JSON 列 + BE 原样透传 Map，非 camelCase）。
+ * 每位可绑一张卷（paper_id）；rules/note 是老师侧元数据，不进卷面（家长/学生不可见）。
+ */
+export interface PaperSlot {
+  /** 卷位序号（课次内唯一，绑定/解绑端点按此定位） */
+  slot_seq: number
+  /** 卷位名（必填非空，如 概念辨析 / 课内同步；= 备课卷卷名的一部分） */
+  name: string
+  /** 出卷风格提示（如 选择为主…） */
+  style?: string
+  /** 组卷规则元数据（老师侧，不进卷面） */
+  rules?: string
+  /** 备注（口诀等，老师侧，不进卷面） */
+  note?: string
+  /** 绑定的卷 id（雪花 string；null/空 = 未绑空位） */
+  paper_id?: string | null
+  /** 手动「标记已备好」覆盖（课次级，任一卷位解绑自动清 false） */
+  manual_ready?: boolean
+}
+
 /** 备课包·段（question_id 一律 string 防雪花截尾） */
 export interface PackSeg {
   name: string
@@ -293,7 +315,13 @@ export interface PlanLessonVO {
   parentCopy?: string
   /** biz_subject id 数组 */
   kgNodeIds?: string[]
+  /** @deprecated PRD-B-101：段模型退役，页面不再消费；BE 仍回传兼容旧数据 */
   segTemplate?: SegTemplateItem[]
+  /** PRD-B-101 有效卷位（课次自有；未配则回退计划默认模板，读时回退不物理复制） */
+  paperSlots?: PaperSlot[]
+  /** PRD-B-101 true=当前 paperSlots 继承自计划默认模板（课次未单独配置） */
+  paperSlotsInherited?: boolean
+  /** 备课态（服务端唯一权威，PRD-B-101 换权威 = lesson.paper_slots 实时推导） */
   prepState: PrepState
 }
 
@@ -309,7 +337,10 @@ export interface PlanLessonBo {
   layerTarget?: string
   parentCopy?: string
   kgNodeIds?: string[]
+  /** @deprecated PRD-B-101：段模型退役，页面不再写；保留类型防旧调用编译报错 */
   segTemplate?: SegTemplateItem[]
+  /** PRD-B-101 专项卷位（写课次即覆盖继承的计划默认模板） */
+  paperSlots?: PaperSlot[]
 }
 
 /** 课程计划（biz_course_plan；GET plan/{id} 含 lessons 全量） */
@@ -323,7 +354,10 @@ export interface PlanVO {
   termTag: string
   year: number
   materialNote?: string
+  /** @deprecated PRD-B-101：段模型退役，页面不再消费 */
   defaultSegTemplate?: SegTemplateItem[]
+  /** PRD-B-101 计划级默认卷位模板（课次未单独配置时继承） */
+  defaultPaperSlots?: PaperSlot[]
   status: PlanStatus
   /** GET plan/{id} 全量返回 */
   lessons?: PlanLessonVO[]
@@ -343,7 +377,10 @@ export interface PlanBo {
   termTag: string
   year: number
   materialNote?: string
+  /** @deprecated PRD-B-101：段模型退役，页面不再写 */
   defaultSegTemplate?: SegTemplateItem[]
+  /** PRD-B-101 计划级默认卷位模板 */
+  defaultPaperSlots?: PaperSlot[]
   status?: PlanStatus
 }
 
@@ -664,6 +701,35 @@ export const reorderLessons = (planId: string, lessonIds: string[]) =>
 /** 家长版长图导出：POST plan/{id}/parent-export?targetId= → {file,url}（900px 两列长图） */
 export const parentExport = (planId: string, targetId: string) =>
   request.post<FileUrlVO, FileUrlVO>(`${BASE}/plan/${planId}/parent-export`, null, { params: { targetId } })
+
+// —— PRD-B-101 专项卷位·绑定/解绑/标记已备好 ——
+
+/** 卷位操作返回（bind/unbind/manual-ready 同构）：更新后卷位列表 + 推导备课态 */
+export interface SlotResult {
+  paperSlots: PaperSlot[]
+  prepState: PrepState
+}
+
+/**
+ * 绑定既有卷到卷位（D7 兜底：任意 mine 卷可挂）。
+ * POST plan/lesson/{lessonId}/slot/{slotSeq}/bind {paperId} → {paperSlots,prepState}（仅本人卷）。
+ */
+export const bindPaperSlot = (lessonId: string, slotSeq: number, paperId: string) =>
+  request.post<SlotResult, SlotResult>(`${BASE}/plan/lesson/${lessonId}/slot/${slotSeq}/bind`, { paperId })
+
+/**
+ * 解绑卷位（paper_id 置 null，卷留库不删）。🔴 自动清全课次 manual_ready（G5 反性）。
+ * POST plan/lesson/{lessonId}/slot/{slotSeq}/unbind → {paperSlots,prepState}。
+ */
+export const unbindPaperSlot = (lessonId: string, slotSeq: number) =>
+  request.post<SlotResult, SlotResult>(`${BASE}/plan/lesson/${lessonId}/slot/${slotSeq}/unbind`)
+
+/**
+ * 标记已备好 / 取消（manual_ready 覆盖，课次级）。0 卷位课次调用返 400。
+ * POST plan/lesson/{lessonId}/manual-ready {ready} → {paperSlots,prepState}。
+ */
+export const markLessonReady = (lessonId: string, ready: boolean) =>
+  request.post<SlotResult, SlotResult>(`${BASE}/plan/lesson/${lessonId}/manual-ready`, { ready })
 
 // —— 排课 ——
 
