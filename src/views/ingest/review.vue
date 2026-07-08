@@ -88,6 +88,31 @@ function parseOptions(raw: string | null): string[] {
   }
 }
 
+// 选项字母前缀（PRD-A-024 批2 scope④ / D7：仅渲染层加 A./B./C./D.，存储仍无前缀）
+function optionLetter(idx: number): string {
+  return idx < 26 ? `${String.fromCharCode(65 + idx)}.` : `${idx + 1}.`
+}
+
+// ── KG 锚定展示（PRD-A-024 批2 scope⑤）────────────────────────
+interface KpAnchor {
+  kpId: string
+  kpName: string
+  matchedName: string
+  stage: string
+  confidence: number
+  fallback: boolean
+}
+function parseAnchor(raw: string | null | undefined): KpAnchor | null {
+  if (!raw) return null
+  try {
+    const o = JSON.parse(raw)
+    if (o && typeof o === 'object' && o.kpId) return o as KpAnchor
+    return null
+  } catch {
+    return null
+  }
+}
+
 // ── 轮询 ────────────────────────────────────────────────────
 let timer: ReturnType<typeof setTimeout> | null = null
 let stopped = false
@@ -378,6 +403,22 @@ onBeforeUnmount(() => {
             <el-tag v-if="isCommitted(it)" type="success" size="small" round>
               已入库
             </el-tag>
+            <!-- KG 锚点（PRD-A-024 批2 scope⑤）：展示锚定节点名 + 置信度，兜底标灰 -->
+            <el-tooltip
+              v-if="parseAnchor(it.kpAnchorJson)"
+              :content="`考点：${parseAnchor(it.kpAnchorJson)!.kpName} → 锚定：${parseAnchor(it.kpAnchorJson)!.matchedName}（${parseAnchor(it.kpAnchorJson)!.stage}，置信度 ${parseAnchor(it.kpAnchorJson)!.confidence}）`"
+              placement="top"
+            >
+              <el-tag
+                :type="parseAnchor(it.kpAnchorJson)!.fallback ? 'info' : 'success'"
+                size="small"
+                effect="plain"
+                round
+                class="kp-anchor-tag"
+              >
+                {{ parseAnchor(it.kpAnchorJson)!.fallback ? '兜底' : '考点' }}：{{ parseAnchor(it.kpAnchorJson)!.matchedName }}
+              </el-tag>
+            </el-tooltip>
             <div class="item-head-ops">
               <el-button
                 v-if="!editing[String(it.id)]"
@@ -435,10 +476,11 @@ onBeforeUnmount(() => {
             <MarkdownMath :content="it.stemText || ''" />
           </div>
 
-          <!-- 选项 -->
+          <!-- 选项（PRD-A-024 批2 scope④/D7：渲染层加 A./B./C./D. 字母前缀，存储不变） -->
           <ul v-if="parseOptions(it.optionsJson).length > 0" class="item-options">
             <li v-for="(opt, idx) in parseOptions(it.optionsJson)" :key="idx">
-              <MarkdownMath :content="opt" />
+              <span class="opt-letter">{{ optionLetter(idx) }}</span>
+              <MarkdownMath :content="opt" class="opt-body" />
             </li>
           </ul>
 
@@ -640,6 +682,26 @@ onBeforeUnmount(() => {
 
 .item-options li {
   padding-left: 4px;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.opt-letter {
+  font-weight: 600;
+  color: #176e6e;
+  flex-shrink: 0;
+}
+
+.opt-body {
+  min-width: 0;
+}
+
+.kp-anchor-tag {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .item-answer-toggle {

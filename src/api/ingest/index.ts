@@ -527,6 +527,10 @@ export interface IngestJobItem {
   needReview: number
   itemStatus: IngestItemStatus
   committedQuestionId: string | number | null
+  /** 裁出题图 JSON 字符串（PRD-A-024 批1），需 JSON.parse */
+  figuresJson?: string | null
+  /** KG 锚定 JSON 字符串（PRD-A-024 批2）：{kpId,kpName,matchedName,stage,confidence,fallback}，需 JSON.parse */
+  kpAnchorJson?: string | null
 }
 
 /**
