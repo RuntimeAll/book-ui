@@ -50,15 +50,27 @@ import {
   type QuestionItem,
 } from '@/api/question/index'
 
-// ── localStorage keys ───────────────────────────────────────
+// ── localStorage keys（PRD-B-101 分仓：命名空间后缀）──────────
+//   default（日常仓）= 无后缀，与历史键完全兼容（老用户日常篮不丢）；
+//   语境仓（备课）= `:lesson:{id}:slot{n}` 后缀，与日常仓物理隔离。
 const LS_BASKET_IDS = 'book-ui:basket-ids'
 const LS_BASKET_CACHE = 'book-ui:basket-cache'
 
+// 当前命名空间（'default' | 'lesson:{id}:slot{n}'）——备课语境 store 通过 switchNamespace 切换。
+const _ns = ref('default')
+function idsKey(ns: string = _ns.value): string {
+  return ns === 'default' ? LS_BASKET_IDS : `${LS_BASKET_IDS}:${ns}`
+}
+function cacheKey(ns: string = _ns.value): string {
+  return ns === 'default' ? LS_BASKET_CACHE : `${LS_BASKET_CACHE}:${ns}`
+}
+
 // PRD-A-013 T2 — id 雪花全工程 string；LS 旧数据可能是 number 数组，
 // 解析时统一 String(...) 规范化保兼容（用户旧版升新版不丢篮）。
-function readBasketIdsFromStorage(): Set<string> {
+// PRD-B-101 — 读写按传入 key（分仓）；缺省 = 当前命名空间。
+function readBasketIdsFromStorage(key: string = idsKey()): Set<string> {
   try {
-    const raw = localStorage.getItem(LS_BASKET_IDS)
+    const raw = localStorage.getItem(key)
     if (!raw) return new Set()
     const arr: unknown[] = JSON.parse(raw)
     return new Set(Array.isArray(arr) ? arr.map((x) => String(x)) : [])
@@ -67,17 +79,17 @@ function readBasketIdsFromStorage(): Set<string> {
   }
 }
 
-function writeBasketIdsToStorage(ids: Set<string>) {
+function writeBasketIdsToStorage(ids: Set<string>, key: string = idsKey()) {
   try {
-    localStorage.setItem(LS_BASKET_IDS, JSON.stringify([...ids]))
+    localStorage.setItem(key, JSON.stringify([...ids]))
   } catch (e) {
     console.warn('[basket] localStorage write ids failed', e)
   }
 }
 
-function readBasketCacheFromStorage(): Map<string, QuestionItem> {
+function readBasketCacheFromStorage(key: string = cacheKey()): Map<string, QuestionItem> {
   try {
-    const raw = localStorage.getItem(LS_BASKET_CACHE)
+    const raw = localStorage.getItem(key)
     if (!raw) return new Map()
     const arr: [unknown, QuestionItem][] = JSON.parse(raw)
     if (!Array.isArray(arr)) return new Map()
@@ -88,9 +100,9 @@ function readBasketCacheFromStorage(): Map<string, QuestionItem> {
   }
 }
 
-function writeBasketCacheToStorage(cache: Map<string, QuestionItem>) {
+function writeBasketCacheToStorage(cache: Map<string, QuestionItem>, key: string = cacheKey()) {
   try {
-    localStorage.setItem(LS_BASKET_CACHE, JSON.stringify([...cache.entries()]))
+    localStorage.setItem(key, JSON.stringify([...cache.entries()]))
   } catch (e) {
     console.warn('[basket] localStorage write cache failed', e)
   }
@@ -98,11 +110,27 @@ function writeBasketCacheToStorage(cache: Map<string, QuestionItem>) {
 
 // ── module-scoped singleton state ───────────────────────────
 // PRD-A-013 T2 — Set/Map key 改 string（雪花 ID）
+// PRD-B-101 — 模块加载读 default 仓；语境切换后由 switchNamespace 重新水合。
 const _basketIds = ref<Set<string>>(readBasketIdsFromStorage())
 const _cache = new Map<string, QuestionItem>(readBasketCacheFromStorage())
 const _togglingIds: Set<string> = new Set()
 const _dialogVisible = ref(false)
 let _initialized = false
+
+/**
+ * 切换命名空间仓（PRD-B-101 分仓）。备课语境 store 调用：
+ *   开启/切卷位 → switchNamespace(`lesson:{id}:slot{n}`)；退出/完成/跨天 → switchNamespace('default')。
+ * 语义：把内存 state 重新水合成目标仓的 LS 内容（各仓 add/remove 独立持久，互不污染）。
+ * 幂等：切到当前仓 = no-op。当前仓的数据在 add/remove 时已持续 syncToStorage，切走不丢。
+ */
+function switchNamespace(ns: string) {
+  const target = ns || 'default'
+  if (_ns.value === target) return
+  _ns.value = target
+  _basketIds.value = readBasketIdsFromStorage(idsKey(target))
+  _cache.clear()
+  readBasketCacheFromStorage(cacheKey(target)).forEach((v, k) => _cache.set(k, v))
+}
 
 // ── 派生 ─────────────────────────────────────────────────────
 const _count = computed(() => _basketIds.value.size)
@@ -127,6 +155,7 @@ const _items = computed<QuestionItem[]>(() => {
 
 // ── 持久化 helper（每次 ids 变化触发） ───────────────────────
 function syncToStorage() {
+  // PRD-B-101 — 写当前命名空间仓（idsKey/cacheKey 缺省取 _ns）
   writeBasketIdsToStorage(_basketIds.value)
   // 只保留 basket 内的题目 cache（避免无限增长）
   // PRD-A-013 T2 — Map key string（雪花）
@@ -286,6 +315,7 @@ function reorder(orderedIds: string[]): void {
 async function clear(): Promise<void> {
   _basketIds.value = new Set()
   _cache.clear()
+  // PRD-B-101 — 只清当前命名空间仓（缺省 key = _ns），不波及其它仓
   writeBasketIdsToStorage(new Set())
   writeBasketCacheToStorage(new Map())
   ElMessage.success('已清空试题栏')
@@ -324,7 +354,10 @@ async function composeAndDownload(): Promise<void> {
     }
     localStorage.setItem('paperDraft', JSON.stringify(paperDraft))
     _dialogVisible.value = false
-    router.push('/papers/edit')
+    // PRD-B-101 — 直跳组卷工作台（/papers/edit 本就 redirect→workbench）。备课语境（若激活）
+    //   由全局 usePrepContextStore 承载、跨导航保持；工作台「创建试卷」按当前语境自动带
+    //   lessonId+slotSeq 并绑卷位。无语境时=日常组卷，行为不变。
+    router.push('/papers/workbench')
   } catch (e) {
     console.warn('[compose] composeAndDownload failed', e)
   }
@@ -352,6 +385,10 @@ export interface UseQuestionBasket {
   closeDialog: () => void
   syncFromServer: () => Promise<void>
   composeAndDownload: () => Promise<void>
+  /** PRD-B-101 当前命名空间仓（'default' | 'lesson:{id}:slot{n}'），只读 */
+  currentNamespace: Readonly<Ref<string>>
+  /** PRD-B-101 切换命名空间仓（备课语境 store 专用；幂等，切走不丢当前仓） */
+  switchNamespace: (ns: string) => void
 }
 
 export function useQuestionBasket(): UseQuestionBasket {
@@ -382,5 +419,7 @@ export function useQuestionBasket(): UseQuestionBasket {
     closeDialog,
     syncFromServer,
     composeAndDownload,
+    currentNamespace: _ns as Readonly<Ref<string>>,
+    switchNamespace,
   }
 }
