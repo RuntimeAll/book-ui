@@ -225,8 +225,19 @@ const router = createRouter({
             { path: 'schedule', name: 'ScheduleOverview', component: () => import('@/views/desk/schedule/index.vue') },
             { path: 'targets', name: 'TeachTargets', component: () => import('@/views/desk/targets/index.vue') },
             { path: 'plans', name: 'CoursePlans', component: () => import('@/views/desk/plans/index.vue') },
-            // 备课包：支持 ?lessonId= 直开构建器（批0 §六-1）
-            { path: 'prep', name: 'PrepPack', component: () => import('@/views/desk/prep/index.vue') },
+            // 🔴 PRD-B-101 V9/G9：备课材料页退役 → 重定向课程计划页（卷位清单取代其职责），
+            // 尽量透传 lessonId/planId/targetId 供课程计划页定位/展开对应课次（兜老书签/跳转）。
+            {
+              path: 'prep',
+              redirect: (to) => ({
+                path: '/desk/plans',
+                query: {
+                  ...(to.query.lessonId ? { lessonId: to.query.lessonId } : {}),
+                  ...(to.query.planId ? { planId: to.query.planId } : {}),
+                  ...(to.query.targetId ? { targetId: to.query.targetId } : {}),
+                },
+              }),
+            },
           ],
         },
         // PRD-C-207 退役：旧「讲义查看」单课时页 → 重定向到新讲义浏览器（兜老书签）
