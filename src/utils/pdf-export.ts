@@ -30,6 +30,8 @@ export interface PdfExportOptions {
   root: HTMLElement
   filename: string  // 不含 .pdf 后缀
   onProgress?: (msg: string) => void
+  /** 水印文案（老师名+脱敏手机号）；非空时每页合成平铺水印，与预览水印层同源。null/undefined = 不加水印 */
+  watermark?: string | null
 }
 
 // 🔴 用户铁则（2026-05-23）：绝对禁压缩图片质量 — scale=2 高分辨率 + PNG 无损（memory feedback_no_image_quality_compression）
@@ -52,8 +54,33 @@ async function waitAllImagesLoaded(root: HTMLElement): Promise<void> {
   )
 }
 
+// 在页 canvas 上平铺旋转水印（html2canvas 截不到预览水印层，故导出时在截图根之外合成，
+// 与预览 .pp-watermark 视觉参数对齐：14px CSS 字号 / -30° / teal 12% / ~300×220 CSS 网格）。
+function drawWatermark(canvas: HTMLCanvasElement, text: string): void {
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+  ctx.save()
+  ctx.font = `${Math.round(14 * SCALE)}px sans-serif`
+  ctx.fillStyle = 'rgba(30, 138, 138, 0.12)'
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'middle'
+  const stepX = 300 * SCALE
+  const stepY = 220 * SCALE
+  const angle = (-30 * Math.PI) / 180
+  for (let y = -stepY; y < canvas.height + stepY; y += stepY) {
+    for (let x = -stepX; x < canvas.width + stepX; x += stepX) {
+      ctx.save()
+      ctx.translate(x, y)
+      ctx.rotate(angle)
+      ctx.fillText(text, 0, 0)
+      ctx.restore()
+    }
+  }
+  ctx.restore()
+}
+
 export async function exportPaperToPdf(options: PdfExportOptions): Promise<void> {
-  const { root, filename, onProgress } = options
+  const { root, filename, onProgress, watermark } = options
 
   // 🔴 PRD-A-013 T4 (H-4)：jspdf + html2canvas 动态加载（首屏免背 530KB）。
   // Promise.all 并行下载两个 chunk（pdf-vendor 已被 vite manualChunks 合到一起，实际只 1 个 HTTP 请求）。
@@ -171,6 +198,8 @@ export async function exportPaperToPdf(options: PdfExportOptions): Promise<void>
     if (sliceCss <= 0) break
 
     const pageCanvas = renderPageCanvas(pageStartCss, pageEndCss)
+    // 水印合成到本页 canvas（截图根外部层，html2canvas 截不到，此处补上）
+    if (watermark) drawWatermark(pageCanvas, watermark)
     // 🔴 PNG 无损编码，禁压缩图片质量（memory feedback_no_image_quality_compression）
     const imgData = pageCanvas.toDataURL('image/png')
     const imgHeightMm = sliceCss * (contentWidthMm / rootWidthCss)
