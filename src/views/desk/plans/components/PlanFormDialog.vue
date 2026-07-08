@@ -16,10 +16,10 @@ import {
   type PlanBo,
   type TargetType,
   type TargetCardVO,
-  type SegTemplateItem,
+  type PaperSlot,
 } from '@/api/teacher/schedule'
 import { useDictStore } from '@/store/dict'
-import SegTemplateEditor from './SegTemplateEditor.vue'
+import PaperSlotsEditor from './PaperSlotsEditor.vue'
 
 const props = defineProps<{
   modelValue: boolean
@@ -60,7 +60,7 @@ interface FormState {
   termTag: string
   year: number
   materialNote: string
-  defaultSegTemplate: SegTemplateItem[]
+  defaultPaperSlots: PaperSlot[]
 }
 
 const form = reactive<FormState>({
@@ -70,7 +70,7 @@ const form = reactive<FormState>({
   termTag: '暑假',
   year: currentYear,
   materialNote: '',
-  defaultSegTemplate: [],
+  defaultPaperSlots: [],
 })
 
 const rules: FormRules<FormState> = {
@@ -118,7 +118,7 @@ watch(
       form.termTag = props.plan.termTag || '暑假'
       form.year = props.plan.year || currentYear
       form.materialNote = props.plan.materialNote || ''
-      form.defaultSegTemplate = (props.plan.defaultSegTemplate || []).map((s) => ({ ...s }))
+      form.defaultPaperSlots = (props.plan.defaultPaperSlots || []).map((s) => ({ ...s }))
       void loadTargetOptions(props.plan.targetType) // 编辑态只为回显归属名
     } else {
       form.name = ''
@@ -128,10 +128,10 @@ watch(
       form.termTag = '暑假'
       form.year = currentYear
       form.materialNote = ''
-      form.defaultSegTemplate = [
-        { name: '思维题', style: '开场1道·单点突破·一题一坑', topic: '' },
-        { name: '奥数专项', style: '书挑题·★分层', topic: '' },
-        { name: '课内同步', style: '收尾过关·简单不费脑', topic: '' },
+      form.defaultPaperSlots = [
+        { slot_seq: 1, name: '概念辨析', style: '选择/判断为主 · 单点突破', rules: '', note: '', paper_id: null, manual_ready: false },
+        { slot_seq: 2, name: '巩固提高', style: '解答为主 · 由浅入深', rules: '', note: '', paper_id: null, manual_ready: false },
+        { slot_seq: 3, name: '课内同步', style: '收尾过关 · 简单不费脑', rules: '', note: '', paper_id: null, manual_ready: false },
       ]
     }
   },
@@ -148,7 +148,7 @@ async function submit() {
     termTag: form.termTag,
     year: form.year,
     materialNote: form.materialNote.trim() || undefined,
-    defaultSegTemplate: form.defaultSegTemplate.length ? form.defaultSegTemplate : undefined,
+    defaultPaperSlots: form.defaultPaperSlots.length ? form.defaultPaperSlots : undefined,
   }
   submitting.value = true
   try {
@@ -215,10 +215,10 @@ async function submit() {
       <el-form-item label="素材说明">
         <el-input v-model="form.materialNote" maxlength="200" placeholder="如：学而思 36 周书 · 挑题制" />
       </el-form-item>
-      <el-form-item label="默认三段式">
+      <el-form-item label="默认卷位">
         <div class="seg-wrap">
-          <div class="seg-tip">课次未单独配置时继承此默认分段（段数 2-4）</div>
-          <SegTemplateEditor v-model="form.defaultSegTemplate" />
+          <div class="seg-tip">课次未单独配置卷位时继承此默认模板（绑定字段不在此编辑，绑卷走课次行）</div>
+          <PaperSlotsEditor v-model="form.defaultPaperSlots" />
         </div>
       </el-form-item>
     </el-form>

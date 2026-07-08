@@ -11,6 +11,7 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
+    AttachToLessonDialog: typeof import('./../components/business/PaperLibrary/AttachToLessonDialog.vue')['default']
     BaseButton: typeof import('./../components/BaseButton/index.vue')['default']
     ChapterPicker: typeof import('./../components/business/ChapterPicker/index.vue')['default']
     ContentWrap: typeof import('./../components/ContentWrap/index.vue')['default']

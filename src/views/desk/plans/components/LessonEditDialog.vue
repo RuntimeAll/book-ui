@@ -14,10 +14,10 @@ import {
   type PlanLessonVO,
   type PlanLessonBo,
   type LessonType,
-  type SegTemplateItem,
+  type PaperSlot,
 } from '@/api/teacher/schedule'
 import type { SubjectNode } from '@/api/question/index'
-import SegTemplateEditor from './SegTemplateEditor.vue'
+import PaperSlotsEditor from './PaperSlotsEditor.vue'
 import KgAnchorSelect from './KgAnchorSelect.vue'
 
 const props = defineProps<{
@@ -25,8 +25,8 @@ const props = defineProps<{
   planId: string
   /** null = 新增课次；非空 = 编辑该课次 */
   lesson: PlanLessonVO | null
-  /** 计划默认三段式（新增课次时 seed） */
-  defaultSegTemplate?: SegTemplateItem[]
+  /** 计划默认卷位模板（新增课次时 seed） */
+  defaultPaperSlots?: PaperSlot[]
   /** KG 章节树（父页统一加载注入） */
   kgTree?: SubjectNode[]
   kgLoading?: boolean
@@ -57,7 +57,7 @@ interface FormState {
   layerTarget: string
   parentCopy: string
   kgNodeIds: string[]
-  segTemplate: SegTemplateItem[]
+  paperSlots: PaperSlot[]
 }
 
 const form = reactive<FormState>({
@@ -69,7 +69,7 @@ const form = reactive<FormState>({
   layerTarget: '',
   parentCopy: '',
   kgNodeIds: [],
-  segTemplate: [],
+  paperSlots: [],
 })
 
 const rules: FormRules<FormState> = {
@@ -91,7 +91,8 @@ watch(
       form.layerTarget = l.layerTarget || ''
       form.parentCopy = l.parentCopy || ''
       form.kgNodeIds = (l.kgNodeIds || []).map(String)
-      form.segTemplate = (l.segTemplate || []).map((s) => ({ ...s }))
+      // 编辑态：课次自有卷位为准；若继承计划模板（inherited）则以模板 seed（编辑保存即物化为自有）
+      form.paperSlots = (l.paperSlots || []).map((s) => ({ ...s }))
     } else {
       form.title = ''
       form.lessonType = '0'
@@ -101,8 +102,8 @@ watch(
       form.layerTarget = ''
       form.parentCopy = ''
       form.kgNodeIds = []
-      // 新增课次继承计划默认三段式
-      form.segTemplate = (props.defaultSegTemplate || []).map((s) => ({ ...s }))
+      // 新增课次继承计划默认卷位模板
+      form.paperSlots = (props.defaultPaperSlots || []).map((s) => ({ ...s }))
     }
   },
 )
@@ -120,7 +121,7 @@ async function submit() {
     layerTarget: form.layerTarget.trim() || undefined,
     parentCopy: form.parentCopy.trim() || undefined,
     kgNodeIds: form.kgNodeIds.length ? form.kgNodeIds : undefined,
-    segTemplate: form.segTemplate.length ? form.segTemplate : undefined,
+    paperSlots: form.paperSlots.length ? form.paperSlots : undefined,
   }
   // 编辑态保留原 lessonSeq，新增态不传由服务端追加
   if (props.lesson) bo.lessonSeq = props.lesson.lessonSeq
@@ -185,10 +186,10 @@ async function submit() {
         />
       </el-form-item>
 
-      <el-form-item label="三段式">
+      <el-form-item label="专项卷位">
         <div class="seg-wrap">
-          <div class="seg-tip">留空则继承计划默认三段式；此处填写覆盖计划默认（段数 2-4）</div>
-          <SegTemplateEditor v-model="form.segTemplate" />
+          <div class="seg-tip">留空则继承计划默认卷位模板；此处配置覆盖计划默认（绑定字段不在此编辑，绑卷走课次行）</div>
+          <PaperSlotsEditor v-model="form.paperSlots" />
         </div>
       </el-form-item>
     </el-form>
