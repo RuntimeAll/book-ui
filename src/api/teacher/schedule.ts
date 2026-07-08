@@ -140,12 +140,7 @@ export interface PackSeg {
   note?: string
 }
 
-/**
- * 备课材料·产物（BUG-010 单文件契约）：整包 render = 单条 [{seg:'备课材料', file, pages}]
- * （三段拼一份 PDF、段间强制起新页）；segIndex 单段重渲时 seg=段名、同样单文件。
- * file=服务端相对路径（预览/下载走 downloadArtifact blob 通道）；url 已废弃（BE 不再返回），
- * 仅为兼容历史落库产物 JSON 保留可选位。
- */
+/** 备课产物记录（落库 JSON / 家长图产物元信息）；file=服务端相对路径，走 downloadArtifact blob 通道 */
 export interface PackArtifact {
   seg: string
   file: string
@@ -519,29 +514,11 @@ export interface PrepPackVO {
   updateTime?: string
 }
 
-/** 建备课包入参（planLessonId 与 sessionId 二选一，1:1 已存在则返已有） */
-export interface PrepPackCreateBo {
-  planLessonId?: string
-  sessionId?: string
-  segs: PackSeg[]
-}
-
 /** 备课包查询入参（lessonId | sessionId | packId 三选一） */
 export interface PrepPackQueryParams {
   lessonId?: string
   sessionId?: string
   packId?: string
-}
-
-/** 渲染入参（segIndex 省=全部段拼一份 PDF；markReady 全段成功后置双态已备好） */
-export interface PrepPackRenderBo {
-  segIndex?: number
-  markReady?: boolean
-}
-
-/** 渲染返回（BUG-010 单文件：artifacts 恒为单条） */
-export interface RenderResult {
-  artifacts: PackArtifact[]
 }
 
 // —— 回收与统计 ——
@@ -775,21 +752,9 @@ export const sessionUnlock = (id: string) =>
 
 // —— 备课包 ——
 
-/** 建备课包：POST prep-pack → {id}（1:1，已存在返已有） */
-export const createPrepPack = (bo: PrepPackCreateBo) =>
-  request.post<IdVO, IdVO>(`${BASE}/prep-pack`, bo)
-
-/** 查备课包：GET prep-pack?lessonId|sessionId|packId */
+/** 查备课包：GET prep-pack?lessonId|sessionId|packId（回收链 ReviewDialog 在用） */
 export const getPrepPack = (params: PrepPackQueryParams) =>
   request.get<PrepPackVO, PrepPackVO>(`${BASE}/prep-pack`, { params })
-
-/** 改段配置：PUT prep-pack/{id}/segs */
-export const updatePrepPackSegs = (id: string, segs: PackSeg[]) =>
-  request.put<void, void>(`${BASE}/prep-pack/${id}/segs`, { segs })
-
-/** 渲染出卷：POST prep-pack/{id}/render → {artifacts}（段无题整单 400 不出半卷） */
-export const renderPrepPack = (id: string, bo: PrepPackRenderBo = {}) =>
-  request.post<RenderResult, RenderResult>(`${BASE}/prep-pack/${id}/render`, bo)
 
 // —— 回收与统计 ——
 
