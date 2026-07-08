@@ -35,6 +35,7 @@ import { getCurrentUser } from '@/api/user'
 import { usePaperBasket } from '@/composables/usePaperBasket'
 import { useAbortableRequest } from '@/composables/useAbortableRequest'
 import { useLoginGuard } from '@/composables/useLoginGuard'
+import AttachToLessonDialog from './AttachToLessonDialog.vue'
 
 const props = defineProps<{
   /** PRD-C-212 增量：固定 scope 场景（卷库顶导航页 / 备课台我的卷库分区）；不传 = 现行为不变 */
@@ -61,6 +62,11 @@ const STAGE_GRADES: Record<number, number[]> = { 1: [1, 2, 3, 4, 5, 6], 2: [7, 8
 
 // ══ 选择状态 ════════════════════════════════════════════════
 const scope = ref<'public' | 'mine'>(props.mode === 'mine-only' ? 'mine' : 'public') // 类型
+// PRD-B-101：我的卷库·卷型 tab（'all'=全部含备课卷 / 'prep'=只备课卷 paper_kind='2'）。
+// 🔴 备课卷 tab 绕过年级/学科树（自建卷缺年级元数据会被树挡），直接查 mine+paperKind。
+const kindTab = ref<'all' | 'prep'>('all')
+const showKindTab = computed(() => scope.value === 'mine')
+const prepOnly = computed(() => scope.value === 'mine' && kindTab.value === 'prep')
 const subject = ref(1) // 学科（1数学 2科学）
 const stage = ref(2)   // 学段（1小学 2初中 3高中）
 const gradeCode = ref<number | null>(7) // 选中年级（null=走中考）
@@ -160,7 +166,18 @@ function applyFilter() {
 }
 
 // ══ 交互 ════════════════════════════════════════════════════
-function pickScope(s: 'public' | 'mine') { if (props.mode) return; scope.value = s; applyFilter() } // mode 固定时类型 seg 不渲染，此处兜底防误触
+function pickScope(s: 'public' | 'mine') { if (props.mode) return; scope.value = s; kindTab.value = 'all'; applyFilter() } // mode 固定时类型 seg 不渲染，此处兜底防误触
+// PRD-B-101 卷型 tab 切换（全部 / 备课卷）
+function pickKind(k: 'all' | 'prep') { if (kindTab.value === k) return; kindTab.value = k; pageParams.pageIndex = 1; fetchPapers() }
+
+// PRD-B-101 D7：把 mine 卷挂到课次卷位
+const attachVisible = ref(false)
+const attachPaper = ref<{ id: string; name: string } | null>(null)
+async function openAttach(item: PaperListItem) {
+  if (!(await ensureLogin())) return
+  attachPaper.value = { id: item.id, name: item.name }
+  attachVisible.value = true
+}
 function pickSubject(code: number) { subject.value = code; normalizeStageGrade(); applyFilter() }
 function pickStage(code: number) { stage.value = code; normalizeStageGrade(); applyFilter(); pickerOpen.value = false } // 选好学段收起前半截
 function pickGrade(g: number) {
@@ -204,9 +221,18 @@ async function fetchPapers() {
   listLoading.value = true
   searchLoading.value = true
   try {
+    // 备课卷 tab：绕过年级/学科树（subjectId 置空），加 paperKind='2'（仅 mine 生效）
+    const usePrep = prepOnly.value
     const result = await runAbortable((signal) =>
       getPaperPage(
-        { name: pageParams.name || '', subjectId: pageParams.subjectId || '', pageIndex: pageParams.pageIndex, pageSize: pageParams.pageSize, scope: scope.value },
+        {
+          name: pageParams.name || '',
+          subjectId: usePrep ? '' : pageParams.subjectId || '',
+          pageIndex: pageParams.pageIndex,
+          pageSize: pageParams.pageSize,
+          scope: scope.value,
+          ...(usePrep ? { paperKind: '2' as const } : {}),
+        },
         { signal },
       ),
     )
@@ -303,8 +329,19 @@ onMounted(async () => {
         <span class="n">{{ total }} 卷</span>
       </div>
       <div v-loading="treeLoading" class="dir-body">
+        <!-- PRD-B-101 卷型 tab（仅我的卷库）：全部 / 备课卷 -->
+        <div v-if="showKindTab" class="grp kind-grp">
+          <div class="grp-lab">卷型</div>
+          <div class="seg">
+            <button :class="{ on: kindTab === 'all' }" @click="pickKind('all')">全部</button>
+            <button :class="{ on: kindTab === 'prep' }" @click="pickKind('prep')">备课卷</button>
+          </div>
+        </div>
+        <!-- 备课卷 tab：绕过年级/学科树，按本人全部列出 -->
+        <div v-if="prepOnly" class="prep-note">备课卷按本人全部列出，不受年级/学科筛选</div>
+
         <!-- 当前选择 / 收放开关 -->
-        <div class="crumb" :class="{ open: pickerOpen }" @click="togglePicker">
+        <div v-show="!prepOnly" class="crumb" :class="{ open: pickerOpen }" @click="togglePicker">
           <div class="ico" :class="isSci ? 'sci' : 'math'">{{ crumbIco }}</div>
           <div class="txt">
             <div class="l1"><span class="main">{{ crumbMain }}</span><span class="ed">{{ crumbTag }}</span></div>
@@ -315,7 +352,7 @@ onMounted(async () => {
         </div>
 
         <!-- 收放筛选 -->
-        <div class="picker" :class="{ collapsed: !pickerOpen }">
+        <div v-show="!prepOnly" class="picker" :class="{ collapsed: !pickerOpen }">
         <div class="picker-in">
         <!-- 类型（mode 固定时不渲染切换段） -->
         <div v-if="!props.mode" class="grp">
@@ -342,9 +379,9 @@ onMounted(async () => {
         </div><!-- /picker-in -->
         </div><!-- /picker：收放只管 类型/学科/学段 -->
 
-        <!-- 年级/册/卷型：常驻不收（前面半截才收）-->
+        <!-- 年级/册/卷型：常驻不收（前面半截才收）；备课卷 tab 绕过树整体隐藏 -->
         <!-- 年级 大卡 + 中考专区 -->
-        <div class="grp">
+        <div v-show="!prepOnly" class="grp">
           <div class="grp-lab">年级（点选即定位）</div>
           <div class="grades">
             <div
@@ -364,7 +401,7 @@ onMounted(async () => {
           <div v-if="!stageHasData" class="stage-empty">该学段暂无卷（分类骨架待补）</div>
         </div>
         <!-- 册 -->
-        <div class="grp">
+        <div v-show="!prepOnly" class="grp">
           <div class="grp-lab">册</div>
           <div class="seg">
             <button :disabled="isExam || !volsAvail.has(1)" :class="{ on: !isExam && vol === 1 && volsAvail.has(1) }" @click="pickVol(1)">上册</button>
@@ -372,7 +409,7 @@ onMounted(async () => {
           </div>
         </div>
         <!-- 卷型 -->
-        <div class="grp" :class="{ dis: isExam || gradeCode == null }">
+        <div v-show="!prepOnly" class="grp" :class="{ dis: isExam || gradeCode == null }">
           <div class="grp-lab">卷型（可留空 = 该年级全部）</div>
           <div class="ptype">
             <div class="chip" :class="{ on: paperType === '' }" @click="pickPtype('')">全部</div>
@@ -419,6 +456,7 @@ onMounted(async () => {
             <div class="paper-card-actions">
               <el-link type="primary" :underline="false" @click="handleView(item)">查看</el-link>
               <el-link v-if="isOwner(item)" type="primary" :underline="false" @click="handleEdit(item)">编辑</el-link>
+              <el-link v-if="scope === 'mine' && isOwner(item)" type="primary" :underline="false" @click="openAttach(item)">挂到课次</el-link>
               <el-link v-if="isOwner(item)" type="danger" :underline="false" @click="handleDelete(item)">删除</el-link>
               <el-link :type="basket.basketIds.value.has(item.id) ? 'danger' : 'primary'" :underline="false" :disabled="basket.isLoading(item.id)" @click="handleToggleBasket(item)">
                 {{ basket.basketIds.value.has(item.id) ? '移出试卷篮' : '加入试卷篮' }}
@@ -448,6 +486,14 @@ onMounted(async () => {
         />
       </div>
     </section>
+
+    <!-- PRD-B-101 D7：挂到课次卷位 -->
+    <AttachToLessonDialog
+      v-if="attachPaper"
+      v-model="attachVisible"
+      :paper-id="attachPaper.id"
+      :paper-name="attachPaper.name"
+    />
   </div>
 </template>
 
@@ -481,6 +527,8 @@ onMounted(async () => {
 
 .grp { margin-bottom: 12px; }
 .grp.dis { opacity: .5; pointer-events: none; }
+.kind-grp { margin-bottom: 10px; }
+.prep-note { font-size: 11px; color: var(--bk-teal-deep); background: var(--bk-teal-soft); border-radius: 7px; padding: 7px 9px; margin-bottom: 11px; line-height: 1.5; }
 .grp-lab { font-size: 10px; font-weight: 700; letter-spacing: 1px; color: #7c8a90; text-transform: uppercase; margin-bottom: 6px; }
 .seg { display: flex; background: #eef2f2; border-radius: 8px; padding: 2px; gap: 2px; }
 .seg button { flex: 1; border: 0; background: transparent; font-size: 12.5px; font-weight: 600; color: #536268; padding: 7px 4px; border-radius: 6px; cursor: pointer; transition: .15s; }
