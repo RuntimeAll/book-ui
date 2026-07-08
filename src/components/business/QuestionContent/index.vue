@@ -4,10 +4,13 @@
  *
  * 判定链（用户拍板：能力判定，不按来源判定）：
  *   1. text 非空  → 富文本渲染（Markdown + KaTeX LaTeX）
- *   2. imgUrl 非空 → 图片（misikt 老题现状）
+ *   2. imgUrl 非空 → 图片（misikt 老题现状 / 录题裁图题的 stem_img_url）
  *   3. 都空       → 灰色占位"暂无内容"
  *
- * 未来同题两者都有时文本优先（此注释即为约定，不做切换按钮）。
+ * 🔴 PRD-A-024 批2·前端补尾：text 与 imgUrl 都有时**两者都渲染**（富文本在上、题图在下），
+ *   不再文本优先吞掉图 —— 录题裁图入库题带 stemText + stem_img_url，旧「文本 XOR 图」逻辑
+ *   会让真题图不可见（图存 biz_question_image/stem_img_url 却渲染不出）。仅增显本就该显的题图，
+ *   text-only 题（stem_img_url 为空，占绝大多数）行为零变化。
  *
  * 安全：text 路径的渲染结果经 v-safe-html 指令走 DOMPurify 白名单过滤，
  * 禁止裸 v-html。图片路径同原有组件行为：referrerpolicy + onerror 隐藏。
@@ -37,16 +40,13 @@ const props = withDefaults(
   },
 )
 
-// 判定链：text 非空 → 富文本；否则 imgUrl 非空 → 图片；都空 → 占位
-const mode = computed<'richtext' | 'image' | 'empty'>(() => {
-  if (props.text && props.text.trim().length > 0) return 'richtext'
-  if (props.imgUrl) return 'image'
-  return 'empty'
-})
+// 独立判定：有文本渲富文本，有图渲图，两者都有则都渲（PRD-A-024 批2·前端补尾）；都空占位。
+const hasText = computed<boolean>(() => !!props.text && props.text.trim().length > 0)
+const hasImg = computed<boolean>(() => !!props.imgUrl)
 
-// 富文本渲染（只在 mode=richtext 时计算）
+// 富文本渲染（只在有文本时计算）
 const renderedHtml = computed<string>(() => {
-  if (mode.value !== 'richtext') return ''
+  if (!hasText.value) return ''
   return renderRichText(props.text!)
 })
 
@@ -61,18 +61,19 @@ const imgStyle = computed(() => {
 <template>
   <!-- 富文本路径：v-safe-html 强制 DOMPurify 过滤，禁裸 v-html -->
   <div
-    v-if="mode === 'richtext'"
+    v-if="hasText"
     v-safe-html="renderedHtml"
     class="qc-richtext"
   />
 
-  <!-- 图片路径：misikt 老题，沿用原有行为 -->
+  <!-- 图片路径：misikt 老题（无文本）+ 录题裁图题（文本+图共显，图在文本下方） -->
   <img
-    v-else-if="mode === 'image'"
+    v-if="hasImg"
     :src="imgUrl!"
     :alt="alt"
     :style="imgStyle"
     class="qc-img"
+    :class="{ 'qc-img--after-text': hasText }"
     loading="lazy"
     referrerpolicy="no-referrer"
     @error="(e: Event) => ((e.target as HTMLImageElement).style.display = 'none')"
@@ -80,7 +81,7 @@ const imgStyle = computed(() => {
 
   <!-- 都空：灰色占位 -->
   <span
-    v-else
+    v-if="!hasText && !hasImg"
     class="qc-empty"
   >暂无内容</span>
 </template>
@@ -136,6 +137,11 @@ const imgStyle = computed(() => {
   height: auto;
   display: block;
   border-radius: 6px;
+}
+
+/* 文本+图共显时，题图与文本间留白（PRD-A-024 批2·前端补尾） */
+.qc-img--after-text {
+  margin-top: 8px;
 }
 
 /* ── 空占位 ── */
