@@ -43,11 +43,9 @@ const props = defineProps<{
   grouping?: boolean
   /**
    * 卷内大题分节（grouping=false 时生效）：按 count 顺序切分题目成组、组名=title，
-   * 与卷详情页 sections 同源（备课卷知识点分层导出）。缺省/单节 = 平铺不显节头。
+   * 与卷详情页 sections 同源（备课卷知识点分节导出）。缺省/单节 = 平铺不显节头。
    */
   sections?: { title: string; count: number }[]
-  /** 题号旁显示难度星标（★×difficult，difficult 为 0/空不显示）。缺省 false。 */
-  showDifficulty?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -120,6 +118,9 @@ const exporting = ref(false)
 const exportProgress = ref('')
 const showAnswer = ref(false)
 const showExplain = ref(false)
+// 难度星标（题号旁★×difficult）：🔴 默认关——交给学生的打印卷不带难度标记（内部信息），
+// 老师备课自查时手动勾选；勾选态跟随导出（所见即所得）
+const showDifficulty = ref(false)
 const questions = ref<QuestionDetail[]>([])
 const groups = ref<{ tagName: string; items: QuestionDetail[] }[]>([])
 const previewRoot = ref<HTMLElement | null>(null)
@@ -345,6 +346,7 @@ async function handleExportPdf() {
         <div class="pp-header-right">
           <el-checkbox v-model="showAnswer">显示答案</el-checkbox>
           <el-checkbox v-model="showExplain">显示解析</el-checkbox>
+          <el-checkbox v-model="showDifficulty">显示难度</el-checkbox>
           <span class="pp-wm-switch">
             <span class="pp-wm-label">水印</span>
             <el-switch v-model="watermark" size="small" />
@@ -631,12 +633,13 @@ async function handleExportPdf() {
   line-height: 1.8;       /* 与题干行高一致，号与题干首行顶对齐 */
 }
 
-/* 难度星标（题号旁，打印黑白可辨） */
+/* 难度星标（题号旁，默认隐藏、老师勾选后显示；小号浅灰上标风，不抢卷面） */
 .pp-q-diff {
-  margin-left: 4px;
-  font-size: 11px;
-  color: #4e5969;
-  letter-spacing: 1px;
+  margin-left: 3px;
+  font-size: 10px;
+  font-weight: 400;
+  color: #a9aeb8;
+  vertical-align: super;
 }
 
 .pp-q-content {

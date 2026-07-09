@@ -698,7 +698,6 @@ watch(paperId, async () => {
       :ids="exportQuestionIds"
       :grouping="false"
       :sections="exportSections"
-      :show-difficulty="true"
       @update:visible="previewVisible = $event"
     />
 
