@@ -122,7 +122,8 @@ const showExplain = ref(false)
 // 老师备课自查时手动勾选；勾选态跟随导出（所见即所得）
 const showDifficulty = ref(false)
 const questions = ref<QuestionDetail[]>([])
-const groups = ref<{ tagName: string; items: QuestionDetail[] }[]>([])
+// parent = 一级目录（section title 以 "父::子" 编码时拆出，仅备课卷两层目录场景非空）
+const groups = ref<{ tagName: string; parent?: string; items: QuestionDetail[] }[]>([])
 const previewRoot = ref<HTMLElement | null>(null)
 
 // 当前日期 YYYY-MM-DD
@@ -180,20 +181,42 @@ function groupByFreeTag(qs: QuestionDetail[]): { tagName: string; items: Questio
 }
 
 // 按卷内大题分节切分（grouping=false 场景）：sections 的 count 顺序切段、组名=title；
+// title 支持 "父::子" 两层目录编码（备课卷知识点→考点细分），拆出 parent 供模板渲染一级标题；
 // 无 sections / 单节 / count 总和对不上题数 → 退回单组平铺（防御 BE 数据漂移）
-function splitBySections(qs: QuestionDetail[]): { tagName: string; items: QuestionDetail[] }[] {
+function splitBySections(qs: QuestionDetail[]): { tagName: string; parent?: string; items: QuestionDetail[] }[] {
   const secs = props.sections ?? []
   const total = secs.reduce((sum, s) => sum + (s.count || 0), 0)
   if (secs.length <= 1 || total !== qs.length) {
     return [{ tagName: '全部', items: qs }]
   }
-  const result: { tagName: string; items: QuestionDetail[] }[] = []
+  const result: { tagName: string; parent?: string; items: QuestionDetail[] }[] = []
   let offset = 0
   for (const s of secs) {
-    result.push({ tagName: s.title, items: qs.slice(offset, offset + s.count) })
+    const sep = s.title.indexOf('::')
+    const parent = sep > 0 ? s.title.slice(0, sep) : undefined
+    const child = sep > 0 ? s.title.slice(sep + 2) : s.title
+    result.push({ tagName: child, parent, items: qs.slice(offset, offset + s.count) })
     offset += s.count
   }
   return result
+}
+
+/** 一级目录标题：本组 parent 与上一组不同才渲染（连续同父只显一次）；返回带中文序号的标题 */
+const CN_NUM = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十']
+function parentHeading(gIdx: number): string | null {
+  const cur = groups.value[gIdx]?.parent
+  if (!cur) return null
+  const prev = gIdx > 0 ? groups.value[gIdx - 1]?.parent : undefined
+  if (cur === prev) return null
+  // 数第几个不同的 parent，配中文序号
+  let ord = 0
+  let last: string | undefined
+  for (let i = 0; i <= gIdx; i++) {
+    const p = groups.value[i]?.parent
+    if (p && p !== last) ord++
+    last = p
+  }
+  return `${CN_NUM[ord - 1] ?? ord}、${cur}`
 }
 
 /** 难度星标（★×difficult，1-4；0/空返回空串不显示） */
@@ -387,8 +410,10 @@ async function handleExportPdf() {
           :key="`g-${gIdx}-${group.tagName}`"
           class="pp-group"
         >
+          <!-- 一级目录（"父::子"两层编码时；连续同父只显一次） -->
+          <h2 v-if="parentHeading(gIdx)" class="pp-parent-title">{{ parentHeading(gIdx) }}</h2>
           <!-- 单组（如卷库整卷无 freeTag → 全归"其他"）不显标题，避免冒出无意义的"其他"分段头 -->
-          <h3 v-if="groups.length > 1" class="pp-group-title">{{ group.tagName }}</h3>
+          <h3 v-if="groups.length > 1" class="pp-group-title" :class="{ 'pp-group-title--sub': group.parent }">{{ group.tagName }}</h3>
           <div
             v-for="(q, qIdx) in group.items"
             :key="q.id"
@@ -610,6 +635,25 @@ async function handleExportPdf() {
   padding-bottom: 8px;
   border-bottom: 2px solid #1E8A8A;
   margin: 0 0 16px;
+}
+
+/* 一级目录标题（两层目录卷：知识点章节级） */
+.pp-parent-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #1d2129;
+  padding-bottom: 10px;
+  border-bottom: 2px solid #1d2129;
+  margin: 8px 0 18px;
+}
+
+/* 二级考点小节头（有父级时降一档：小字号、细左标线，不再整条下划线） */
+.pp-group-title--sub {
+  font-size: 14px;
+  border-bottom: none;
+  border-left: 3px solid #1E8A8A;
+  padding: 2px 0 2px 8px;
+  margin: 0 0 12px;
 }
 
 .pp-question {

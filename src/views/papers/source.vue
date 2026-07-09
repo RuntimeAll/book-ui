@@ -159,6 +159,49 @@ function sectionLabel(index: number): string {
   return CN_NUM[index] ?? String(index + 1)
 }
 
+// ── 两层目录（section.title 支持 "父::子" 编码，备课卷知识点→考点细分）──
+/** 子标题（无 "::" 时即原 title） */
+function sectionChildTitle(title: string): string {
+  const sep = title.indexOf('::')
+  return sep > 0 ? title.slice(sep + 2) : title
+}
+/** 一级目录标题：本节 parent 与上一节不同才返回（连续同父只显一次），带中文序号 */
+function sectionParentHeading(sIdx: number): string | null {
+  const secs = detail.value?.sections ?? []
+  const parentOf = (i: number) => {
+    const t = secs[i]?.title ?? ''
+    const sep = t.indexOf('::')
+    return sep > 0 ? t.slice(0, sep) : undefined
+  }
+  const cur = parentOf(sIdx)
+  if (!cur) return null
+  if (sIdx > 0 && parentOf(sIdx - 1) === cur) return null
+  let ord = 0
+  let last: string | undefined
+  for (let i = 0; i <= sIdx; i++) {
+    const p = parentOf(i)
+    if (p && p !== last) ord++
+    last = p
+  }
+  return `${CN_NUM[ord - 1] ?? ord}、${cur}`
+}
+/** 二级序号：同父内的第几节（(一)(二)…）；无父时退回全局大题序号 */
+function sectionSubLabel(sIdx: number): string {
+  const secs = detail.value?.sections ?? []
+  const parentOf = (i: number) => {
+    const t = secs[i]?.title ?? ''
+    const sep = t.indexOf('::')
+    return sep > 0 ? t.slice(0, sep) : undefined
+  }
+  const cur = parentOf(sIdx)
+  if (!cur) return `${sectionLabel(sIdx)}、`
+  let n = 0
+  for (let i = 0; i <= sIdx; i++) {
+    if (parentOf(i) === cur) n++
+  }
+  return `（${CN_NUM[n - 1] ?? n}）`
+}
+
 // 单 section 总分
 function sectionTotalScore(section: PaperSectionVo): number {
   if (!section.questions) return 0
@@ -561,15 +604,17 @@ watch(paperId, async () => {
               </div>
             </div>
 
-            <!-- ══ 大题分组区 ══ -->
+            <!-- ══ 大题分组区（section.title 支持 "父::子" 两层目录编码）══ -->
             <section
               v-for="(section, sIdx) in detail.sections"
               :key="section.sectionId"
               class="paper-section"
             >
-              <!-- 大题标题 -->
+              <!-- 一级目录（知识点章节；连续同父只显一次） -->
+              <h2 v-if="sectionParentHeading(sIdx)" class="section-parent-title">{{ sectionParentHeading(sIdx) }}</h2>
+              <!-- 大题标题（两层时为考点子节） -->
               <h3 class="section-title">
-                {{ sectionLabel(sIdx) }}、{{ section.title }}
+                {{ sectionSubLabel(sIdx) }}{{ sectionChildTitle(section.title) }}
                 <span class="section-sub">（共 {{ section.questions?.length ?? 0 }} 题，共 {{ sectionTotalScore(section) }} 分）</span>
               </h3>
 
@@ -890,6 +935,18 @@ watch(paperId, async () => {
 /* ── 大题分组 ── */
 .paper-section {
   margin-bottom: 18px;
+}
+
+/* 一级目录标题（两层目录卷：知识点章节级） */
+.section-parent-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--bk-ink);
+  margin: 6px 0 10px;
+  padding: 10px 14px;
+  background: #fff;
+  border-left: 4px solid var(--bk-ink, #1d2129);
+  border-radius: 6px;
 }
 
 .section-title {
