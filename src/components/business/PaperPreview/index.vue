@@ -34,6 +34,13 @@ const props = defineProps<{
   initialShowAnswer?: boolean
   /** 打开时的初始"显示解析"勾选态（可选，默认 false）— Wave2b 工作台右栏联动 */
   initialShowExplain?: boolean
+  /**
+   * 是否按 freeTags[0].name 分组（试卷篮/工作台的攒题场景语义）。
+   * 🔴 整卷（卷库/备课卷）导出必须传 false：整卷题序 = 卷内 section 顺序，
+   * 按标签分组会把带"易错/新考法"等标签的题拽出原卷序（2026-07-09 备课卷导出乱序病根）。
+   * 缺省 true 保持试卷篮既有行为。
+   */
+  grouping?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -189,7 +196,11 @@ async function loadAndRender() {
     const raw = await questionListByIds(props.ids)
     const list: QuestionDetail[] = Array.isArray(raw) ? raw : []
     questions.value = reorderByIds(list, props.ids)
-    groups.value = groupByFreeTag(questions.value)
+    // grouping=false（整卷导出）→ 单组平铺按卷内题序；模板 groups.length>1 才显组标题，不会冒"其他"头
+    groups.value =
+      props.grouping === false
+        ? [{ tagName: '全部', items: questions.value }]
+        : groupByFreeTag(questions.value)
     await nextTick()
     if (previewRoot.value) {
       await typesetPaperPreview(previewRoot.value)
