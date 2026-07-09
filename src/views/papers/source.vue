@@ -109,6 +109,10 @@ const exportPaperName = computed(() => detail.value?.paperName || '试卷')
 // 按卷内大题顺序 flatten 的题目 id（= 导出/预览显示顺序）
 // PRD-A-013 T2 — 雪花 string[]
 const exportQuestionIds = computed<string[]>(() => allQuestions.value.map((q) => q.id))
+// 卷内大题分节（导出分层标题用，与详情 sections 同源；单节时 PaperPreview 自动平铺）
+const exportSections = computed<{ title: string; count: number }[]>(
+  () => (detail.value?.sections ?? []).map((s) => ({ title: s.title, count: (s.questions || []).length })),
+)
 
 async function handleExportPaper() {
   // 审计 P0②：游客点导出会打开预览弹窗但内部接口 401，呈现"坏掉的空窗"——先拦登录
@@ -693,6 +697,8 @@ watch(paperId, async () => {
       :paper-name="exportPaperName"
       :ids="exportQuestionIds"
       :grouping="false"
+      :sections="exportSections"
+      :show-difficulty="true"
       @update:visible="previewVisible = $event"
     />
 

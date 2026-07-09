@@ -41,6 +41,13 @@ const props = defineProps<{
    * 缺省 true 保持试卷篮既有行为。
    */
   grouping?: boolean
+  /**
+   * 卷内大题分节（grouping=false 时生效）：按 count 顺序切分题目成组、组名=title，
+   * 与卷详情页 sections 同源（备课卷知识点分层导出）。缺省/单节 = 平铺不显节头。
+   */
+  sections?: { title: string; count: number }[]
+  /** 题号旁显示难度星标（★×difficult，difficult 为 0/空不显示）。缺省 false。 */
+  showDifficulty?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -171,6 +178,29 @@ function groupByFreeTag(qs: QuestionDetail[]): { tagName: string; items: Questio
   return result
 }
 
+// 按卷内大题分节切分（grouping=false 场景）：sections 的 count 顺序切段、组名=title；
+// 无 sections / 单节 / count 总和对不上题数 → 退回单组平铺（防御 BE 数据漂移）
+function splitBySections(qs: QuestionDetail[]): { tagName: string; items: QuestionDetail[] }[] {
+  const secs = props.sections ?? []
+  const total = secs.reduce((sum, s) => sum + (s.count || 0), 0)
+  if (secs.length <= 1 || total !== qs.length) {
+    return [{ tagName: '全部', items: qs }]
+  }
+  const result: { tagName: string; items: QuestionDetail[] }[] = []
+  let offset = 0
+  for (const s of secs) {
+    result.push({ tagName: s.title, items: qs.slice(offset, offset + s.count) })
+    offset += s.count
+  }
+  return result
+}
+
+/** 难度星标（★×difficult，1-4；0/空返回空串不显示） */
+function difficultyStars(q: QuestionDetail): string {
+  const d = Number(q.difficult) || 0
+  return d >= 1 && d <= 4 ? '★'.repeat(d) : ''
+}
+
 // 全卷连续序号 — 给每 group items 顺次编号（不是组内编号）
 function globalIndex(groupIdx: number, itemIdx: number): number {
   let count = 0
@@ -196,11 +226,13 @@ async function loadAndRender() {
     const raw = await questionListByIds(props.ids)
     const list: QuestionDetail[] = Array.isArray(raw) ? raw : []
     questions.value = reorderByIds(list, props.ids)
-    // grouping=false（整卷导出）→ 单组平铺按卷内题序；模板 groups.length>1 才显组标题，不会冒"其他"头
-    groups.value =
-      props.grouping === false
-        ? [{ tagName: '全部', items: questions.value }]
-        : groupByFreeTag(questions.value)
+    // grouping=false（整卷导出）→ 有 sections 按卷内大题切分（知识点分层），否则单组平铺；
+    // 模板 groups.length>1 才显组标题，单组不会冒"其他"头
+    if (props.grouping === false) {
+      groups.value = splitBySections(questions.value)
+    } else {
+      groups.value = groupByFreeTag(questions.value)
+    }
     await nextTick()
     if (previewRoot.value) {
       await typesetPaperPreview(previewRoot.value)
@@ -361,7 +393,7 @@ async function handleExportPdf() {
             class="pp-question"
           >
             <!-- 题号（全卷连续序号，不显示题型标签）= flex 行左列 -->
-            <span class="pp-q-no">{{ globalIndex(gIdx, qIdx) }}.</span>
+            <span class="pp-q-no">{{ globalIndex(gIdx, qIdx) }}.<template v-if="showDifficulty && difficultyStars(q)"><span class="pp-q-diff">{{ difficultyStars(q) }}</span></template></span>
             <!-- 内容列（题干/答案/解析）= flex 行右列，与题号顶对齐，消除号与题干错位 -->
             <div class="pp-q-content">
 
@@ -597,6 +629,14 @@ async function handleExportPdf() {
   color: #1d2129;
   font-size: 15px;
   line-height: 1.8;       /* 与题干行高一致，号与题干首行顶对齐 */
+}
+
+/* 难度星标（题号旁，打印黑白可辨） */
+.pp-q-diff {
+  margin-left: 4px;
+  font-size: 11px;
+  color: #4e5969;
+  letter-spacing: 1px;
 }
 
 .pp-q-content {
