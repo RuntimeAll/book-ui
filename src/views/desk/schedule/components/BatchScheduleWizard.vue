@@ -107,6 +107,22 @@ const rhythms = ref<Rhythm[]>([{ weekday: 1, start: '18:00', end: '19:30' }])
 const dateRange = ref<[string, string] | null>(null)
 const excludeDates = ref<string[]>([])
 
+// 排课方式：每周节奏（规则型）/ 指定日期（不规则排期直选具体日子，BUG修复：周节奏表达不了「同周几不同时段」）
+const mode = ref<'rhythm' | 'dates'>('rhythm')
+interface DateGroup {
+  dates: string[] // 多选日期
+  start: string
+  end: string
+}
+const dateGroups = ref<DateGroup[]>([{ dates: [], start: '18:30', end: '20:30' }])
+
+function addDateGroup() {
+  dateGroups.value.push({ dates: [], start: '13:30', end: '15:30' })
+}
+function removeDateGroup(i: number) {
+  dateGroups.value.splice(i, 1)
+}
+
 function addRhythm() {
   rhythms.value.push({ weekday: 1, start: '18:00', end: '19:30' })
 }
@@ -135,6 +151,22 @@ function fmtDate(d: Date): string {
 
 async function generatePreview() {
   preview.value = []
+  if (mode.value === 'dates') {
+    const groups = dateGroups.value.filter((g) => g.dates.length)
+    if (!groups.length) {
+      ElMessage.warning('请至少点选一个日期')
+      return false
+    }
+    for (const g of groups) {
+      if (!g.start || !g.end || g.end <= g.start) {
+        ElMessage.warning('请给每组日期填好起止时间（结束需晚于开始）')
+        return false
+      }
+    }
+    return finishPreview(
+      groups.flatMap((g) => g.dates.map((d) => ({ date: d, start: g.start, end: g.end }))),
+    )
+  }
   if (!dateRange.value || !dateRange.value[0] || !dateRange.value[1]) {
     ElMessage.warning('请先选择日期范围')
     return false
@@ -169,6 +201,11 @@ async function generatePreview() {
     }
     cur.setDate(cur.getDate() + 1)
   }
+  return finishPreview(items)
+}
+
+/** 生成收尾（两种模式共用）：排序 + 编号 + 课次标题顺绑。 */
+function finishPreview(items: { date: string; start: string; end: string }[]): boolean {
   items.sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start))
   preview.value = items.map((it, i) => ({
     key: `${it.date}-${it.start}-${i}`,
@@ -179,6 +216,19 @@ async function generatePreview() {
     title: selectedPlanId.value ? planLessons.value[i]?.title : undefined,
   }))
   return preview.value.length > 0
+}
+
+/** 预览页手动补一场（生成后发现漏了某天，不用回上一步重生成）。 */
+function addPreviewRow() {
+  const last = preview.value[preview.value.length - 1]
+  preview.value.push({
+    key: `manual-${Date.now()}-${preview.value.length}`,
+    date: '',
+    start: last?.start || '18:30',
+    end: last?.end || '20:30',
+    seq: preview.value.length + 1,
+    title: selectedPlanId.value ? planLessons.value[preview.value.length]?.title : undefined,
+  })
 }
 
 function removePreview(i: number) {
@@ -236,6 +286,11 @@ async function submit() {
     ElMessage.warning('没有可提交的场次')
     return
   }
+  const bad = preview.value.find((p) => !p.date || !p.start || !p.end || p.end <= p.start)
+  if (bad) {
+    ElMessage.warning(`第 ${bad.seq} 次的日期/时间未填好（结束需晚于开始）`)
+    return
+  }
   submitting.value = true
   try {
     const bo = buildBo(false)
@@ -289,6 +344,8 @@ function reset() {
   rhythms.value = [{ weekday: 1, start: '18:00', end: '19:30' }]
   dateRange.value = null
   excludeDates.value = []
+  mode.value = 'rhythm'
+  dateGroups.value = [{ dates: [], start: '18:30', end: '20:30' }]
   preview.value = []
   conflicts.value = []
   conflictVisible.value = false
@@ -373,6 +430,47 @@ watch(
     <!-- 步骤二 -->
     <div v-show="step === 1" class="bw-panel">
       <div class="bw-field">
+        <label class="bw-label">排课方式</label>
+        <el-radio-group v-model="mode">
+          <el-radio-button value="rhythm">每周节奏</el-radio-button>
+          <el-radio-button value="dates">指定日期</el-radio-button>
+        </el-radio-group>
+        <p class="bw-mode-tip">
+          {{ mode === 'rhythm' ? '规则排期：每周固定周几上课，按日期范围批量生成' : '不规则排期：直接点选具体日子，同组日期共用一个时段，可加多组' }}
+        </p>
+      </div>
+      <div v-show="mode === 'dates'" class="bw-field">
+        <label class="bw-label">日期组（点选日子 + 起止时段，可多组）<span class="bw-req">*</span></label>
+        <div v-for="(g, i) in dateGroups" :key="i" class="bw-dgroup">
+          <el-date-picker
+            v-model="g.dates"
+            type="dates"
+            value-format="YYYY-MM-DD"
+            placeholder="点选这组时段要上课的日子（可多选）"
+            style="flex: 1; min-width: 0"
+          />
+          <el-time-picker
+            v-model="g.start"
+            value-format="HH:mm"
+            format="HH:mm"
+            placeholder="开始"
+            style="width: 108px"
+          />
+          <span class="bw-dash">–</span>
+          <el-time-picker
+            v-model="g.end"
+            value-format="HH:mm"
+            format="HH:mm"
+            placeholder="结束"
+            style="width: 108px"
+          />
+          <el-button v-if="dateGroups.length > 1" link type="danger" @click="removeDateGroup(i)">
+            删除
+          </el-button>
+        </div>
+        <el-button link type="primary" @click="addDateGroup">+ 加一组（不同时段）</el-button>
+      </div>
+      <div v-show="mode === 'rhythm'" class="bw-field">
         <label class="bw-label">默认节奏（周几 + 起止时段，可多条）</label>
         <div v-for="(r, i) in rhythms" :key="i" class="bw-rhythm">
           <el-select v-model="r.weekday" style="width: 100px">
@@ -409,7 +507,7 @@ watch(
         </div>
         <el-button link type="primary" @click="addRhythm">+ 加一条节奏</el-button>
       </div>
-      <div class="bw-field">
+      <div v-show="mode === 'rhythm'" class="bw-field">
         <label class="bw-label">日期范围<span class="bw-req">*</span></label>
         <el-date-picker
           v-model="dateRange"
@@ -421,7 +519,7 @@ watch(
           style="width: 100%"
         />
       </div>
-      <div class="bw-field">
+      <div v-show="mode === 'rhythm'" class="bw-field">
         <label class="bw-label">排除日期（节假日等，可空）</label>
         <el-date-picker
           v-model="excludeDates"
@@ -468,6 +566,7 @@ watch(
           <span class="bw-ptitle">{{ p.title || (selectedPlanId ? '（无对应课次）' : '散课') }}</span>
           <el-button link type="danger" size="small" @click="removePreview(i)">删除</el-button>
         </div>
+        <el-button link type="primary" class="bw-addrow" @click="addPreviewRow">+ 添加一场</el-button>
       </div>
       <el-empty v-else description="没有可预览的场次" />
     </div>
@@ -517,6 +616,20 @@ watch(
 <style scoped>
 .bw-steps {
   margin-bottom: 20px;
+}
+.bw-mode-tip {
+  font-size: 12px;
+  color: #8ba09a;
+  margin: 6px 0 0;
+}
+.bw-dgroup {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.bw-addrow {
+  margin-top: 6px;
 }
 .bw-panel {
   display: flex;
