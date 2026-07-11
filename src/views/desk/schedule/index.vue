@@ -663,7 +663,8 @@ onMounted(() => {
 }
 .sc-cal-head {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  /* minmax(0,1fr)：钉死 7 列等宽，长内容不许撑爆列（1fr 的隐式 min=内容宽会挤裁最右列） */
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   border-bottom: 1px solid var(--bk-line);
 }
 .sc-cal-head div {
@@ -676,7 +677,7 @@ onMounted(() => {
 }
 .sc-cal-body {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  grid-template-columns: repeat(7, minmax(0, 1fr));
 }
 .sc-cell {
   min-height: 104px;
