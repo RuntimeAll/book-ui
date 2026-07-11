@@ -393,6 +393,8 @@ export interface SessionBatchItem {
   date: string
   start: string
   end: string
+  /** 学科码（字典 biz_edu_subject，可空=沿计划/对象兜底） */
+  subject?: string
   planLessonId?: string
   sessionType?: SessionType
   externalTitle?: string
@@ -469,6 +471,9 @@ export interface CalendarSessionVO {
   /** planLesson 标题 */
   lessonTitle?: string
   externalTitle?: string
+  /** 学科码（兜底链 场次→计划→对象，BE 已解好） */
+  subject?: string
+  subjectLabel?: string
 }
 
 /** 月历查询入参 */
