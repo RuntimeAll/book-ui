@@ -130,6 +130,8 @@ const sheetRange = ref<[Date, Date]>([
 ])
 
 const WEEK_FULL = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六']
+// 内容列智能显隐：只有存在真实课次标题时才显示（散排单不显示无意义的「正课」列）
+const sheetHasContent = computed(() => sheetRows.value.some((r) => r.content))
 
 /** 组学生排课单数据：按用户选定的月份范围，范围内有课的月份全部纳入 */
 async function buildStudentSheet(targetId: string, name: string, from: Date, to: Date): Promise<boolean> {
@@ -180,7 +182,8 @@ async function buildStudentSheet(targetId: string, name: string, from: Date, to:
     weekLabel: WEEK_FULL[new Date(s.sessionDate + 'T00:00:00').getDay()],
     timeLabel: `${(s.startTime || '').slice(0, 5)} - ${(s.endTime || '').slice(0, 5)}`,
     subjectLabel: s.subjectLabel || '',
-    content: s.lessonTitle || SESSION_TYPE_LABEL[s.sessionType],
+    // 只吃真实课次标题；BE 无课次时 lessonTitle 返「正课/测试」占位词，一并过滤（散排单不出废话列）
+    content: s.lessonTitle && !['正课', '测试'].includes(s.lessonTitle) ? s.lessonTitle : '',
     monthKey: s.sessionDate.slice(0, 7),
   }))
   sheetMonths.value = months
@@ -818,14 +821,14 @@ onMounted(() => {
               <th style="width: 130px">日期</th>
               <th style="width: 110px">星期</th>
               <th style="width: 160px">时间</th>
-              <th style="width: 110px">科目</th>
-              <th>内容</th>
+              <th :style="sheetHasContent ? 'width: 110px' : ''">科目</th>
+              <th v-if="sheetHasContent">内容</th>
             </tr>
           </thead>
           <tbody>
             <template v-for="m in sheetMonths" :key="m.key">
               <tr class="sh-msep">
-                <td colspan="6">{{ m.short }}</td>
+                <td :colspan="sheetHasContent ? 6 : 5">{{ m.short }}</td>
               </tr>
               <tr v-for="r in sheetRows.filter((x) => x.monthKey === m.key)" :key="r.seq">
                 <td>{{ r.seq }}</td>
@@ -833,7 +836,7 @@ onMounted(() => {
                 <td>{{ r.weekLabel }}</td>
                 <td class="sh-time">{{ r.timeLabel }}</td>
                 <td>{{ r.subjectLabel || '—' }}</td>
-                <td class="sh-content">{{ r.content }}</td>
+                <td v-if="sheetHasContent" class="sh-content">{{ r.content }}</td>
               </tr>
             </template>
           </tbody>
