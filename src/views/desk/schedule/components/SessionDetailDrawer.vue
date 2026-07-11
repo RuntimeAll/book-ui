@@ -96,6 +96,12 @@ const rescheduling = ref(false)
 const reDate = ref('')
 const reStart = ref('')
 const reEnd = ref('')
+// 改期外置常驻：与原值一致时保存置灰（避免无效提交）
+const reChanged = computed(() => {
+  const st = props.session
+  if (!st) return false
+  return reDate.value !== st.date || reStart.value !== st.start || reEnd.value !== st.end
+})
 
 watch(
   () => props.session,
@@ -205,6 +211,11 @@ async function toggleLock() {
   }
 }
 
+// 2026-07-11 先隐藏的按钮（标记已上/请假/锁定内容）对应处理函数保留，恢复按钮即可用
+void doLeave
+void doMarkDone
+void toggleLock
+
 async function submitReschedule() {
   if (!props.session) return
   if (!reDate.value || !reStart.value || !reEnd.value) {
@@ -271,17 +282,20 @@ async function submitReschedule() {
           <dt>备课</dt>
           <dd>{{ PREP_STATUS_LABEL[session.prepStatus] }}</dd>
         </div>
+        <!-- 2026-07-11 用户拍板先隐藏：内容锁（散排用不上，恢复删本注释）
         <div v-if="session.planLessonId">
           <dt>内容锁</dt>
-          <dd :title="'锁定后请假顺延时保持本场绑定的课次内容不被前移替换'">{{ locked ? '已锁定' : '未锁定' }}</dd>
+          <dd>{{ locked ? '已锁定' : '未锁定' }}</dd>
         </div>
+        -->
       </dl>
 
       <!-- PRD-B-101 V5：去备课（跳课程计划页定位课次 · 卷位清单）-->
       <el-button type="primary" class="sd-goprep" :disabled="busy" @click="goPrep">去备课</el-button>
 
       <!-- 改期子表单 -->
-      <div v-if="rescheduling" class="sd-reform">
+      <!-- 改期外置常驻（2026-07-11：少点一次，直接改日期/时段→保存） -->
+      <div class="sd-reform">
         <div class="sd-reform-t">改期</div>
         <el-date-picker
           v-model="reDate"
@@ -308,35 +322,34 @@ async function submitReschedule() {
           />
         </div>
         <div class="sd-reform-btns">
-          <el-button size="small" @click="rescheduling = false">取消</el-button>
-          <el-button size="small" type="primary" :loading="busy" @click="submitReschedule">
+          <el-button
+            size="small"
+            type="primary"
+            :loading="busy"
+            :disabled="!!disableReason || !reChanged"
+            :title="disableReason"
+            @click="submitReschedule"
+          >
             保存改期
           </el-button>
         </div>
       </div>
 
-      <!-- 操作组：sessionStatus 非'0'（已排）时禁用，title 给禁用原因 -->
-      <div v-else class="sd-actions">
-        <el-button :disabled="busy || !!disableReason" :title="disableReason" @click="rescheduling = true">
-          改期
-        </el-button>
-        <el-button :disabled="busy || !!disableReason" :title="disableReason" @click="doMarkDone">
-          标记已上
-        </el-button>
+      <!-- 操作组（2026-07-11 用户拍板：标记已上/请假/锁定内容先隐藏——散排用不上；恢复删注释） -->
+      <div class="sd-actions">
+        <!--
+        <el-button :disabled="busy || !!disableReason" :title="disableReason" @click="doMarkDone">标记已上</el-button>
         <el-button :disabled="busy || !!disableReason" :title="disableReason" @click="doLeave">请假</el-button>
-        <el-button
-          v-if="session.planLessonId"
-          :disabled="busy || !!disableReason"
-          :title="disableReason || '锁定后请假顺延时保持本场课次内容不被前移替换'"
-          @click="toggleLock"
-        >
+        <el-button v-if="session.planLessonId" :disabled="busy || !!disableReason" @click="toggleLock">
           {{ locked ? '解锁内容' : '锁定内容' }}
         </el-button>
+        -->
         <el-button
           :disabled="busy || !!disableReason"
           :title="disableReason"
           type="danger"
           plain
+          class="sd-cancel-btn"
           @click="doCancel"
         >
           取消场次
@@ -436,5 +449,9 @@ async function submitReschedule() {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+.sd-cancel-btn {
+  grid-column: 1 / -1;
+  width: 100%;
 }
 </style>
