@@ -93,11 +93,106 @@ function visibleEvents(cell: Cell): CalEvent[] {
 
 // ── 导出日历图片（发家长）────────────────────────────────────────
 // 🔴 家长可见物红线：导出图自动隐藏备课状态点/备课图例（内部信息），并展开全部格子不藏场次。
+// 分流：筛「全部」= 整月月历大图；筛到单个学生 = 「学生排课单」（列表 + 迷你月历红标有课日）。
 const exporting = ref(false)
 const calRef = ref<HTMLElement | null>(null)
 
+// ── 学生排课单（单人导出视图）────────────────────────────────────
+interface SheetRow {
+  seq: number
+  dateLabel: string // 7月14日
+  weekLabel: string // 星期二
+  timeLabel: string // 13:30 - 15:30
+  content: string // 课次标题 / 正课
+  monthKey: string // '2026-07'
+}
+interface SheetMonth {
+  key: string // '2026-07'
+  label: string // 2026年 7月
+  short: string // 7 月
+  leadBlanks: number // 1号前空格数
+  days: number
+  courseDays: Set<number>
+}
+const sheetVisible = ref(false)
+const sheetRows = ref<SheetRow[]>([])
+const sheetMonths = ref<SheetMonth[]>([])
+const sheetTitle = ref('')
+const sheetSubtitle = ref('')
+const sheetRef = ref<HTMLElement | null>(null)
+// 导出前先选月份范围（默认当前显示月 ~ 下月）
+const sheetPickVisible = ref(false)
+const sheetRange = ref<[Date, Date]>([
+  new Date(year.value, month.value - 1, 1),
+  new Date(year.value, month.value, 1),
+])
+
+const WEEK_FULL = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六']
+
+/** 组学生排课单数据：按用户选定的月份范围，范围内有课的月份全部纳入 */
+async function buildStudentSheet(targetId: string, name: string, from: Date, to: Date): Promise<boolean> {
+  const start = fmtDate(new Date(from.getFullYear(), from.getMonth(), 1))
+  const end = fmtDate(new Date(to.getFullYear(), to.getMonth() + 1, 0))
+  let sessions: CalendarSessionVO[] = []
+  try {
+    const data = await getCalendar({ start, end, targetId })
+    sessions = Array.isArray(data) ? data : []
+  } catch (e) {
+    console.warn('[schedule] 学生排课单拉取失败', e)
+    return false
+  }
+  // 家长单只列真上的课：排除已取消/请假/外部占位
+  const rows = sessions
+    .filter((s) => s.sessionType !== '3' && s.sessionStatus !== '2' && s.sessionStatus !== '3')
+    .sort((a, b) => (a.sessionDate + a.startTime).localeCompare(b.sessionDate + b.startTime))
+  if (!rows.length) return false
+  const byMonth = new Map<string, CalendarSessionVO[]>()
+  for (const s of rows) {
+    const k = s.sessionDate.slice(0, 7)
+    ;(byMonth.get(k) || byMonth.set(k, []).get(k)!).push(s)
+  }
+  // 选定范围内逐月扫，有课的月份进单
+  const months: SheetMonth[] = []
+  const keep = new Set<string>()
+  const nMonths =
+    (to.getFullYear() - from.getFullYear()) * 12 + (to.getMonth() - from.getMonth()) + 1
+  for (let i = 0; i < nMonths; i++) {
+    const d = new Date(from.getFullYear(), from.getMonth() + i, 1)
+    const k = fmtDate(d).slice(0, 7)
+    if (!byMonth.has(k)) continue
+    keep.add(k)
+    months.push({
+      key: k,
+      label: `${d.getFullYear()}年 ${d.getMonth() + 1}月`,
+      short: `${d.getMonth() + 1} 月`,
+      leadBlanks: d.getDay(),
+      days: new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate(),
+      courseDays: new Set(byMonth.get(k)!.map((s) => Number(s.sessionDate.slice(8, 10)))),
+    })
+  }
+  if (!months.length) return false
+  const flat = rows.filter((s) => keep.has(s.sessionDate.slice(0, 7)))
+  sheetRows.value = flat.map((s, i) => ({
+    seq: i + 1,
+    dateLabel: `${Number(s.sessionDate.slice(5, 7))}月${Number(s.sessionDate.slice(8, 10))}日`,
+    weekLabel: WEEK_FULL[new Date(s.sessionDate + 'T00:00:00').getDay()],
+    timeLabel: `${(s.startTime || '').slice(0, 5)} - ${(s.endTime || '').slice(0, 5)}`,
+    content: s.lessonTitle || SESSION_TYPE_LABEL[s.sessionType],
+    monthKey: s.sessionDate.slice(0, 7),
+  }))
+  sheetMonths.value = months
+  sheetTitle.value = `${name} 排课表`
+  const times = new Set(sheetRows.value.map((r) => r.timeLabel))
+  sheetSubtitle.value = times.size === 1 ? `上课时间统一为 ${[...times][0]}` : ''
+  return true
+}
+
 async function exportImage() {
   if (exporting.value) return
+  // 分流：筛到单个学生 → 学生排课单；否则整月月历
+  if (activeTargetId.value !== 'all') {
+    return exportStudentSheet()
+  }
   exporting.value = true
   const el = calRef.value
   // 🔴 确定性导出宽度：截图瞬间把日历卡固定成 1400px 再截，
@@ -302,6 +397,56 @@ function evtStyle(e: CalEvent) {
     }
   }
   return { background: tint(e.color, 0.12), color: e.color, borderLeftColor: e.color }
+}
+
+/** 导出学生排课单第一步：先弹月份范围选择（默认当前月~下月） */
+function exportStudentSheet() {
+  sheetRange.value = [new Date(year.value, month.value - 1, 1), new Date(year.value, month.value, 1)]
+  sheetPickVisible.value = true
+}
+
+/** 第二步：按选定月份组数据 → 渲染隐藏排课单 DOM → html2canvas 定宽截图 */
+async function confirmSheetExport() {
+  const chip = objectChips.value.find((c) => c.id === activeTargetId.value)
+  if (!chip) return
+  const [from, to] = sheetRange.value || []
+  if (!from || !to) return ElMessage.warning('请选择月份范围')
+  sheetPickVisible.value = false
+  exporting.value = true
+  try {
+    const ok = await buildStudentSheet(chip.id, chip.name, from, to)
+    if (!ok) {
+      ElMessage.warning('该学生在所选月份没有已排的课，无可导出')
+      return
+    }
+    sheetVisible.value = true
+    await nextTick() // 等排课单 DOM 渲染
+    const el = sheetRef.value
+    if (!el) return
+    const { default: html2canvas } = await import('html2canvas')
+    const canvas = await html2canvas(el, {
+      backgroundColor: '#ffffff',
+      scale: 2,
+      width: 1400,
+      height: el.scrollHeight,
+      windowWidth: 1500,
+    })
+    const a = document.createElement('a')
+    a.href = canvas.toDataURL('image/png')
+    const rangeTag =
+      from.getMonth() === to.getMonth() && from.getFullYear() === to.getFullYear()
+        ? `${from.getMonth() + 1}月`
+        : `${from.getMonth() + 1}月-${to.getMonth() + 1}月`
+    a.download = `课表-${chip.name}-${rangeTag}.png`
+    a.click()
+    ElMessage.success('排课单已导出')
+  } catch (e) {
+    console.warn('[schedule] 学生排课单导出失败', e)
+    ElMessage.error('导出失败，请重试')
+  } finally {
+    sheetVisible.value = false
+    exporting.value = false
+  }
 }
 
 // ── FP10 接下来 7 天 ────────────────────────────────────────────
@@ -619,6 +764,66 @@ onMounted(() => {
             批量排课提交前自动检查两类冲突：<b>老师撞场</b>（我的两场课时间重叠）与<b>学生撞场</b
             >（学生自己的外部日程重叠）。命中冲突会弹窗列明细，可选择避开或仍然保存。
           </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- 学生排课单·月份范围选择 -->
+    <el-dialog v-model="sheetPickVisible" title="导出排课单 · 选择月份" width="400px">
+      <el-date-picker
+        v-model="sheetRange"
+        type="monthrange"
+        range-separator="至"
+        start-placeholder="起始月"
+        end-placeholder="结束月"
+        style="width: 100%"
+      />
+      <template #footer>
+        <el-button @click="sheetPickVisible = false">取消</el-button>
+        <el-button type="primary" :loading="exporting" @click="confirmSheetExport">导出</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 学生排课单（导出用，仅截图瞬间挂载，固定 1400px） -->
+    <div v-if="sheetVisible" ref="sheetRef" class="sh-sheet">
+      <div class="sh-title">{{ sheetTitle }}</div>
+      <div v-if="sheetSubtitle" class="sh-sub">{{ sheetSubtitle }}</div>
+      <div class="sh-cols">
+        <table class="sh-table">
+          <thead>
+            <tr>
+              <th style="width: 64px">序号</th>
+              <th style="width: 130px">日期</th>
+              <th style="width: 110px">星期</th>
+              <th style="width: 160px">时间</th>
+              <th>内容</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template v-for="m in sheetMonths" :key="m.key">
+              <tr class="sh-msep">
+                <td colspan="5">{{ m.short }}</td>
+              </tr>
+              <tr v-for="r in sheetRows.filter((x) => x.monthKey === m.key)" :key="r.seq">
+                <td>{{ r.seq }}</td>
+                <td>{{ r.dateLabel }}</td>
+                <td>{{ r.weekLabel }}</td>
+                <td class="sh-time">{{ r.timeLabel }}</td>
+                <td class="sh-content">{{ r.content }}</td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+        <div class="sh-cals">
+          <div v-for="m in sheetMonths" :key="m.key" class="sh-cal">
+            <div class="sh-cal-title">{{ m.label }}</div>
+            <div class="sh-cal-grid">
+              <span v-for="(w, wi) in ['日', '一', '二', '三', '四', '五', '六']" :key="w" class="sh-wd" :class="{ red: wi === 0 || wi === 6 }">{{ w }}</span>
+              <span v-for="b in m.leadBlanks" :key="'b' + b" />
+              <span v-for="d in m.days" :key="d" class="sh-day" :class="{ on: m.courseDays.has(d) }">{{ d }}</span>
+            </div>
+          </div>
+          <div class="sh-legend"><span class="sh-legend-sw" /> 红色 = 有课日</div>
         </div>
       </div>
     </div>
@@ -956,6 +1161,117 @@ onMounted(() => {
   font-weight: 800;
   color: var(--bk-ink);
   text-align: center;
+}
+
+/* ── 学生排课单（导出视图，截图瞬间挂载在固定层） ── */
+.sh-sheet {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 1400px;
+  z-index: 3000;
+  background: #fff;
+  padding: 28px 32px 24px;
+  font-variant-numeric: tabular-nums;
+  color: #1f2d2a;
+}
+.sh-title {
+  font-size: 30px;
+  font-weight: 800;
+  text-align: center;
+  margin-bottom: 6px;
+}
+.sh-sub {
+  font-size: 16px;
+  color: #5f716d;
+  text-align: center;
+  margin-bottom: 16px;
+}
+.sh-cols {
+  display: grid;
+  grid-template-columns: 1fr 420px;
+  gap: 28px;
+  align-items: start;
+}
+.sh-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 16px;
+}
+.sh-table th,
+.sh-table td {
+  border: 1px solid #9fb3ad;
+  padding: 7px 10px;
+  text-align: center;
+}
+.sh-table th {
+  background: #3f5f9b;
+  color: #fff;
+  font-weight: 700;
+}
+.sh-msep td {
+  background: #dfe5f2;
+  font-weight: 800;
+  letter-spacing: 0.3em;
+}
+.sh-table tbody tr:nth-child(even) td {
+  background: #f6f8fb;
+}
+.sh-content {
+  text-align: left;
+}
+.sh-cal {
+  border: 1px solid #c4d0cb;
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+.sh-cal-title {
+  background: #dfe5f2;
+  font-size: 17px;
+  font-weight: 800;
+  text-align: center;
+  padding: 7px 0;
+}
+.sh-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  padding: 6px 8px 10px;
+  row-gap: 2px;
+}
+.sh-wd,
+.sh-day {
+  text-align: center;
+  font-size: 15px;
+  line-height: 32px;
+}
+.sh-wd {
+  font-weight: 700;
+  color: #5f716d;
+}
+.sh-wd.red {
+  color: #b91c1c;
+}
+.sh-day.on {
+  background: #f6c6c8;
+  color: #b91c1c;
+  font-weight: 800;
+  border-radius: 6px;
+}
+.sh-legend {
+  font-size: 15px;
+  font-weight: 700;
+  color: #b91c1c;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sh-legend-sw {
+  width: 14px;
+  height: 14px;
+  background: #f6c6c8;
+  border: 1px solid #b91c1c;
+  border-radius: 3px;
 }
 .sc-cal-foot {
   display: flex;
