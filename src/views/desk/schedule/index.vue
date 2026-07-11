@@ -12,19 +12,26 @@
  * 枚举中文一律走 schedule.ts 的 *_LABEL 映射。
  */
 import { computed, nextTick, onMounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import {
+  batchSchedule,
+  conflictCheck,
   getCalendar,
   getPrepTodo,
+  pageTargets,
   PREP_STATUS_LABEL,
   SESSION_TYPE_LABEL,
+  TARGET_TYPE_LABEL,
 } from '@/api/teacher/schedule'
 import type {
   CalendarSessionVO,
   PrepTodoVO,
   PrepStatus,
+  SessionBatchBo,
   SessionStatus,
   SessionType,
+  TargetCardVO,
+  TargetType,
 } from '@/api/teacher/schedule'
 import BatchScheduleWizard from './components/BatchScheduleWizard.vue'
 import SessionDetailDrawer from './components/SessionDetailDrawer.vue'
@@ -372,6 +379,76 @@ function openFromTodo(t: PrepTodoVO) {
 
 const wizardVisible = ref(false)
 
+// ── 单天快捷排课（格子 hover 出 + 号 → 给该天加一节课）────────────
+const quickVisible = ref(false)
+const quickDate = ref('') // 'YYYY-MM-DD'
+const quickSaving = ref(false)
+const quickForm = ref({ targetKey: '', start: '', end: '', note: '' })
+const quickTargets = ref<TargetCardVO[]>([])
+const quickTargetsLoaded = ref(false)
+
+const quickDateLabel = computed(() =>
+  quickDate.value ? `${Number(quickDate.value.slice(5, 7))} 月 ${Number(quickDate.value.slice(8, 10))} 日` : '',
+)
+
+async function openQuickAdd(day: number | null) {
+  if (day === null) return
+  quickDate.value = fmtDate(new Date(year.value, month.value - 1, day))
+  quickForm.value = { targetKey: '', start: '', end: '', note: '' }
+  quickVisible.value = true
+  if (!quickTargetsLoaded.value) {
+    try {
+      const res = await pageTargets({})
+      quickTargets.value = (res?.rows || []).filter((t) => t.archived !== '1')
+      quickTargetsLoaded.value = true
+    } catch (e) {
+      console.warn('[schedule] pageTargets 失败', e)
+    }
+  }
+}
+
+/** 提交：冲突预检 → 有冲突弹确认（可强存）→ batchSchedule 单条 */
+async function submitQuickAdd() {
+  const f = quickForm.value
+  if (!f.targetKey) return ElMessage.warning('请选择排课对象')
+  if (!f.start || !f.end) return ElMessage.warning('请选择开始和结束时间')
+  if (f.end <= f.start) return ElMessage.warning('结束时间需晚于开始时间')
+  const [targetType, targetId] = f.targetKey.split(':') as [TargetType, string]
+  const bo: SessionBatchBo = {
+    targetType,
+    targetId,
+    autoBind: true,
+    items: [{ date: quickDate.value, start: f.start, end: f.end, note: f.note || undefined }],
+  }
+  quickSaving.value = true
+  try {
+    const check = await conflictCheck(bo)
+    if (check?.conflicts?.length) {
+      const lines = check.conflicts
+        .slice(0, 3)
+        .map((c) => `${c.kind}（${c.start}-${c.end} 与「${c.withTitle}」重叠）`)
+        .join('；')
+      await ElMessageBox.confirm(`该时段有冲突：${lines}。仍要保存吗？`, '排课冲突', {
+        confirmButtonText: '仍然保存',
+        cancelButtonText: '换个时间',
+        type: 'warning',
+      })
+      bo.force = true
+    }
+    await batchSchedule(bo)
+    ElMessage.success('已排课')
+    quickVisible.value = false
+    refreshAll()
+  } catch (e) {
+    if (e !== 'cancel') {
+      console.warn('[schedule] 单天排课失败', e)
+      ElMessage.error('排课失败，请重试')
+    }
+  } finally {
+    quickSaving.value = false
+  }
+}
+
 function refreshAll() {
   fetchCalendar()
   fetchTodo()
@@ -451,6 +528,14 @@ onMounted(() => {
             :class="{ off: cell.day === null, today: cell.isToday }"
           >
             <template v-if="cell.day !== null">
+              <button
+                class="sc-add"
+                type="button"
+                :title="`给 ${month} 月 ${cell.day} 日排课`"
+                @click.stop="openQuickAdd(cell.day)"
+              >
+                <el-icon><Plus /></el-icon>
+              </button>
               <div class="sc-dnum">
                 <span v-if="cell.isToday">{{ cell.day }}</span>
                 <template v-else>{{ cell.day }}</template>
@@ -537,6 +622,50 @@ onMounted(() => {
         </div>
       </div>
     </div>
+
+    <!-- 单天快捷排课弹窗 -->
+    <el-dialog v-model="quickVisible" :title="`给 ${quickDateLabel} 排课`" width="420px">
+      <el-form label-width="72px" @submit.prevent>
+        <el-form-item label="排课对象" required>
+          <el-select v-model="quickForm.targetKey" placeholder="选择学生 / 班级" style="width: 100%">
+            <el-option
+              v-for="t in quickTargets"
+              :key="t.id"
+              :label="`${t.name}（${t.grade || TARGET_TYPE_LABEL[t.targetType]}）`"
+              :value="`${t.targetType}:${t.id}`"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="时间" required>
+          <div style="display: flex; gap: 8px; align-items: center; width: 100%">
+            <el-time-select
+              v-model="quickForm.start"
+              start="07:00"
+              end="22:00"
+              step="00:15"
+              placeholder="开始"
+              style="flex: 1"
+            />
+            <span style="color: #8ba09a">—</span>
+            <el-time-select
+              v-model="quickForm.end"
+              :start="quickForm.start || '07:00'"
+              end="22:30"
+              step="00:15"
+              placeholder="结束"
+              style="flex: 1"
+            />
+          </div>
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="quickForm.note" placeholder="可选" maxlength="50" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="quickVisible = false">取消</el-button>
+        <el-button type="primary" :loading="quickSaving" @click="submitQuickAdd">保存</el-button>
+      </template>
+    </el-dialog>
 
     <!-- FP9 批量排课向导 -->
     <BatchScheduleWizard v-model:visible="wizardVisible" @submitted="refreshAll" />
@@ -681,11 +810,36 @@ onMounted(() => {
 }
 .sc-cell {
   min-height: 104px;
-  /* 样式修：格线加深（原 #eef3f1 太浅不明显） */
-  border-top: 1px solid #c9d6d2;
-  border-left: 1px solid #c9d6d2;
+  /* 样式修：格线加深二档（#eef3f1 → #c9d6d2 → #a9bcb6） */
+  border-top: 1px solid #a9bcb6;
+  border-left: 1px solid #a9bcb6;
   padding: 7px 7px 8px;
   position: relative;
+}
+/* 单天排课 + 号：hover 格子才显现，左上角 */
+.sc-add {
+  position: absolute;
+  top: 5px;
+  left: 5px;
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 6px;
+  background: var(--bk-teal);
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s;
+  z-index: 1;
+}
+.sc-cell:hover .sc-add {
+  opacity: 1;
+}
+.sc-add:hover {
+  filter: brightness(1.1);
 }
 .sc-cal-body .sc-cell:nth-child(7n + 1) {
   border-left: none;
@@ -792,7 +946,8 @@ onMounted(() => {
 /* ── 导出图片模式：隐藏内部信息（备课状态点/备课图例/展开按钮），家长可见物红线 ── */
 .sc-cal.exporting .sc-pdot,
 .sc-cal.exporting .sc-lg-prep,
-.sc-cal.exporting .sc-evt-more {
+.sc-cal.exporting .sc-evt-more,
+.sc-cal.exporting .sc-add {
   display: none;
 }
 .sc-export-title {
