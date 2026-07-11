@@ -16,7 +16,6 @@ import {
   sessionMarkDone,
   sessionLock,
   sessionUnlock,
-  SESSION_TYPE_LABEL,
   SESSION_STATUS_LABEL,
   PREP_STATUS_LABEL,
 } from '@/api/teacher/schedule'
@@ -38,6 +37,8 @@ export interface DrawerSession {
   sessionType: SessionType
   sessionStatus?: SessionStatus
   prepStatus: PrepStatus
+  /** 学科标签（数学/科学…，BE 兜底链解好） */
+  subjectLabel?: string
   title?: string
   lessonLocked?: string
   /** PRD-B-101：去备课定位用（跳课程计划页展开对应课次） */
@@ -75,6 +76,16 @@ function goPrep() {
     from: 'schedule',
   })
 }
+
+// 头部副标题：真实课次标题(过滤「正课/测试」占位词) → 科目 → 测试类型提示 → 空
+const headSubtitle = computed(() => {
+  const st = props.session
+  if (!st) return ''
+  const t = st.title && !['正课', '测试'].includes(st.title) ? st.title : ''
+  if (t) return st.subjectLabel ? `${st.subjectLabel} · ${t}` : t
+  if (st.sessionType === '2') return st.subjectLabel ? `${st.subjectLabel} · 测试` : '测试'
+  return st.subjectLabel || ''
+})
 
 // 本地锁定态（数据源可能不带 lessonLocked）
 const locked = ref(false)
@@ -234,7 +245,7 @@ async function submitReschedule() {
         <span class="sd-swatch" :style="{ background: session.color }" />
         <div>
           <div class="sd-name">{{ session.targetName || '未命名对象' }}</div>
-          <div class="sd-title">{{ session.title || SESSION_TYPE_LABEL[session.sessionType] }}</div>
+          <div class="sd-title">{{ headSubtitle }}</div>
         </div>
       </div>
 
@@ -249,8 +260,8 @@ async function submitReschedule() {
           <dd>{{ session.start }} – {{ session.end }}</dd>
         </div>
         <div>
-          <dt>类型</dt>
-          <dd>{{ SESSION_TYPE_LABEL[session.sessionType] }}</dd>
+          <dt>科目</dt>
+          <dd>{{ session.subjectLabel || '—' }}</dd>
         </div>
         <div v-if="session.sessionStatus">
           <dt>状态</dt>
@@ -260,9 +271,9 @@ async function submitReschedule() {
           <dt>备课</dt>
           <dd>{{ PREP_STATUS_LABEL[session.prepStatus] }}</dd>
         </div>
-        <div>
+        <div v-if="session.planLessonId">
           <dt>内容锁</dt>
-          <dd>{{ locked ? '已锁定' : '未锁定' }}</dd>
+          <dd :title="'锁定后请假顺延时保持本场绑定的课次内容不被前移替换'">{{ locked ? '已锁定' : '未锁定' }}</dd>
         </div>
       </dl>
 
@@ -313,7 +324,12 @@ async function submitReschedule() {
           标记已上
         </el-button>
         <el-button :disabled="busy || !!disableReason" :title="disableReason" @click="doLeave">请假</el-button>
-        <el-button :disabled="busy || !!disableReason" :title="disableReason" @click="toggleLock">
+        <el-button
+          v-if="session.planLessonId"
+          :disabled="busy || !!disableReason"
+          :title="disableReason || '锁定后请假顺延时保持本场课次内容不被前移替换'"
+          @click="toggleLock"
+        >
           {{ locked ? '解锁内容' : '锁定内容' }}
         </el-button>
         <el-button

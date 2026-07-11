@@ -578,6 +578,8 @@ export interface PrepTodoVO {
   prepStatus: PrepStatus
   planLessonId?: string
   lessonTitle?: string
+  subject?: string
+  subjectLabel?: string
 }
 
 /** 私有题池检索入参（GET /teacher/question/pool，create_by=我 且 is_public=0） */
