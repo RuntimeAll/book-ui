@@ -34,6 +34,18 @@ const props = defineProps<{
   initialShowAnswer?: boolean
   /** 打开时的初始"显示解析"勾选态（可选，默认 false）— Wave2b 工作台右栏联动 */
   initialShowExplain?: boolean
+  /**
+   * 是否按 freeTags[0].name 分组（试卷篮/工作台的攒题场景语义）。
+   * 🔴 整卷（卷库/备课卷）导出必须传 false：整卷题序 = 卷内 section 顺序，
+   * 按标签分组会把带"易错/新考法"等标签的题拽出原卷序（2026-07-09 备课卷导出乱序病根）。
+   * 缺省 true 保持试卷篮既有行为。
+   */
+  grouping?: boolean
+  /**
+   * 卷内大题分节（grouping=false 时生效）：按 count 顺序切分题目成组、组名=title，
+   * 与卷详情页 sections 同源（备课卷知识点分节导出）。缺省/单节 = 平铺不显节头。
+   */
+  sections?: { title: string; count: number }[]
 }>()
 
 const emit = defineEmits<{
@@ -106,8 +118,12 @@ const exporting = ref(false)
 const exportProgress = ref('')
 const showAnswer = ref(false)
 const showExplain = ref(false)
+// 难度星标（题号旁★×difficult）：🔴 默认关——交给学生的打印卷不带难度标记（内部信息），
+// 老师备课自查时手动勾选；勾选态跟随导出（所见即所得）
+const showDifficulty = ref(false)
 const questions = ref<QuestionDetail[]>([])
-const groups = ref<{ tagName: string; items: QuestionDetail[] }[]>([])
+// parent = 一级目录（section title 以 "父::子" 编码时拆出，仅备课卷两层目录场景非空）
+const groups = ref<{ tagName: string; parent?: string; items: QuestionDetail[] }[]>([])
 const previewRoot = ref<HTMLElement | null>(null)
 
 // 当前日期 YYYY-MM-DD
@@ -164,6 +180,51 @@ function groupByFreeTag(qs: QuestionDetail[]): { tagName: string; items: Questio
   return result
 }
 
+// 按卷内大题分节切分（grouping=false 场景）：sections 的 count 顺序切段、组名=title；
+// title 支持 "父::子" 两层目录编码（备课卷知识点→考点细分），拆出 parent 供模板渲染一级标题；
+// 无 sections / 单节 / count 总和对不上题数 → 退回单组平铺（防御 BE 数据漂移）
+function splitBySections(qs: QuestionDetail[]): { tagName: string; parent?: string; items: QuestionDetail[] }[] {
+  const secs = props.sections ?? []
+  const total = secs.reduce((sum, s) => sum + (s.count || 0), 0)
+  if (secs.length <= 1 || total !== qs.length) {
+    return [{ tagName: '全部', items: qs }]
+  }
+  const result: { tagName: string; parent?: string; items: QuestionDetail[] }[] = []
+  let offset = 0
+  for (const s of secs) {
+    const sep = s.title.indexOf('::')
+    const parent = sep > 0 ? s.title.slice(0, sep) : undefined
+    const child = sep > 0 ? s.title.slice(sep + 2) : s.title
+    result.push({ tagName: child, parent, items: qs.slice(offset, offset + s.count) })
+    offset += s.count
+  }
+  return result
+}
+
+/** 一级目录标题：本组 parent 与上一组不同才渲染（连续同父只显一次）；返回带中文序号的标题 */
+const CN_NUM = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十']
+function parentHeading(gIdx: number): string | null {
+  const cur = groups.value[gIdx]?.parent
+  if (!cur) return null
+  const prev = gIdx > 0 ? groups.value[gIdx - 1]?.parent : undefined
+  if (cur === prev) return null
+  // 数第几个不同的 parent，配中文序号
+  let ord = 0
+  let last: string | undefined
+  for (let i = 0; i <= gIdx; i++) {
+    const p = groups.value[i]?.parent
+    if (p && p !== last) ord++
+    last = p
+  }
+  return `${CN_NUM[ord - 1] ?? ord}、${cur}`
+}
+
+/** 难度星标（★×difficult，1-4；0/空返回空串不显示） */
+function difficultyStars(q: QuestionDetail): string {
+  const d = Number(q.difficult) || 0
+  return d >= 1 && d <= 4 ? '★'.repeat(d) : ''
+}
+
 // 全卷连续序号 — 给每 group items 顺次编号（不是组内编号）
 function globalIndex(groupIdx: number, itemIdx: number): number {
   let count = 0
@@ -189,7 +250,13 @@ async function loadAndRender() {
     const raw = await questionListByIds(props.ids)
     const list: QuestionDetail[] = Array.isArray(raw) ? raw : []
     questions.value = reorderByIds(list, props.ids)
-    groups.value = groupByFreeTag(questions.value)
+    // grouping=false（整卷导出）→ 有 sections 按卷内大题切分（知识点分层），否则单组平铺；
+    // 模板 groups.length>1 才显组标题，单组不会冒"其他"头
+    if (props.grouping === false) {
+      groups.value = splitBySections(questions.value)
+    } else {
+      groups.value = groupByFreeTag(questions.value)
+    }
     await nextTick()
     if (previewRoot.value) {
       await typesetPaperPreview(previewRoot.value)
@@ -302,6 +369,7 @@ async function handleExportPdf() {
         <div class="pp-header-right">
           <el-checkbox v-model="showAnswer">显示答案</el-checkbox>
           <el-checkbox v-model="showExplain">显示解析</el-checkbox>
+          <el-checkbox v-model="showDifficulty">显示难度</el-checkbox>
           <span class="pp-wm-switch">
             <span class="pp-wm-label">水印</span>
             <el-switch v-model="watermark" size="small" />
@@ -342,15 +410,17 @@ async function handleExportPdf() {
           :key="`g-${gIdx}-${group.tagName}`"
           class="pp-group"
         >
+          <!-- 一级目录（"父::子"两层编码时；连续同父只显一次） -->
+          <h2 v-if="parentHeading(gIdx)" class="pp-parent-title">{{ parentHeading(gIdx) }}</h2>
           <!-- 单组（如卷库整卷无 freeTag → 全归"其他"）不显标题，避免冒出无意义的"其他"分段头 -->
-          <h3 v-if="groups.length > 1" class="pp-group-title">{{ group.tagName }}</h3>
+          <h3 v-if="groups.length > 1" class="pp-group-title" :class="{ 'pp-group-title--sub': group.parent }">{{ group.tagName }}</h3>
           <div
             v-for="(q, qIdx) in group.items"
             :key="q.id"
             class="pp-question"
           >
             <!-- 题号（全卷连续序号，不显示题型标签）= flex 行左列 -->
-            <span class="pp-q-no">{{ globalIndex(gIdx, qIdx) }}.</span>
+            <span class="pp-q-no">{{ globalIndex(gIdx, qIdx) }}.<template v-if="showDifficulty && difficultyStars(q)"><span class="pp-q-diff">{{ difficultyStars(q) }}</span></template></span>
             <!-- 内容列（题干/答案/解析）= flex 行右列，与题号顶对齐，消除号与题干错位 -->
             <div class="pp-q-content">
 
@@ -567,6 +637,25 @@ async function handleExportPdf() {
   margin: 0 0 16px;
 }
 
+/* 一级目录标题（两层目录卷：知识点章节级） */
+.pp-parent-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #1d2129;
+  padding-bottom: 10px;
+  border-bottom: 2px solid #1d2129;
+  margin: 8px 0 18px;
+}
+
+/* 二级考点小节头（有父级时降一档：小字号、细左标线，不再整条下划线） */
+.pp-group-title--sub {
+  font-size: 14px;
+  border-bottom: none;
+  border-left: 3px solid #1E8A8A;
+  padding: 2px 0 2px 8px;
+  margin: 0 0 12px;
+}
+
 .pp-question {
   display: flex;
   align-items: flex-start;
@@ -586,6 +675,15 @@ async function handleExportPdf() {
   color: #1d2129;
   font-size: 15px;
   line-height: 1.8;       /* 与题干行高一致，号与题干首行顶对齐 */
+}
+
+/* 难度星标（题号旁，默认隐藏、老师勾选后显示；小号浅灰上标风，不抢卷面） */
+.pp-q-diff {
+  margin-left: 3px;
+  font-size: 10px;
+  font-weight: 400;
+  color: #a9aeb8;
+  vertical-align: super;
 }
 
 .pp-q-content {
