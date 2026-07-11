@@ -273,6 +273,7 @@ interface CalEvent {
   externalTitle?: string
   lessonTitle?: string
   planLessonId?: string
+  subjectLabel?: string
   endTime: string
 }
 
@@ -300,6 +301,7 @@ const normalized = computed<CalEvent[]>(() =>
       externalTitle: e.externalTitle,
       lessonTitle: e.lessonTitle,
       planLessonId: e.planLessonId,
+      subjectLabel: e.subjectLabel,
     }
   }),
 )
@@ -502,6 +504,7 @@ function openFromEvent(e: CalEvent) {
     sessionStatus: e.sessionStatus,
     prepStatus: e.prepStatus,
     title: e.lessonTitle || e.externalTitle,
+    subjectLabel: e.subjectLabel,
     lessonLocked: e.lessonLocked,
     targetId: e.targetId,
     planLessonId: e.planLessonId,
@@ -521,6 +524,7 @@ function openFromTodo(t: PrepTodoVO) {
     sessionStatus: undefined,
     prepStatus: t.prepStatus,
     title: t.lessonTitle,
+    subjectLabel: t.subjectLabel,
     lessonLocked: undefined,
     targetId: t.targetId,
     planLessonId: t.planLessonId,
