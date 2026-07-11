@@ -33,6 +33,7 @@ import type {
   TargetCardVO,
   TargetType,
 } from '@/api/teacher/schedule'
+import { DICT_EDU_SUBJECT, useDictStore } from '@/store/dict'
 import BatchScheduleWizard from './components/BatchScheduleWizard.vue'
 import SessionDetailDrawer from './components/SessionDetailDrawer.vue'
 import type { DrawerSession } from './components/SessionDetailDrawer.vue'
@@ -103,6 +104,7 @@ interface SheetRow {
   dateLabel: string // 7月14日
   weekLabel: string // 星期二
   timeLabel: string // 13:30 - 15:30
+  subjectLabel: string // 科目（数学/科学…，BE 兜底链解好）
   content: string // 课次标题 / 正课
   monthKey: string // '2026-07'
 }
@@ -177,6 +179,7 @@ async function buildStudentSheet(targetId: string, name: string, from: Date, to:
     dateLabel: `${Number(s.sessionDate.slice(5, 7))}月${Number(s.sessionDate.slice(8, 10))}日`,
     weekLabel: WEEK_FULL[new Date(s.sessionDate + 'T00:00:00').getDay()],
     timeLabel: `${(s.startTime || '').slice(0, 5)} - ${(s.endTime || '').slice(0, 5)}`,
+    subjectLabel: s.subjectLabel || '',
     content: s.lessonTitle || SESSION_TYPE_LABEL[s.sessionType],
     monthKey: s.sessionDate.slice(0, 7),
   }))
@@ -528,9 +531,20 @@ const wizardVisible = ref(false)
 const quickVisible = ref(false)
 const quickDate = ref('') // 'YYYY-MM-DD'
 const quickSaving = ref(false)
-const quickForm = ref({ targetKey: '', start: '', end: '', note: '' })
+const quickForm = ref({ targetKey: '', start: '', end: '', note: '', subject: '' })
 const quickTargets = ref<TargetCardVO[]>([])
 const quickTargetsLoaded = ref(false)
+// 学科选项走共享字典（学科归位课程安排层：一场课一科，默认带出对象主学科）
+const dict = useDictStore()
+dict.load(DICT_EDU_SUBJECT)
+const SUBJECT_OPTIONS = computed(() => dict.list(DICT_EDU_SUBJECT))
+
+function onQuickTargetChange(key: string) {
+  // 选完对象自动带出其主学科（可改）
+  const id = key.split(':')[1]
+  const t = quickTargets.value.find((x) => x.id === id)
+  quickForm.value.subject = t?.subject || ''
+}
 
 const quickDateLabel = computed(() =>
   quickDate.value ? `${Number(quickDate.value.slice(5, 7))} 月 ${Number(quickDate.value.slice(8, 10))} 日` : '',
@@ -539,7 +553,7 @@ const quickDateLabel = computed(() =>
 async function openQuickAdd(day: number | null) {
   if (day === null) return
   quickDate.value = fmtDate(new Date(year.value, month.value - 1, day))
-  quickForm.value = { targetKey: '', start: '', end: '', note: '' }
+  quickForm.value = { targetKey: '', start: '', end: '', note: '', subject: '' }
   quickVisible.value = true
   if (!quickTargetsLoaded.value) {
     try {
@@ -563,7 +577,15 @@ async function submitQuickAdd() {
     targetType,
     targetId,
     autoBind: true,
-    items: [{ date: quickDate.value, start: f.start, end: f.end, note: f.note || undefined }],
+    items: [
+      {
+        date: quickDate.value,
+        start: f.start,
+        end: f.end,
+        subject: f.subject || undefined,
+        note: f.note || undefined,
+      },
+    ],
   }
   quickSaving.value = true
   try {
@@ -796,19 +818,21 @@ onMounted(() => {
               <th style="width: 130px">日期</th>
               <th style="width: 110px">星期</th>
               <th style="width: 160px">时间</th>
+              <th style="width: 110px">科目</th>
               <th>内容</th>
             </tr>
           </thead>
           <tbody>
             <template v-for="m in sheetMonths" :key="m.key">
               <tr class="sh-msep">
-                <td colspan="5">{{ m.short }}</td>
+                <td colspan="6">{{ m.short }}</td>
               </tr>
               <tr v-for="r in sheetRows.filter((x) => x.monthKey === m.key)" :key="r.seq">
                 <td>{{ r.seq }}</td>
                 <td>{{ r.dateLabel }}</td>
                 <td>{{ r.weekLabel }}</td>
                 <td class="sh-time">{{ r.timeLabel }}</td>
+                <td>{{ r.subjectLabel || '—' }}</td>
                 <td class="sh-content">{{ r.content }}</td>
               </tr>
             </template>
@@ -832,12 +856,22 @@ onMounted(() => {
     <el-dialog v-model="quickVisible" :title="`给 ${quickDateLabel} 排课`" width="420px">
       <el-form label-width="72px" @submit.prevent>
         <el-form-item label="排课对象" required>
-          <el-select v-model="quickForm.targetKey" placeholder="选择学生 / 班级" style="width: 100%">
+          <el-select v-model="quickForm.targetKey" placeholder="选择学生 / 班级" style="width: 100%" @change="onQuickTargetChange">
             <el-option
               v-for="t in quickTargets"
               :key="t.id"
               :label="`${t.name}（${t.grade || TARGET_TYPE_LABEL[t.targetType]}）`"
               :value="`${t.targetType}:${t.id}`"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="科目">
+          <el-select v-model="quickForm.subject" placeholder="默认该对象主学科" clearable style="width: 100%">
+            <el-option
+              v-for="o in SUBJECT_OPTIONS"
+              :key="o.dictValue"
+              :label="o.dictLabel"
+              :value="o.dictValue"
             />
           </el-select>
         </el-form-item>
