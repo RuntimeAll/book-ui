@@ -11,7 +11,7 @@
  * 红线：BE :8090 可能未起 —— 所有请求 try/catch 优雅空态，不白屏；id 全 string；
  * 枚举中文一律走 schedule.ts 的 *_LABEL 映射。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   getCalendar,
@@ -59,7 +59,71 @@ function shiftMonth(delta: number) {
   }
   year.value = y
   month.value = m
+  expandedDays.value = new Set() // 换月收起所有展开格
   fetchCalendar()
+}
+
+// ── BUG：格子超 3 场只显示"还有 N 项"死文案无法查看 → 点击展开/收起 ────
+const expandedDays = ref<Set<number>>(new Set())
+
+function toggleExpand(day: number | null) {
+  if (day === null) return
+  const s = new Set(expandedDays.value)
+  if (s.has(day)) s.delete(day)
+  else s.add(day)
+  expandedDays.value = s
+}
+
+function isExpanded(day: number | null): boolean {
+  return day !== null && expandedDays.value.has(day)
+}
+
+/** 格子展示的事件：展开态（或导出中）= 全部，否则前 3 条 */
+function visibleEvents(cell: Cell): CalEvent[] {
+  if (cell.day !== null && (exporting.value || expandedDays.value.has(cell.day))) return cell.events
+  return cell.events.slice(0, 3)
+}
+
+// ── 导出日历图片（发家长）────────────────────────────────────────
+// 🔴 家长可见物红线：导出图自动隐藏备课状态点/备课图例（内部信息），并展开全部格子不藏场次。
+const exporting = ref(false)
+const calRef = ref<HTMLElement | null>(null)
+
+async function exportImage() {
+  if (exporting.value) return
+  exporting.value = true
+  const el = calRef.value
+  // 🔴 确定性导出宽度：截图瞬间把日历卡固定成 1400px 再截，
+  //    与视口/屏宽解耦（html2canvas 按视口克隆渲染，窄窗口会布局漂移裁掉右列）。
+  const EXPORT_W = 1400
+  const saved = el
+    ? { position: el.style.position, top: el.style.top, left: el.style.left, width: el.style.width, zIndex: el.style.zIndex }
+    : null
+  try {
+    if (!el) return
+    await nextTick() // 等展开/隐藏内部标记渲染完成
+    Object.assign(el.style, { position: 'fixed', top: '0', left: '0', width: `${EXPORT_W}px`, zIndex: '3000' })
+    await nextTick() // 等固定宽度 reflow
+    const { default: html2canvas } = await import('html2canvas')
+    const canvas = await html2canvas(el, {
+      backgroundColor: '#ffffff',
+      scale: 2,
+      width: EXPORT_W,
+      height: el.scrollHeight,
+      windowWidth: EXPORT_W + 100,
+    })
+    const a = document.createElement('a')
+    a.href = canvas.toDataURL('image/png')
+    a.download = `课表-${year.value}年${month.value}月.png`
+    a.click()
+    ElMessage.success('课表图片已导出')
+  } catch (e) {
+    console.warn('[schedule] 导出图片失败', e)
+    ElMessage.error('导出失败，请重试')
+  } finally {
+    if (el && saved) Object.assign(el.style, saved)
+    exporting.value = false
+  }
 }
 
 // ── FP7 月历数据 ────────────────────────────────────────────────
@@ -337,6 +401,10 @@ onMounted(() => {
           <el-icon><ArrowRight /></el-icon>
         </button>
       </div>
+      <el-button :loading="exporting" @click="exportImage">
+        <el-icon v-if="!exporting" style="margin-right: 4px"><Download /></el-icon>
+        导出图片
+      </el-button>
       <el-button type="primary" @click="wizardVisible = true">
         <el-icon style="margin-right: 4px"><Plus /></el-icon>
         批量排课
@@ -369,7 +437,9 @@ onMounted(() => {
 
     <div class="sc-grid">
       <!-- FP7 月历 -->
-      <div class="sc-card sc-cal" v-loading="calLoading">
+      <div ref="calRef" class="sc-card sc-cal" :class="{ exporting }" v-loading="calLoading">
+        <!-- 导出图片时的标题（家长看到的第一行），平时不显示 -->
+        <div v-if="exporting" class="sc-export-title">{{ monthLabel }} 课表</div>
         <div class="sc-cal-head">
           <div v-for="w in WEEK_CN" :key="w">{{ w }}</div>
         </div>
@@ -386,14 +456,14 @@ onMounted(() => {
                 <template v-else>{{ cell.day }}</template>
               </div>
               <div
-                v-for="e in cell.events.slice(0, 3)"
+                v-for="e in visibleEvents(cell)"
                 :key="e.id"
                 class="sc-evt"
                 :style="evtStyle(e)"
                 :title="e.title"
                 @click="openFromEvent(e)"
               >
-                <time v-if="e.start">{{ e.start }}</time>
+                <time v-if="e.start">{{ e.start }}<template v-if="e.endTime">-{{ e.endTime }}</template></time>
                 <span class="sc-evt-name">{{ e.name }}</span>
                 <span v-if="e.sessionStatus === '2'" class="sc-void-pill">请假</span>
                 <span v-else-if="e.sessionStatus === '3'" class="sc-void-pill">已取消</span>
@@ -403,9 +473,14 @@ onMounted(() => {
                   :class="PREP_DOT[e.prepStatus]"
                 />
               </div>
-              <div v-if="cell.events.length > 3" class="sc-evt-more">
-                还有 {{ cell.events.length - 3 }} 项
-              </div>
+              <button
+                v-if="cell.events.length > 3"
+                class="sc-evt-more"
+                type="button"
+                @click.stop="toggleExpand(cell.day)"
+              >
+                {{ isExpanded(cell.day) ? '收起 ▲' : `还有 ${cell.events.length - 3} 项 ▼` }}
+              </button>
             </template>
           </div>
         </div>
@@ -605,8 +680,9 @@ onMounted(() => {
 }
 .sc-cell {
   min-height: 104px;
-  border-top: 1px solid #eef3f1;
-  border-left: 1px solid #eef3f1;
+  /* 样式修：格线加深（原 #eef3f1 太浅不明显） */
+  border-top: 1px solid #c9d6d2;
+  border-left: 1px solid #c9d6d2;
   padding: 7px 7px 8px;
   position: relative;
 }
@@ -617,8 +693,10 @@ onMounted(() => {
   background: #fafcfb;
 }
 .sc-dnum {
-  font-size: 14px;
-  color: #5f716d;
+  /* 样式修：日期数字加大加粗（原 14px/常规 不醒目） */
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--bk-ink);
   text-align: right;
   line-height: 1;
   margin-bottom: 6px;
@@ -630,12 +708,12 @@ onMounted(() => {
 .sc-cell.today .sc-dnum span {
   display: inline-grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   background: var(--bk-teal);
   color: #fff;
-  font-weight: 700;
+  font-weight: 800;
 }
 .sc-evt {
   display: flex;
@@ -657,6 +735,8 @@ onMounted(() => {
   opacity: 0.75;
   font-weight: 500;
   flex: none;
+  /* 起止时间共显（08:00-09:30）比单开始时间长，字号微缩保证学生名可见 */
+  font-size: 10px;
 }
 .sc-evt-name {
   overflow: hidden;
@@ -691,10 +771,35 @@ onMounted(() => {
   text-decoration: none;
 }
 .sc-evt-more {
+  /* BUG 修：由死文案改为可点击的展开/收起按钮 */
+  display: block;
+  width: 100%;
+  text-align: left;
   font-size: 11px;
-  color: #8ba09a;
-  padding-left: 8px;
-  cursor: default;
+  font-weight: 600;
+  color: var(--bk-teal-deep);
+  padding: 2px 0 2px 8px;
+  border: none;
+  background: none;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.sc-evt-more:hover {
+  background: var(--bk-teal-soft);
+}
+
+/* ── 导出图片模式：隐藏内部信息（备课状态点/备课图例/展开按钮），家长可见物红线 ── */
+.sc-cal.exporting .sc-pdot,
+.sc-cal.exporting .sc-lg-prep,
+.sc-cal.exporting .sc-evt-more {
+  display: none;
+}
+.sc-export-title {
+  padding: 14px 14px 4px;
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--bk-ink);
+  text-align: center;
 }
 .sc-cal-foot {
   display: flex;
