@@ -240,6 +240,18 @@ const router = createRouter({
             },
           ],
         },
+        // 🔴 PRD-002 P1 — 书架页（讲义/练习册/专项统一入口；类型筛选 + 书卡片结构统计）
+        {
+          path: '/bookshelf',
+          name: 'Bookshelf',
+          component: () => import('@/views/shelf/index.vue'),
+        },
+        // 🔴 PRD-002 P2 — 书浏览页（左目录树右内容；题渲染复用 QuestionContent + override 编辑 + 入专项）
+        {
+          path: '/bookshelf/book/:id',
+          name: 'BookshelfBook',
+          component: () => import('@/views/shelf/book.vue'),
+        },
         // PRD-C-207 退役：旧「讲义查看」单课时页 → 重定向到新讲义浏览器（兜老书签）
         {
           path: '/kg-lecture',

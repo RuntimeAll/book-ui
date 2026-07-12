@@ -11,7 +11,7 @@ export type LineIconName =
   | 'home' | 'qbank' | 'papers' | 'lecture' | 'desk' | 'manage'
   | 'overview' | 'my-question' | 'my-papers' | 'my-lectures'
   | 'favorites' | 'ai-variant' | 'geo-board' | 'workspace'
-  | 'schedule' | 'targets' | 'plans' | 'prep'
+  | 'schedule' | 'targets' | 'plans' | 'prep' | 'shelf'
 </script>
 
 <script setup lang="ts">
@@ -88,6 +88,11 @@ withDefaults(defineProps<{ name: LineIconName; size?: number }>(), { size: 19 })
     </template>
     <template v-else-if="name === 'prep'">
       <rect x="5" y="5" width="14" height="15.5" rx="2" /><path d="M9 5V3.5h6V5" /><path d="M8.8 13.2l2.1 2.1 4.3-4.3" />
+    </template>
+    <!-- 书架（PRD-002）：三本立书 + 底板 -->
+    <template v-else-if="name === 'shelf'">
+      <rect x="4" y="4.5" width="3.5" height="13" rx="1" /><rect x="9" y="6.5" width="3.5" height="11" rx="1" />
+      <path d="M14.2 7.4l3.3-.9 2.3 8.6-3.3.9z" /><path d="M3 20.5h18" />
     </template>
   </svg>
 </template>

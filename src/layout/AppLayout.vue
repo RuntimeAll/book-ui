@@ -97,9 +97,10 @@ interface MenuItem {
 // 收拢进「备课台」壳（/desk，见 views/desk/index.vue），旧路径全部 redirect（router）。
 const allMenuItems: MenuItem[] = [
   { label: '首页', path: '/home', icon: 'home' },
+  { label: '书架', path: '/bookshelf', icon: 'shelf' },          // 🔴 PRD-002 P0 讲义/练习册/专项统一入口（取代旧「讲义」入口）
   { label: '题库', path: '/question/index', icon: 'qbank' },
   { label: '卷库', path: '/papers/index', icon: 'papers' },
-  { label: '讲义', path: '/lecture-hub', icon: 'lecture' },      // 🔴 PRD-C-207 教辅讲义只读浏览器
+  // 🔴 PRD-002 P0/D5：旧「讲义」入口（/lecture-hub）整体退役移除——讲义并入书架（type=lecture）。
   { label: '备课台', path: '/desk', icon: 'desk' },              // 🔴 PRD-C-212 D3 工具箱+个人空间聚合壳
   { label: '管理', path: '/manage', icon: 'manage', roles: ['superadmin', 'org_admin'] },  // PRD-C-211 管理中心
   // 资料库：用户 2026-06-04 拍板「暂时隐藏不做开发」→ 菜单隐藏，路由 /materials/index 保留备用。
