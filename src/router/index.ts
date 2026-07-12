@@ -225,6 +225,10 @@ const router = createRouter({
             { path: 'schedule', name: 'ScheduleOverview', component: () => import('@/views/desk/schedule/index.vue') },
             { path: 'targets', name: 'TeachTargets', component: () => import('@/views/desk/targets/index.vue') },
             { path: 'plans', name: 'CoursePlans', component: () => import('@/views/desk/plans/index.vue') },
+            // 🔴 PRD-004 课后反馈单（列表 + 编辑，最小版 CRUD+PNG）
+            { path: 'feedback', name: 'FeedbackList', component: () => import('@/views/feedback/index.vue') },
+            { path: 'feedback/edit', name: 'FeedbackCreate', component: () => import('@/views/feedback/edit.vue') },
+            { path: 'feedback/edit/:id', name: 'FeedbackEdit', component: () => import('@/views/feedback/edit.vue') },
             // 🔴 PRD-B-101 V9/G9：备课材料页退役 → 重定向课程计划页（卷位清单取代其职责），
             // 尽量透传 lessonId/planId/targetId 供课程计划页定位/展开对应课次（兜老书签/跳转）。
             {
