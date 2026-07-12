@@ -44,7 +44,6 @@ const MENU_GROUPS: MenuGroup[] = [
     items: [
       { title: '我的题库', path: '/desk/my-question', icon: 'my-question' },
       { title: '我的卷库', path: '/desk/my-papers', icon: 'my-papers' },
-      { title: '我的讲义', path: '/desk/my-lectures', icon: 'my-lectures' },
       { title: '收藏夹', path: '/desk/favorites', icon: 'favorites' },
     ],
   },

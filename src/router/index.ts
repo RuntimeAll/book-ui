@@ -33,7 +33,7 @@ const PUBLIC_ROUTES = new Set<string>(['/geo-engine-test'])
 
 // PRD-C-212 D5 — 未登录漫游白名单：首页/题库(列表+详情)/卷库(列表+原卷结构)/讲义 可看。
 // 收藏/加篮/组卷/下载/备课台/管理仍需登录（守卫拦 + 页面按钮登录引导 + BE 只放只读端点）。
-const GUEST_EXACT = new Set<string>(['/home', '/question/index', '/papers/index', '/lecture-hub'])
+const GUEST_EXACT = new Set<string>(['/home', '/question/index', '/papers/index'])
 const GUEST_PREFIXES = ['/question/detail/', '/papers/source/']
 
 function isGuestBrowsable(path: string): boolean {
@@ -212,8 +212,6 @@ const router = createRouter({
             { path: 'my-question', name: 'MyQuestion', component: () => import('@/views/my-question/index.vue') },
             // PRD-C-212 增量 — 我的卷库（从卷库页类型切换迁入；PaperLibrary mode=mine-only）
             { path: 'my-papers', name: 'MyPapers', component: () => import('@/views/desk/my-papers.vue') },
-            // PRD-C-212 增量 — 我的讲义（lecture-hub mineOnly：只看 owner=自己的讲义版本）
-            { path: 'my-lectures', name: 'MyLectures', component: () => import('@/views/desk/my-lectures.vue') },
             // 🔴 举一反三（PRD-C-009）= 图片变式入口（toolkit :8093，vite proxy /agent）
             { path: 'ai-variant', name: 'AiVariant', component: () => import('@/views/variant/index.vue') },
             // 几何画板（GeoBoard）——JSXGraph 引擎，draw 主页 + 只读画廊
@@ -252,23 +250,8 @@ const router = createRouter({
           name: 'BookshelfBook',
           component: () => import('@/views/shelf/book.vue'),
         },
-        // PRD-C-207 退役：旧「讲义查看」单课时页 → 重定向到新讲义浏览器（兜老书签）
-        {
-          path: '/kg-lecture',
-          redirect: '/lecture-hub',
-        },
-        // PRD-C-205 — 课件编辑页（超管/备课后台，UmoEditor readOnly:false）
-        {
-          path: '/kg-lecture-edit',
-          name: 'KgLectureEdit',
-          component: () => import('@/views/kg-lecture-edit/index.vue'),
-        },
-        // 🔴 PRD-C-207 — 讲义浏览器（片段汇聚 + 三栏只读；替代 /kg-lecture 入口）
-        {
-          path: '/lecture-hub',
-          name: 'LectureHub',
-          component: () => import('@/views/lecture-hub/index.vue'),
-        },
+        // 🔴 PRD-002 D5 退役：旧讲义模块（/kg-lecture 重定向、/kg-lecture-edit 编辑页、/lecture-hub 浏览器）
+        // 整体删除，讲义并入书架（type=lecture）。存量数据留库不展示（D7）。
         // PRD-C-211 — 系统管理中心（B 线 admin 系统管理直接移植）；壳=左菜单+右内容区。
         // 页面级权限=superadmin/org_admin 双保险；子路由 meta.perms= RuoYi 权限串（守卫比对 /getInfo 拉回的 permissions）。
         {

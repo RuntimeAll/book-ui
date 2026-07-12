@@ -185,7 +185,7 @@ const showMultiFunctionFab = computed(() => {
           <!-- PRD-C-213 终审修订 — 顶栏对齐设计稿：搜索胶囊（Ctrl K）+ 通知铃 + 分隔线 + 用户块 -->
           <button type="button" class="top-search" title="全局搜索" @click="goSearch">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></svg>
-            <span class="ts-text">搜题目 / 试卷 / 讲义</span>
+            <span class="ts-text">搜题目 / 试卷 / 书架</span>
             <kbd class="ts-kbd">Ctrl K</kbd>
           </button>
           <!-- PRD-C-212 D5 — 游客态：登录/免费注册 替代头像 -->
