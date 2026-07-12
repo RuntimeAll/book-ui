@@ -5,10 +5,12 @@
  * FP16 计划列表：卡片墙（名/term·year/对象类型/素材/课次数/状态 pill + 流转 + 复制 + 新建·编辑）。
  * FP17 课次行：选中计划展开课次表，行编辑/新增/删除/上下移（reorder）。大纲态课次合法不逼填。
  * FP18 课内锚点：课次编辑内 kg_node_ids 多选（复用题库 lazyTree 树），选中 chip 展示 + 点跳题库。
- * PRD-B-101 V1：课次行 = 专项卷位清单（名/style/rules/绑定态；组这张卷[占位]/挂已有卷/查看下载/重组/增删卷位）
- *   + 推导备课态三色 pill + 标记已备好开关。段模型退役，卷位替代。
  * FP21 细备窗口徽标：课次绑定场次落在未来 14 天内（getPrepTodo(14)）显「窗口内」，窗口外不催。
  * FP22 家长版导出入口：工具栏按钮 → 选对象 → parentExport → 弹窗展示图片 + 下载。
+ *
+ * 🔴 PRD-003 P6/D7：旧「专项卷位」（paper_slots 编辑器 / 绑定链 / manual_ready）整套退役，
+ *   课次材料统一走「专项材料位」（biz_course_plan_lesson.special_ids）——本课绑定的专项列表，
+ *   持久可回看复盘。备课态实时推导：有材料=已备好，无=未备（不存冗余列）。
  *
  * 🔴 id 全 string；枚举走 *_LABEL 映射；BE 未起时优雅空态（拦截器弹错，页面兜 null）。
  */
@@ -22,34 +24,32 @@ import {
   updatePlan,
   deleteLesson,
   reorderLessons,
-  upsertLessons,
-  bindPaperSlot,
-  unbindPaperSlot,
-  markLessonReady,
   getPrepTodo,
   PLAN_STATUS_LABEL,
   TARGET_TYPE_LABEL,
-  LESSON_TYPE_LABEL,
   type PlanVO,
   type PlanLessonVO,
-  type PlanLessonBo,
   type PlanStatus,
   type PlanPageParams,
-  type PaperSlot,
 } from '@/api/teacher/schedule'
 import { getTarget } from '@/api/teacher/schedule'
-import { lazyTree, getPaperDetail, type SubjectNode } from '@/api/question/index'
-import { usePrepContextStore } from '@/store/prepContext'
+import { lazyTree, type SubjectNode } from '@/api/question/index'
+import {
+  getLessonMaterials,
+  bindSpecialToLesson,
+  unbindSpecialFromLesson,
+  type SpecialSummary,
+} from '@/api/special'
+import { useSpecialStore } from '@/store/special'
 import PlanFormDialog from './components/PlanFormDialog.vue'
 import LessonEditDialog from './components/LessonEditDialog.vue'
 import ParentExportDialog from './components/ParentExportDialog.vue'
-import PaperPickerDialog from './components/PaperPickerDialog.vue'
 
 const router = useRouter()
 const route = useRoute()
-const prepCtx = usePrepContextStore()
+const specialStore = useSpecialStore()
 
-// 计划归属对象名缓存（PlanVO 无 targetName，横幅「学生」项 best-effort 取档案名）
+// 计划归属对象名缓存（PlanVO 无 targetName，「学生」项 best-effort 取档案名）
 const targetNameCache = new Map<string, string>()
 async function resolveTargetName(targetId?: string | null): Promise<string> {
   if (!targetId) return ''
@@ -65,10 +65,10 @@ async function resolveTargetName(targetId?: string | null): Promise<string> {
   }
 }
 
-// 备课态三色 + 文案（PRD-B-101 换权威 = paper_slots 推导：0未备/1备课中/2已备好）
-const PREP_LABEL: Record<string, string> = { '0': '未备', '1': '备课中', '2': '已备好' }
+// 备课态（PRD-003 P6：材料位推导 —— 有专项材料=已备好，无=未备）
+const PREP_LABEL: Record<string, string> = { '0': '未备', '2': '已备好' }
 function prepPillClass(s: string): string {
-  return s === '2' ? 'ok' : s === '1' ? 'mid' : 'todo'
+  return s === '2' ? 'ok' : 'todo'
 }
 
 // ── 计划列表（FP16）────────────────────────────────────────────────────────
@@ -85,7 +85,6 @@ async function loadPlans() {
     if (filter.value.targetType) params.targetType = filter.value.targetType
     const res = await pagePlans(params)
     plans.value = res?.rows ?? []
-    // 选中项若已不在列表则清空
     if (selectedPlanId.value && !plans.value.some((p) => p.id === selectedPlanId.value)) {
       selectedPlanId.value = null
       planDetail.value = null
@@ -102,7 +101,6 @@ const selectedPlanId = ref<string | null>(null)
 const planDetail = ref<PlanVO | null>(null)
 const loadingDetail = ref(false)
 const expandedLessons = ref<Set<string>>(new Set())
-// 竞态守卫：快速切计划时旧详情不覆盖新详情
 let detailToken = 0
 
 async function selectPlan(id: string) {
@@ -117,15 +115,15 @@ async function loadDetail(id: string) {
   planDetail.value = null
   try {
     const res = await getPlan(id)
-    if (token !== detailToken) return // 已切到别的计划，丢弃旧响应
+    if (token !== detailToken) return
     planDetail.value = res
-    // 默认展开在窗口内的课次
     const open = new Set<string>()
     ;(res?.lessons ?? []).forEach((l) => {
       if (windowLessonIds.value.has(l.id)) open.add(l.id)
     })
     expandedLessons.value = open
-    void resolvePaperNames(res?.lessons ?? [])
+    // 预载所有课次材料（备课态推导 + 材料位展示）
+    void loadAllMaterials(res?.lessons ?? [])
   } catch {
     if (token === detailToken) planDetail.value = null
   } finally {
@@ -144,9 +142,7 @@ function toggleLesson(id: string) {
 }
 
 // ── 细备窗口（FP21）─────────────────────────────────────────────────────────
-// getPrepTodo(14) = 今天起 14 天内待备场次，含 planLessonId；据此标「窗口内」，窗口外无徽标不催。
 const windowLessonIds = ref<Set<string>>(new Set())
-
 async function loadWindow() {
   try {
     const todo = await getPrepTodo(14)
@@ -160,7 +156,7 @@ async function loadWindow() {
   }
 }
 
-// ── KG 树（FP18，一次加载，供锚点多选 + chip 标题解析）──────────────────────
+// ── KG 树（FP18）───────────────────────────────────────────────────────────
 const kgTree = ref<SubjectNode[]>([])
 const kgLoading = ref(false)
 const kgTitleMap = ref<Map<string, string>>(new Map())
@@ -192,13 +188,11 @@ function kgTitle(id: string): string {
   return kgTitleMap.value.get(String(id)) || `锚点 ${id}`
 }
 
-// 点 KG chip 跳题库（question/index 现不消费 query，带 subjectId 备用，裸跳亦可看）
 function jumpToQuestions(kgId: string) {
   router.push({ name: 'QuestionIndex', query: { subjectId: kgId } })
 }
 
 // ── 计划状态流转（FP16）────────────────────────────────────────────────────
-// 草稿(0) → 启用(1) → 归档(2)；归档可恢复为启用。
 function statusPillClass(status: PlanStatus): string {
   return status === '1' ? 'ok' : status === '0' ? 'mid' : 'mute'
 }
@@ -238,7 +232,7 @@ async function doCopyPlan(plan: PlanVO) {
   }
 }
 
-// ── 计划弹窗（FP16 新建 / 编辑）──────────────────────────────────────────────
+// ── 计划弹窗（FP16）────────────────────────────────────────────────────────
 const planFormVisible = ref(false)
 const editingPlan = ref<PlanVO | null>(null)
 
@@ -258,7 +252,7 @@ async function onPlanSaved(id: string) {
   }
 }
 
-// ── 课次弹窗（FP17 新增 / 编辑）──────────────────────────────────────────────
+// ── 课次弹窗（FP17）────────────────────────────────────────────────────────
 const lessonEditVisible = ref(false)
 const editingLesson = ref<PlanLessonVO | null>(null)
 
@@ -311,221 +305,101 @@ async function moveLesson(index: number, dir: -1 | 1) {
   }
 }
 
-// ── PRD-B-101 卷位清单（V1）────────────────────────────────────────────────
-// 卷位只存 paper_id，卷名靠 getPaperDetail 懒解析入缓存。
-const paperNameCache = ref<Map<string, string>>(new Map())
-function paperName(id?: string | null): string {
-  if (!id) return ''
-  return paperNameCache.value.get(String(id)) || '已绑卷'
+// ── 专项材料位（PRD-003 P6，取代旧卷位）────────────────────────────────────
+// lessonId -> 已绑专项概要列表
+const materialsByLesson = ref<Map<string, SpecialSummary[]>>(new Map())
+
+function materialsOf(lessonId: string): SpecialSummary[] {
+  return materialsByLesson.value.get(lessonId) ?? []
 }
-async function resolvePaperNames(lessonsArr: PlanLessonVO[]) {
-  const ids = new Set<string>()
-  for (const l of lessonsArr) {
-    for (const s of l.paperSlots ?? []) {
-      if (s.paper_id && !paperNameCache.value.has(String(s.paper_id))) ids.add(String(s.paper_id))
-    }
-  }
-  if (!ids.size) return
-  await Promise.allSettled(
-    [...ids].map(async (id) => {
-      try {
-        const d = await getPaperDetail(id)
-        paperNameCache.value.set(id, d?.paperName || '已绑卷')
-      } catch {
-        paperNameCache.value.set(id, '已绑卷')
-      }
-    }),
-  )
-  // 触发响应式更新（Map 原地 set 不触发模板重算）
-  paperNameCache.value = new Map(paperNameCache.value)
+// 备课态：有材料=已备好(2)，无=未备(0)（实时推导，不存冗余列）
+function lessonPrepState(lessonId: string): string {
+  return materialsOf(lessonId).length > 0 ? '2' : '0'
 }
 
-// 本地备课态推导（镜像 BE PaperSlotService.deriveStatus，用于就地更新免整页重载）
-function deriveState(slots: PaperSlot[]): string {
-  if (!slots.length) return '0'
-  let anyManual = false
-  let allBound = true
-  let anyBound = false
-  for (const s of slots) {
-    if (s.manual_ready) anyManual = true
-    const bound = !!s.paper_id && String(s.paper_id).trim() !== ''
-    if (bound) anyBound = true
-    else allBound = false
-  }
-  if (anyManual) return '2'
-  if (allBound) return '2'
-  return anyBound ? '1' : '0'
-}
-function manuallyReady(lesson: PlanLessonVO): boolean {
-  return (lesson.paperSlots ?? []).some((s) => s.manual_ready)
-}
-
-// 找到 planDetail 里的真实课次对象（就地改）
-function liveLesson(lessonId: string): PlanLessonVO | undefined {
-  return planDetail.value?.lessons?.find((l) => l.id === lessonId)
-}
-
-// 写课次卷位配方（走课次更新端点）；写后课次即拥有自有卷位（覆盖继承）。
-async function saveLessonSlots(lesson: PlanLessonVO, slots: PaperSlot[]): Promise<boolean> {
-  if (!selectedPlanId.value) return false
-  const bo: PlanLessonBo = {
-    id: lesson.id,
-    title: lesson.title,
-    lessonSeq: lesson.lessonSeq,
-    lessonType: lesson.lessonType,
-    tag: lesson.tag,
-    sourceRef: lesson.sourceRef,
-    thinkingAction: lesson.thinkingAction,
-    layerTarget: lesson.layerTarget,
-    parentCopy: lesson.parentCopy,
-    kgNodeIds: lesson.kgNodeIds,
-    paperSlots: slots,
-  }
+async function loadMaterials(lessonId: string) {
   try {
-    await upsertLessons(selectedPlanId.value, [bo])
-    const live = liveLesson(lesson.id)
-    if (live) {
-      live.paperSlots = slots
-      live.paperSlotsInherited = false
-      live.prepState = deriveState(slots) as PlanLessonVO['prepState']
-    }
-    return true
+    const res = await getLessonMaterials(lessonId)
+    const next = new Map(materialsByLesson.value)
+    next.set(lessonId, res?.specials ?? [])
+    materialsByLesson.value = next
   } catch {
-    return false
+    /* 拦截器已弹错 */
   }
 }
 
-// 卷位操作前确保课次有自有卷位（继承态先物化，否则绑定端点定位不到卷位）
-async function ensureOwnSlots(lesson: PlanLessonVO): Promise<boolean> {
-  if (!lesson.paperSlotsInherited) return true
-  return saveLessonSlots(lesson, (lesson.paperSlots ?? []).map((s) => ({ ...s })))
+async function loadAllMaterials(lessonsArr: PlanLessonVO[]) {
+  await Promise.allSettled(lessonsArr.map((l) => loadMaterials(l.id)))
 }
 
-function applySlotResult(lessonId: string, paperSlots: PaperSlot[], prepState: string) {
-  const live = liveLesson(lessonId)
-  if (!live) return
-  live.paperSlots = paperSlots
-  live.paperSlotsInherited = false
-  live.prepState = prepState as PlanLessonVO['prepState']
-  void resolvePaperNames([live])
-}
-
-// 行尾·加卷位（弹名 → 追加 → 写库）
-async function addSlot(lesson: PlanLessonVO) {
-  let name = ''
-  try {
-    const r = await ElMessageBox.prompt('给这个卷位起个名（如 概念辨析 / 巩固提高 / 课内同步）', '添加卷位', {
-      confirmButtonText: '添加',
-      cancelButtonText: '取消',
-      inputPlaceholder: '卷位名',
-      inputValidator: (v: string) => (v && v.trim() ? true : '卷位名不能为空'),
-    })
-    name = (r.value || '').trim()
-  } catch {
+// 从备课栏当前专项添加到本课（bind）；无当前专项则引导去备课栏建/选
+async function addMaterial(lesson: PlanLessonVO) {
+  await specialStore.ensureLoaded()
+  const list = specialStore.specials
+  if (list.length === 0) {
+    ElMessage.info('还没有专项——先在右下「快捷中枢 · 备课栏」新建专项，再回来添加')
     return
   }
-  const slots = (lesson.paperSlots ?? []).map((s) => ({ ...s }))
-  const seq = slots.reduce((m, s) => Math.max(m, Number(s.slot_seq) || 0), 0) + 1
-  slots.push({ slot_seq: seq, name, style: '', rules: '', note: '', paper_id: null, manual_ready: false })
-  const ok = await saveLessonSlots(lesson, slots)
-  if (ok) ElMessage.success('卷位已添加')
-}
-
-// 行尾·删卷位（绑着卷=解绑留库不删）
-async function removeSlot(lesson: PlanLessonVO, slot: PaperSlot) {
-  const bound = !!slot.paper_id
+  const already = new Set(materialsOf(lesson.id).map((s) => s.id))
+  const candidates = list.filter((s) => !already.has(s.id))
+  if (candidates.length === 0) {
+    ElMessage.info('备课栏里的专项都已加入本课')
+    return
+  }
+  // 用 messagebox 让老师选一个专项（简选：编号列表）
+  const optionsText = candidates.map((s, i) => `${i + 1}. ${s.title}（${s.itemCount ?? 0} 题）`).join('\n')
+  let pick = ''
   try {
-    await ElMessageBox.confirm(
-      bound ? `删除卷位「${slot.name}」？绑定的卷会解绑但保留在卷库，不删除。` : `删除卷位「${slot.name}」？`,
-      '删除卷位',
-      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+    const r = await ElMessageBox.prompt(
+      `输入编号选择要加入本课的专项：\n${optionsText}`,
+      `添加专项到「${lesson.title}」`,
+      {
+        confirmButtonText: '添加',
+        cancelButtonText: '取消',
+        inputPattern: /^\d+$/,
+        inputErrorMessage: '请输入编号',
+      },
     )
+    pick = (r.value || '').trim()
   } catch {
     return
   }
-  if (!(await ensureOwnSlots(lesson))) return
-  const slots = (lesson.paperSlots ?? []).filter((s) => s.slot_seq !== slot.slot_seq).map((s) => ({ ...s }))
-  const ok = await saveLessonSlots(lesson, slots)
-  if (ok) ElMessage.success('卷位已删除')
-}
-
-// 未绑·「组这张卷」→ 开备课语境（含该卷位配方 + 课次/学生信息）→ 跳题库挑题（PRD-B-101 V2/D6）
-async function composeForSlot(lesson: PlanLessonVO, slot: PaperSlot) {
-  // 继承态卷位先物化，否则创建时绑定端点定位不到卷位
-  if (!(await ensureOwnSlots(lesson))) return
-  const tId = planDetail.value?.targetId ? String(planDetail.value.targetId) : ''
-  const studentName = await resolveTargetName(tId)
-  prepCtx.open({
-    planId: selectedPlanId.value ?? '',
-    targetId: tId,
-    lessonId: lesson.id,
-    lessonTitle: lesson.title,
-    studentName,
-    lessonDate: '',
-    // 物化后 lesson.paperSlots 已是自有卷位快照
-    slots: (lesson.paperSlots ?? []).map((s) => ({ ...s })),
-    slotSeq: slot.slot_seq,
-  })
-  router.push({ name: 'QuestionIndex' })
-}
-
-// 未绑·「挂已有卷」（D7 兜底）
-const pickerVisible = ref(false)
-const pickerSlotLabel = ref('')
-const pickerCtx = ref<{ lessonId: string; slotSeq: number } | null>(null)
-async function openPicker(lesson: PlanLessonVO, slot: PaperSlot) {
-  if (!(await ensureOwnSlots(lesson))) return
-  pickerCtx.value = { lessonId: lesson.id, slotSeq: slot.slot_seq }
-  pickerSlotLabel.value = `${lesson.title} · ${slot.name}`
-  pickerVisible.value = true
-}
-async function onPaperPicked(paperId: string) {
-  const ctx = pickerCtx.value
-  if (!ctx) return
+  const idx = Number(pick) - 1
+  const chosen = candidates[idx]
+  if (!chosen) {
+    ElMessage.warning('编号无效')
+    return
+  }
   try {
-    const res = await bindPaperSlot(ctx.lessonId, ctx.slotSeq, paperId)
-    applySlotResult(ctx.lessonId, res.paperSlots, res.prepState)
-    ElMessage.success('已挂到卷位')
-    pickerVisible.value = false
+    await bindSpecialToLesson(lesson.id, chosen.id)
+    await loadMaterials(lesson.id)
+    ElMessage.success(`已添加「${chosen.title}」`)
   } catch {
     /* 拦截器已弹错 */
   }
 }
 
-// 已绑·查看 / 下载（跳卷详情页，预览与导出在那）
-function viewPaper(paperId?: string | null) {
-  if (paperId) router.push(`/papers/source/${paperId}`)
-}
-
-// 已绑·重组（解绑）
-async function unbindSlot(lesson: PlanLessonVO, slot: PaperSlot) {
+async function removeMaterial(lesson: PlanLessonVO, special: SpecialSummary) {
   try {
-    await ElMessageBox.confirm(`重组卷位「${slot.name}」？当前卷解绑（保留在卷库），可重新组或挂新卷。`, '重组', {
+    await ElMessageBox.confirm(`把「${special.title}」从本课材料移除？（专项本身保留在备课栏）`, '移除材料', {
       type: 'warning',
-      confirmButtonText: '解绑',
+      confirmButtonText: '移除',
       cancelButtonText: '取消',
     })
   } catch {
     return
   }
   try {
-    const res = await unbindPaperSlot(lesson.id, slot.slot_seq)
-    applySlotResult(lesson.id, res.paperSlots, res.prepState)
-    ElMessage.success('已解绑')
+    await unbindSpecialFromLesson(lesson.id, special.id)
+    await loadMaterials(lesson.id)
+    ElMessage.success('已移除')
   } catch {
     /* 拦截器已弹错 */
   }
 }
 
-// 标记已备好开关（manual_ready 覆盖；0 卷位禁用）
-async function toggleReady(lesson: PlanLessonVO, ready: boolean) {
-  try {
-    const res = await markLessonReady(lesson.id, ready)
-    applySlotResult(lesson.id, res.paperSlots, res.prepState)
-    ElMessage.success(ready ? '已标记备好' : '已取消标记')
-  } catch {
-    /* 拦截器已弹错（0 卷位返 400） */
-  }
+function editSpecial(special: SpecialSummary) {
+  router.push(`/special/${special.id}/edit`)
 }
 
 // ── FP22 家长版导出 ─────────────────────────────────────────────────────────
@@ -540,9 +414,6 @@ function planTermLabel(p: PlanVO): string {
   const parts = [p.termTag, p.year != null ? String(p.year) : ''].filter(Boolean)
   return parts.join(' · ')
 }
-function slotKClass(i: number): string {
-  return i === 0 ? 'w' : i === 1 ? 'm' : 's'
-}
 function inWindow(lesson: PlanLessonVO): boolean {
   return windowLessonIds.value.has(lesson.id)
 }
@@ -554,18 +425,28 @@ async function locateFromQuery() {
   const planId = q.planId ? String(q.planId) : ''
   const targetId = q.targetId ? String(q.targetId) : ''
   let planToOpen = planId
-  // 无 planId 时按 targetId 找归属计划（best-effort：取该对象第一份计划）
   if (!planToOpen && targetId) {
     const p = plans.value.find((pl) => String(pl.targetId ?? '') === targetId)
     if (p) planToOpen = p.id
   }
   if (!planToOpen) return
   await selectPlan(planToOpen)
-  if (lessonId) {
+  // 记备课上下文（备课栏「正在备」+ 材料位 bind 用），best-effort 补学生名
+  if (lessonId && planDetail.value) {
+    const lesson = planDetail.value.lessons?.find((l) => l.id === lessonId)
+    if (lesson) {
+      const studentName = await resolveTargetName(planDetail.value.targetId)
+      specialStore.setPrepContext({
+        lessonId,
+        lessonTitle: lesson.title,
+        studentName,
+        planId: planToOpen,
+        targetId: planDetail.value.targetId ? String(planDetail.value.targetId) : '',
+      })
+    }
     const next = new Set(expandedLessons.value)
     next.add(lessonId)
     expandedLessons.value = next
-    // 滚动到该课次
     setTimeout(() => {
       document.getElementById(`lesson-${lessonId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
     }, 120)
@@ -658,7 +539,7 @@ onMounted(async () => {
       </div>
     </div>
 
-    <!-- 计划编辑区（FP17-19 + FP21 + FP22）-->
+    <!-- 计划编辑区（FP17-19 + FP21 + FP22 + P6 材料位）-->
     <div v-if="selectedPlanId" v-loading="loadingDetail" class="plan-editor">
       <template v-if="planDetail">
         <div class="pe-head">
@@ -691,7 +572,7 @@ onMounted(async () => {
             :id="`lesson-${lesson.id}`"
             :key="lesson.id"
             class="lrow"
-            :class="{ open: expandedLessons.has(lesson.id), dimmed: lesson.prepState === '0' }"
+            :class="{ open: expandedLessons.has(lesson.id), dimmed: lessonPrepState(lesson.id) === '0' }"
           >
             <div class="lrow-bar" @click="toggleLesson(lesson.id)">
               <span class="lseq">{{ lesson.lessonSeq ?? idx + 1 }}</span>
@@ -705,66 +586,35 @@ onMounted(async () => {
               </div>
               <div class="bar-right">
                 <span v-if="inWindow(lesson)" class="pill ok flat win-badge">窗口内</span>
-                <span class="pill" :class="prepPillClass(lesson.prepState)">
-                  {{ PREP_LABEL[lesson.prepState] }}
+                <span class="pill" :class="prepPillClass(lessonPrepState(lesson.id))">
+                  {{ PREP_LABEL[lessonPrepState(lesson.id)] }}
                 </span>
                 <span class="chev">›</span>
               </div>
             </div>
 
             <div class="lrow-body">
-              <!-- 卷位清单（PRD-B-101 V1）-->
+              <!-- 本课材料（PRD-003 P6 专项材料位）-->
               <div class="slots-head">
-                <span class="slots-t">专项卷位</span>
-                <span v-if="lesson.paperSlotsInherited && (lesson.paperSlots?.length ?? 0)" class="slots-inherit">继承计划模板</span>
+                <span class="slots-t">本课材料</span>
                 <span class="spacer"></span>
-                <label class="ready-sw" :title="(lesson.paperSlots?.length ?? 0) ? '' : '先规划卷位才能标记'">
-                  <el-switch
-                    :model-value="manuallyReady(lesson)"
-                    :disabled="(lesson.paperSlots?.length ?? 0) === 0"
-                    size="small"
-                    @update:model-value="(v: string | number | boolean) => toggleReady(lesson, !!v)"
-                  />
-                  <span>标记已备好</span>
-                </label>
+                <el-button size="small" @click="addMaterial(lesson)">+ 从备课栏添加专项</el-button>
               </div>
 
-              <div v-if="lesson.paperSlots?.length" class="slots">
-                <div v-for="(slot, si) in lesson.paperSlots" :key="slot.slot_seq" class="slot-row">
-                  <span class="slot-k" :class="slotKClass(si)">{{ slot.slot_seq }}</span>
-                  <div class="slot-main">
-                    <div class="slot-l1">
-                      <b class="slot-name">{{ slot.name || `卷位${slot.slot_seq}` }}</b>
-                      <span v-if="slot.style" class="slot-style">{{ slot.style }}</span>
-                    </div>
-                    <div v-if="slot.rules" class="slot-rules">{{ slot.rules }}</div>
-                    <div class="slot-bind">
-                      <template v-if="slot.paper_id">
-                        <span class="slot-paper" title="查看 / 下载" @click="viewPaper(slot.paper_id)">
-                          📄 {{ paperName(slot.paper_id) }}
-                        </span>
-                      </template>
-                      <span v-else class="slot-empty-tag">空位 · 待组卷</span>
-                    </div>
+              <div v-if="materialsOf(lesson.id).length" class="materials">
+                <div v-for="sp in materialsOf(lesson.id)" :key="sp.id" class="mat-row">
+                  <span class="mat-ic">📄</span>
+                  <div class="mat-main">
+                    <b class="mat-name">{{ sp.title }}</b>
+                    <span class="mat-meta">{{ sp.itemCount ?? 0 }} 题</span>
                   </div>
-                  <div class="slot-acts">
-                    <template v-if="slot.paper_id">
-                      <el-button link size="small" @click="viewPaper(slot.paper_id)">查看 / 下载</el-button>
-                      <el-button link size="small" type="warning" @click="unbindSlot(lesson, slot)">重组</el-button>
-                    </template>
-                    <template v-else>
-                      <el-button link size="small" type="primary" @click="composeForSlot(lesson, slot)">组这张卷</el-button>
-                      <el-button link size="small" @click="openPicker(lesson, slot)">挂已有卷</el-button>
-                    </template>
-                    <el-button link size="small" type="danger" title="删除卷位" @click="removeSlot(lesson, slot)">✕</el-button>
+                  <div class="mat-acts">
+                    <el-button link size="small" type="primary" @click="editSpecial(sp)">编辑</el-button>
+                    <el-button link size="small" type="danger" @click="removeMaterial(lesson, sp)">移除</el-button>
                   </div>
                 </div>
               </div>
-              <p v-else class="slots-empty">还没有卷位。点「+ 卷位」规划专项卷，或直接组卷挂上来。</p>
-
-              <div class="slots-foot">
-                <el-button size="small" @click="addSlot(lesson)">+ 卷位</el-button>
-              </div>
+              <p v-else class="slots-empty">本课还没有材料。从右下「备课栏」建/选专项后，点「+ 从备课栏添加专项」挂上来。</p>
 
               <!-- 思维动作 / 层数 -->
               <div v-if="lesson.thinkingAction || lesson.layerTarget" class="meta-line">
@@ -815,13 +665,11 @@ onMounted(async () => {
       v-model="lessonEditVisible"
       :plan-id="planDetail.id"
       :lesson="editingLesson"
-      :default-paper-slots="planDetail.defaultPaperSlots"
       :kg-tree="kgTree"
       :kg-loading="kgLoading"
       @saved="onLessonSaved"
     />
     <ParentExportDialog v-model="parentExportVisible" :plan="planDetail" />
-    <PaperPickerDialog v-model="pickerVisible" :slot-label="pickerSlotLabel" @picked="onPaperPicked" />
   </div>
 </template>
 
@@ -918,37 +766,18 @@ onMounted(async () => {
 .lrow-body { border-top: 1px solid var(--line-soft); padding: 14px 16px 14px 60px; display: none; }
 .lrow.open .lrow-body { display: block; }
 
-/* 卷位清单（PRD-B-101 V1）*/
+/* 本课材料（PRD-003 P6 专项材料位）*/
 .slots-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .slots-head .spacer { flex: 1; }
 .slots-t { font-size: 11.5px; color: var(--faint); font-weight: 700; letter-spacing: .06em; }
-.slots-inherit { font-size: 10.5px; font-weight: 600; color: var(--amber); background: var(--amber-soft); border-radius: 5px; padding: 1px 7px; }
-.ready-sw { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--sub); cursor: pointer; }
-.slots { display: flex; flex-direction: column; gap: 7px; margin-bottom: 8px; }
-.slot-row { display: flex; gap: 9px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--line-soft); border-radius: 9px; background: #fcfefe; }
-.slot-k {
-  flex: none; width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center;
-  font-size: 11.5px; font-weight: 700;
-}
-.slot-k.w { color: var(--bk-teal-deep); background: var(--bk-teal-soft); }
-.slot-k.m { color: #fff; background: var(--bk-teal); }
-.slot-k.s { color: var(--sub); background: var(--grey-soft); }
-.slot-main { flex: 1; min-width: 0; }
-.slot-l1 { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
-.slot-name { font-size: 13px; color: var(--bk-ink); }
-.slot-style { font-size: 11.5px; color: var(--faint); }
-.slot-rules { font-size: 11px; color: var(--faint); margin-top: 2px; }
-.slot-bind { margin-top: 4px; }
-.slot-paper {
-  display: inline-flex; align-items: center; font-size: 12px; font-weight: 600; color: var(--bk-teal-deep);
-  background: var(--bk-teal-soft); border-radius: 6px; padding: 1px 9px; cursor: pointer; max-width: 100%;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.slot-paper:hover { background: #d8ece8; }
-.slot-empty-tag { font-size: 11.5px; color: var(--warn); background: var(--warn-soft); border-radius: 6px; padding: 1px 9px; }
-.slot-acts { flex: none; display: flex; align-items: center; gap: 2px; flex-wrap: wrap; justify-content: flex-end; }
-.slots-empty { font-size: 12.5px; color: var(--faint); margin: 0 0 8px; }
-.slots-foot { margin-bottom: 12px; }
+.materials { display: flex; flex-direction: column; gap: 7px; margin-bottom: 10px; }
+.mat-row { display: flex; gap: 9px; align-items: center; padding: 8px 10px; border: 1px solid var(--line-soft); border-radius: 9px; background: #fcfefe; }
+.mat-ic { flex: none; }
+.mat-main { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.mat-name { font-size: 13px; color: var(--bk-ink); }
+.mat-meta { font-size: 11.5px; color: var(--faint); }
+.mat-acts { flex: none; display: flex; align-items: center; gap: 2px; }
+.slots-empty { font-size: 12.5px; color: var(--faint); margin: 0 0 10px; }
 .meta-line { font-size: 11.5px; color: var(--faint); margin-bottom: 10px; }
 
 .kg-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }

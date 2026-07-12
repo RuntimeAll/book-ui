@@ -686,34 +686,10 @@ export const reorderLessons = (planId: string, lessonIds: string[]) =>
 export const parentExport = (planId: string, targetId: string) =>
   request.post<FileUrlVO, FileUrlVO>(`${BASE}/plan/${planId}/parent-export`, null, { params: { targetId } })
 
-// —— PRD-B-101 专项卷位·绑定/解绑/标记已备好 ——
-
-/** 卷位操作返回（bind/unbind/manual-ready 同构）：更新后卷位列表 + 推导备课态 */
-export interface SlotResult {
-  paperSlots: PaperSlot[]
-  prepState: PrepState
-}
-
-/**
- * 绑定既有卷到卷位（D7 兜底：任意 mine 卷可挂）。
- * POST plan/lesson/{lessonId}/slot/{slotSeq}/bind {paperId} → {paperSlots,prepState}（仅本人卷）。
- */
-export const bindPaperSlot = (lessonId: string, slotSeq: number, paperId: string) =>
-  request.post<SlotResult, SlotResult>(`${BASE}/plan/lesson/${lessonId}/slot/${slotSeq}/bind`, { paperId })
-
-/**
- * 解绑卷位（paper_id 置 null，卷留库不删）。🔴 自动清全课次 manual_ready（G5 反性）。
- * POST plan/lesson/{lessonId}/slot/{slotSeq}/unbind → {paperSlots,prepState}。
- */
-export const unbindPaperSlot = (lessonId: string, slotSeq: number) =>
-  request.post<SlotResult, SlotResult>(`${BASE}/plan/lesson/${lessonId}/slot/${slotSeq}/unbind`)
-
-/**
- * 标记已备好 / 取消（manual_ready 覆盖，课次级）。0 卷位课次调用返 400。
- * POST plan/lesson/{lessonId}/manual-ready {ready} → {paperSlots,prepState}。
- */
-export const markLessonReady = (lessonId: string, ready: boolean) =>
-  request.post<SlotResult, SlotResult>(`${BASE}/plan/lesson/${lessonId}/manual-ready`, { ready })
+// —— PRD-003 D7：卷位绑定/解绑/标记已备好 API 已退役 ——
+// B-101 卷位链下线，课次备课统一走专项材料位（api/special：getLessonMaterials/bindLessonSpecial/
+// unbindLessonSpecial）。备课态由 special_ids 推导。原 bindPaperSlot/unbindPaperSlot/markLessonReady
+// 三函数（无调用者）已删。
 
 // —— 排课 ——
 

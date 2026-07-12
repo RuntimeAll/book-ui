@@ -242,6 +242,12 @@ const router = createRouter({
             },
           ],
         },
+        // PRD-003 — 专项编辑器（备课栏「编辑」入口；区块→难度档→题 CRUD + 导出）
+        {
+          path: '/special/:id/edit',
+          name: 'SpecialEditor',
+          component: () => import('@/views/special/editor.vue'),
+        },
         // 🔴 PRD-002 P1 — 书架页（讲义/练习册/专项统一入口；类型筛选 + 书卡片结构统计）
         {
           path: '/bookshelf',

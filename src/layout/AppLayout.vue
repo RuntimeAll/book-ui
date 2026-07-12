@@ -3,8 +3,8 @@ import { computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import MultiFunctionFab from '@/components/business/MultiFunctionFab/index.vue'
-// PRD-B-101 备课语境常驻横幅（语境激活时全站顶部可见）
-import PrepContextBanner from '@/components/business/PrepContextBanner/index.vue'
+// PRD-003 D7：旧备课语境横幅（PrepContextBanner）整套退役 → 换成专项双卷导出对话框（全局单例）
+import SpecialExportDialog from '@/components/business/SpecialExportDialog/index.vue'
 // PRD-C-212 增量：顶栏简笔画线性图标（设计稿-备课台与顶栏-V1 拍板）
 import LineIcon, { type LineIconName } from '@/components/LineIcon.vue'
 import { useUserStore } from '@/store/user'
@@ -235,9 +235,6 @@ const showMultiFunctionFab = computed(() => {
       </div>
     </el-header>
 
-    <!-- PRD-B-101 备课语境常驻横幅（语境激活时显示，header 下方吸顶） -->
-    <PrepContextBanner />
-
     <!-- Main Content -->
     <el-main class="app-main">
       <RouterView />
@@ -247,6 +244,9 @@ const showMultiFunctionFab = computed(() => {
          单击展开 hub（＋录入新题 + 进行中/试题栏/试卷篮 三 tab），收起态球内进度环，可拖动）
          PRD-C-212 D5 — 游客不渲染（球会拉试题栏/试卷篮个人接口，游客态全是 401） -->
     <MultiFunctionFab v-if="userStore.isLoggedIn && showMultiFunctionFab" />
+
+    <!-- PRD-003 P5：专项双卷导出对话框（全局单例，备课栏 / 编辑器共用，经 useSpecialExportStore 唤起） -->
+    <SpecialExportDialog />
   </el-container>
 </template>
 

@@ -11,7 +11,6 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
-    AttachToLessonDialog: typeof import('./../components/business/PaperLibrary/AttachToLessonDialog.vue')['default']
     BaseButton: typeof import('./../components/BaseButton/index.vue')['default']
     ChapterPicker: typeof import('./../components/business/ChapterPicker/index.vue')['default']
     ContentWrap: typeof import('./../components/ContentWrap/index.vue')['default']
@@ -91,7 +90,6 @@ declare module 'vue' {
     PaperBasketFab: typeof import('./../components/business/PaperBasketFab/index.vue')['default']
     PaperLibrary: typeof import('./../components/business/PaperLibrary/index.vue')['default']
     PaperPreview: typeof import('./../components/business/PaperPreview/index.vue')['default']
-    PrepContextBanner: typeof import('./../components/business/PrepContextBanner/index.vue')['default']
     QuestionBasket: typeof import('./../components/business/QuestionBasket/index.vue')['default']
     QuestionBlockRender: typeof import('./../components/business/QuestionBlockRender/index.vue')['default']
     QuestionCard: typeof import('./../components/business/QuestionCard/index.vue')['default']
@@ -104,6 +102,7 @@ declare module 'vue' {
     SearchBar: typeof import('./../components/SearchWrap/SearchBar.vue')['default']
     SearchWrap: typeof import('./../components/SearchWrap/index.vue')['default']
     SketchPad: typeof import('./../components/business/SketchPad/index.vue')['default']
+    SpecialExportDialog: typeof import('./../components/business/SpecialExportDialog/index.vue')['default']
     SubjectDirectory: typeof import('./../components/business/SubjectDirectory/index.vue')['default']
     SvgIcon: typeof import('./../components/SvgIcon/index.vue')['default']
   }
