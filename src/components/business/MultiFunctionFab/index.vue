@@ -43,7 +43,7 @@ const dict = useDictStore()
 dict.load(DICT_QUESTION_TYPE)
 
 // ── hub 展开 / 当前 tab ────────────────────────────────────────
-type TabKey = 'prog' | 'bskt' | 'paper'
+type TabKey = 'prog' | 'bskt' | 'paper' | 'prep'
 const open = ref(false)
 const activeTab = ref<TabKey>('prog')
 
@@ -313,6 +313,43 @@ function goPaperWorkbench() {
   router.push('/papers/basket')
 }
 
+// ── 备课栏 tab（PRD-003 scope①，骨架 + mock 数据；BE/store 接力后替换）──
+//   备课栏 = 本次备课的专项清单；单选高亮的专项 = 全站「＋入专项」的去向（设计稿 P3）。
+interface PrepSpecial {
+  id: string
+  name: string
+  itemCount: number
+  bookCount: number
+  tierBrief?: string
+}
+// 备课上下文：专项挂在哪个学生 / 哪次课（持久绑定课次，D4）— mock
+const prepContextLabel = ref('苏俊宇 · 7月13日课')
+// 专项清单 — mock（批1 接 GET /teacher/special/basket 或 prep store）
+const specials = ref<PrepSpecial[]>([
+  { id: 's1', name: '第3课 · 错中求解', itemCount: 17, bookCount: 2, tierBrief: '★热身7 / ★★进阶6 / ★★★挑战3' },
+  { id: 's2', name: '公顷和平方千米 · 专项练习', itemCount: 12, bookCount: 1 },
+])
+// 当前挑题去向（单选高亮）
+const currentSpecialId = ref<string>('s1')
+function selectSpecial(id: string) { currentSpecialId.value = id }
+function editSpecial(s: PrepSpecial) {
+  open.value = false
+  // TODO(PRD-003 批1)：跳专项编辑器 /bookshelf/special/:id/edit
+  ElMessage.info(`专项编辑器待接力：${s.name}`)
+}
+function exportSpecial(s: PrepSpecial) {
+  // TODO(PRD-003 批1)：弹导出对话框（题目卷/答案卷/含解析/星标）
+  ElMessage.info(`导出对话框待接力：${s.name}`)
+}
+function removeSpecial(id: string) {
+  specials.value = specials.value.filter((x) => x.id !== id)
+  if (currentSpecialId.value === id) currentSpecialId.value = specials.value[0]?.id ?? ''
+}
+function newSpecial() {
+  // TODO(PRD-003 批1)：新建专项（空白 / 从书某节点起步）
+  ElMessage.info('新建专项待接力')
+}
+
 // ── 可拖动（pointer + localStorage 记忆位置）────────────────────
 const LS_POS = 'book-ui:mf-fab-pos'
 const pos = reactive<{ right: number; bottom: number }>({ right: 32, bottom: 40 })
@@ -415,6 +452,9 @@ onBeforeUnmount(() => {
           </button>
           <button :class="{ on: activeTab === 'paper' }" @click="switchTab('paper')">
             试卷篮<span v-if="pBasket.count.value" class="mf-tab-b">{{ pBasket.count.value }}</span>
+          </button>
+          <button :class="{ on: activeTab === 'prep' }" @click="switchTab('prep')">
+            备课栏<span v-if="specials.length" class="mf-tab-b">{{ specials.length }}</span>
           </button>
         </div>
 
@@ -584,6 +624,39 @@ onBeforeUnmount(() => {
                 </el-button>
               </div>
             </template>
+          </div>
+
+          <!-- ④ 备课栏（PRD-003 scope①，骨架 + mock）-->
+          <div v-show="activeTab === 'prep'" class="mf-pane">
+            <div class="mf-prep-ctx">正在备：<b>{{ prepContextLabel }}</b></div>
+            <el-empty
+              v-if="specials.length === 0"
+              :image-size="60"
+              description="还没有专项，点下方新建"
+            />
+            <div v-else class="mf-prep-list">
+              <div
+                v-for="s in specials"
+                :key="s.id"
+                class="mf-sp-card"
+                :class="{ on: currentSpecialId === s.id }"
+                @click="selectSpecial(s.id)"
+              >
+                <div class="mf-sp-top">
+                  <span class="mf-sp-name">{{ s.name }}</span>
+                  <span v-if="currentSpecialId === s.id" class="mf-sp-cur">✓ 当前挑题去向</span>
+                </div>
+                <div class="mf-sp-info">
+                  {{ s.itemCount }} 题 · 来自 {{ s.bookCount }} 本书<template v-if="s.tierBrief"> · {{ s.tierBrief }}</template>
+                </div>
+                <div class="mf-sp-ops" @click.stop>
+                  <el-button size="small" type="primary" @click="editSpecial(s)">编辑</el-button>
+                  <el-button size="small" @click="exportSpecial(s)">导出 PDF</el-button>
+                  <el-button size="small" link type="danger" @click="removeSpecial(s.id)">移除</el-button>
+                </div>
+              </div>
+            </div>
+            <div class="mf-newsp" @click="newSpecial">＋ 新建专项（空白 / 从书的某一节起步）</div>
           </div>
         </div>
       </div>
@@ -1120,6 +1193,72 @@ onBeforeUnmount(() => {
 .mf-compose-btn:hover {
   transform: translateY(-1px);
   box-shadow: 0 4px 12px rgba(15, 180, 136, 0.45);
+}
+
+/* ── 备课栏 tab（PRD-003 骨架）── */
+.mf-prep-ctx {
+  font-size: 12px;
+  color: #86909c;
+  margin-bottom: 10px;
+}
+.mf-prep-ctx b { color: #1d2a2e; }
+.mf-prep-list { display: flex; flex-direction: column; gap: 9px; }
+.mf-sp-card {
+  position: relative;
+  border: 1px solid #ebf1ef;
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #fafdfc;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.mf-sp-card:hover { border-color: #bfe3dd; }
+.mf-sp-card.on {
+  border-color: #0fb488;
+  background: #e6f7f1;
+}
+.mf-sp-top {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.mf-sp-name {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #1d2a2e;
+}
+.mf-sp-cur {
+  margin-left: auto;
+  font-size: 10.5px;
+  font-weight: 800;
+  color: #0a8e6a;
+  flex-shrink: 0;
+}
+.mf-sp-info {
+  font-size: 11.5px;
+  color: #86909c;
+  margin-top: 3px;
+}
+.mf-sp-ops {
+  margin-top: 8px;
+  display: flex;
+  gap: 6px;
+}
+.mf-newsp {
+  margin-top: 10px;
+  border: 1.5px dashed #bfe3dd;
+  border-radius: 10px;
+  padding: 10px;
+  text-align: center;
+  color: #0a8e6a;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.mf-newsp:hover {
+  background: #f2faf7;
+  border-color: #0fb488;
 }
 
 /* ── 预览 dialog ── */
