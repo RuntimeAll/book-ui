@@ -30,6 +30,8 @@ import {
 } from '@element-plus/icons-vue'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
 import { usePaperBasket } from '@/composables/usePaperBasket'
+import { useSpecialStore } from '@/store/special'
+import { useSpecialExportStore } from '@/store/specialExport'
 import { getQuestionDetail, type QuestionItem } from '@/api/question/index'
 import { useDictStore, DICT_QUESTION_TYPE } from '@/store/dict'
 import { listIngestJobs, type IngestJobRow, type IngestJobStatus } from '@/api/ingest/index'
@@ -187,6 +189,7 @@ function onBallClick() {
 function switchTab(t: TabKey) {
   activeTab.value = t
   if (t === 'bskt') void nextTick(initBasketSortable)
+  if (t === 'prep') void specialStore.refresh()
 }
 
 function goIngest() {
@@ -313,41 +316,45 @@ function goPaperWorkbench() {
   router.push('/papers/basket')
 }
 
-// ── 备课栏 tab（PRD-003 scope①，骨架 + mock 数据；BE/store 接力后替换）──
-//   备课栏 = 本次备课的专项清单；单选高亮的专项 = 全站「＋入专项」的去向（设计稿 P3）。
-interface PrepSpecial {
-  id: string
-  name: string
-  itemCount: number
-  bookCount: number
-  tierBrief?: string
-}
-// 备课上下文：专项挂在哪个学生 / 哪次课（持久绑定课次，D4）— mock
-const prepContextLabel = ref('苏俊宇 · 7月13日课')
-// 专项清单 — mock（批1 接 GET /teacher/special/basket 或 prep store）
-const specials = ref<PrepSpecial[]>([
-  { id: 's1', name: '第3课 · 错中求解', itemCount: 17, bookCount: 2, tierBrief: '★热身7 / ★★进阶6 / ★★★挑战3' },
-  { id: 's2', name: '公顷和平方千米 · 专项练习', itemCount: 12, bookCount: 1 },
-])
-// 当前挑题去向（单选高亮）
-const currentSpecialId = ref<string>('s1')
-function selectSpecial(id: string) { currentSpecialId.value = id }
-function editSpecial(s: PrepSpecial) {
+// ── 备课栏 tab（PRD-003 scope①）──────────────────────────────────────
+//   备课栏 = 本次备课的专项清单（BE /teacher/special/list）；单选高亮的专项 = 全站
+//   「＋入专项」pick 的去向（设计稿 P3）。数据源 = useSpecialStore（取代旧 prepContext）。
+const specialStore = useSpecialStore()
+const exportStore = useSpecialExportStore()
+const specials = computed(() => specialStore.specials)
+const currentSpecialId = computed(() => specialStore.currentSpecialId)
+const prepContextLabel = computed(() => specialStore.prepLabel)
+
+function selectSpecial(id: string) { specialStore.select(id) }
+function editSpecial(s: { id: string }) {
   open.value = false
-  // TODO(PRD-003 批1)：跳专项编辑器 /bookshelf/special/:id/edit
-  ElMessage.info(`专项编辑器待接力：${s.name}`)
+  router.push(`/special/${s.id}/edit`)
 }
-function exportSpecial(s: PrepSpecial) {
-  // TODO(PRD-003 批1)：弹导出对话框（题目卷/答案卷/含解析/星标）
-  ElMessage.info(`导出对话框待接力：${s.name}`)
+function exportSpecial(s: { id: string; title: string }) {
+  exportStore.open(s.id, s.title)
 }
-function removeSpecial(id: string) {
-  specials.value = specials.value.filter((x) => x.id !== id)
-  if (currentSpecialId.value === id) currentSpecialId.value = specials.value[0]?.id ?? ''
+async function removeSpecial(id: string) {
+  try {
+    await specialStore.remove(id)
+    ElMessage.success('已移除专项')
+  } catch { /* 拦截器已弹错 */ }
 }
-function newSpecial() {
-  // TODO(PRD-003 批1)：新建专项（空白 / 从书某节点起步）
-  ElMessage.info('新建专项待接力')
+async function newSpecial() {
+  let title = ''
+  try {
+    const r = await ElMessageBox.prompt('给这个专项起个名（如「第3课 · 错中求解」）', '新建专项', {
+      confirmButtonText: '创建',
+      cancelButtonText: '取消',
+      inputValidator: (v: string) => (v && v.trim() ? true : '专项名不能为空'),
+    })
+    title = (r.value || '').trim()
+  } catch {
+    return
+  }
+  try {
+    await specialStore.createNew(title)
+    ElMessage.success('专项已创建，可点「编辑」搭结构')
+  } catch { /* 拦截器已弹错 */ }
 }
 
 // ── 可拖动（pointer + localStorage 记忆位置）────────────────────
@@ -414,6 +421,7 @@ onMounted(async () => {
   window.addEventListener('resize', onWindowResize)
   await refreshJobs()
   scheduleNext()
+  void specialStore.ensureLoaded()
 })
 
 onBeforeUnmount(() => {
@@ -626,9 +634,9 @@ onBeforeUnmount(() => {
             </template>
           </div>
 
-          <!-- ④ 备课栏（PRD-003 scope①，骨架 + mock）-->
+          <!-- ④ 备课栏（PRD-003 scope①）-->
           <div v-show="activeTab === 'prep'" class="mf-pane">
-            <div class="mf-prep-ctx">正在备：<b>{{ prepContextLabel }}</b></div>
+            <div v-if="prepContextLabel" class="mf-prep-ctx">正在备：<b>{{ prepContextLabel }}</b></div>
             <el-empty
               v-if="specials.length === 0"
               :image-size="60"
@@ -643,15 +651,13 @@ onBeforeUnmount(() => {
                 @click="selectSpecial(s.id)"
               >
                 <div class="mf-sp-top">
-                  <span class="mf-sp-name">{{ s.name }}</span>
+                  <span class="mf-sp-name">{{ s.title }}</span>
                   <span v-if="currentSpecialId === s.id" class="mf-sp-cur">✓ 当前挑题去向</span>
                 </div>
-                <div class="mf-sp-info">
-                  {{ s.itemCount }} 题 · 来自 {{ s.bookCount }} 本书<template v-if="s.tierBrief"> · {{ s.tierBrief }}</template>
-                </div>
+                <div class="mf-sp-info">{{ s.itemCount ?? 0 }} 题</div>
                 <div class="mf-sp-ops" @click.stop>
                   <el-button size="small" type="primary" @click="editSpecial(s)">编辑</el-button>
-                  <el-button size="small" @click="exportSpecial(s)">导出 PDF</el-button>
+                  <el-button size="small" @click="exportSpecial({ id: s.id, title: s.title })">导出 PDF</el-button>
                   <el-button size="small" link type="danger" @click="removeSpecial(s.id)">移除</el-button>
                 </div>
               </div>

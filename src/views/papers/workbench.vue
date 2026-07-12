@@ -41,7 +41,6 @@ import PaperPreview from '@/components/business/PaperPreview/index.vue'
 import ReplaceQuestionDialog from './components/ReplaceQuestionDialog.vue'
 import WorkbenchCard from './components/WorkbenchCard.vue'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
-import { usePrepContextStore } from '@/store/prepContext'
 import { useUserStore } from '@/store/user'
 import { useDictStore, DICT_QUESTION_TYPE } from '@/store/dict'
 import { getCurrentUser } from '@/api/user'
@@ -55,13 +54,8 @@ const isEditMode = computed(() => !!paperId.value)
 // ── 试题栏（新建态数据源）────────────────────────────────────────────────────
 const basket = useQuestionBasket()
 
-// ── 备课语境（PRD-B-101 B2b）───────────────────────────────────────────────
-// 语境激活时：创建带 lessonId+slotSeq（卷型=备课卷+绑卷位）、卷名预填「课次·卷位」、
-// 成功走三按钮弹层（下载 PDF / 组下一张 / 完成备课）。无语境=日常组卷，行为不变。
-const prepCtx = usePrepContextStore()
-const createSuccessVisible = ref(false)
-const createdPaperId = ref('')
-const createdBoundLabel = ref('') // 冻结创建时的「课次·卷位」（组下一张会改语境）
+// 🔴 PRD-003 D7：备课语境（prepContext）+ 卷位绑定整套退役——组卷回归纯日常组卷，
+//   课次材料统一走课程计划页「本课材料」的专项材料位。
 
 // ── 用户 / owner 判定 ────────────────────────────────────────────────────────
 const userStore = useUserStore()
@@ -622,28 +616,17 @@ async function handleSave() {
       router.push(`/papers/source/${paperId.value}`)
     } else {
       // 新建态：createExamPaper（不支持 sections，由 BE 自动建默认 section）
-      // PRD-B-101 — 备课语境激活时带 lessonId+slotSeq（BE 置 paper_kind='2' 并绑卷位，事务一致）
-      const inPrep = prepCtx.active
       const result = await createExamPaper({
         name: paperName.value.trim(),
         questionIds: editRows.value.map((r) => r.id),
-        ...(inPrep ? { lessonId: prepCtx.lessonId, slotSeq: prepCtx.slotSeq } : {}),
       })
       if (!result || !result.paperId) {
         ElMessage.error('创建失败：服务器未返回试卷 ID')
         return
       }
-      // 清当前仓（日常仓 or 语境仓）——语境仓这些题已进卷
       await basket.clear()
-      if (inPrep) {
-        // 备课语境：成功弹层三按钮接管，不直接跳走
-        createdPaperId.value = result.paperId
-        createdBoundLabel.value = prepCtx.paperNamePrefill
-        createSuccessVisible.value = true
-      } else {
-        ElMessage.success(`已创建试卷《${paperName.value.trim()}》— ${result.questionCount} 题`)
-        router.push(`/papers/source/${result.paperId}`)
-      }
+      ElMessage.success(`已创建试卷《${paperName.value.trim()}》— ${result.questionCount} 题`)
+      router.push(`/papers/source/${result.paperId}`)
     }
   } catch (e: unknown) {
     const msg = (e as { message?: string })?.message || '操作失败，请稍后重试'
@@ -656,44 +639,6 @@ async function handleSave() {
 
 function goBack() {
   router.back()
-}
-
-// ── 备课语境·创建成功弹层三按钮（PRD-B-101 V3）──────────────────────────────
-// ［下载 PDF］→ 跳卷预览页（B0 的 jsPDF 导出在那）
-function onPrepDownloadPdf() {
-  const id = createdPaperId.value
-  createSuccessVisible.value = false
-  if (id) router.push(`/papers/source/${id}`)
-}
-
-// ［组下一张］→ 语境切下一个空卷位、试题栏切到新仓（空）、工作台重置为新卷
-function onPrepComposeNext() {
-  const ok = prepCtx.switchToNextEmptySlot()
-  if (!ok) {
-    ElMessage.info('没有更多空卷位了')
-    createSuccessVisible.value = false
-    return
-  }
-  createSuccessVisible.value = false
-  // basket 已切到下一卷位的新仓（空）；重建题行 + 预填新卷名
-  buildEditRowsFromBasket()
-  paperName.value = prepCtx.paperNamePrefill
-  suggestTime.value = 120
-  ElMessage.success(`已切到下一卷位：${prepCtx.slotName}，去题库挑题`)
-}
-
-// ［完成备课］→ 退出语境 → 回课程计划页定位该课次
-function onPrepComplete() {
-  const planId = prepCtx.planId
-  const lessonId = prepCtx.lessonId
-  const targetId = prepCtx.targetId
-  prepCtx.complete()
-  createSuccessVisible.value = false
-  const query: Record<string, string> = { from: 'prep-complete' }
-  if (planId) query.planId = planId
-  if (lessonId) query.lessonId = lessonId
-  if (targetId) query.targetId = targetId
-  router.push({ path: '/desk/plans', query })
 }
 
 // ── 初始化 ───────────────────────────────────────────────────────────────────
@@ -712,10 +657,6 @@ onMounted(async () => {
   } else {
     // 新建态：从 basket 同步
     buildEditRowsFromBasket()
-    // PRD-B-101 — 备课语境激活且卷名仍是默认草稿名 → 预填「课次·卷位」（可改）
-    if (prepCtx.active && prepCtx.paperNamePrefill && (!paperName.value || paperName.value === '未命名草稿')) {
-      paperName.value = prepCtx.paperNamePrefill
-    }
     // basket 变化时同步（SPA 内 basket 可能在题库页更新）
     watch(
       () => basket.items.value,
@@ -1059,30 +1000,7 @@ watch(paperId, async (newId) => {
       @update:visible="previewVisible = $event"
     />
 
-    <!-- PRD-B-101 备课语境·创建成功弹层（三按钮：下载 PDF / 组下一张 / 完成备课）-->
-    <el-dialog
-      v-model="createSuccessVisible"
-      title="试卷已创建"
-      width="420px"
-      align-center
-      :close-on-click-modal="false"
-      class="prep-success-dialog"
-    >
-      <div class="ps-body">
-        <div class="ps-icon">✓</div>
-        <p class="ps-title">备课卷创建成功</p>
-        <p class="ps-bound">已绑定到 <b>{{ createdBoundLabel }}</b></p>
-      </div>
-      <template #footer>
-        <div class="ps-actions">
-          <el-button @click="onPrepDownloadPdf">下载 PDF</el-button>
-          <el-button v-if="prepCtx.hasNextEmptySlot" type="primary" plain @click="onPrepComposeNext">
-            组下一张
-          </el-button>
-          <el-button type="success" @click="onPrepComplete">完成备课</el-button>
-        </div>
-      </template>
-    </el-dialog>
+    <!-- PRD-003 D7：备课语境创建成功三按钮弹层随卷位绑定退役 -->
 
     <!-- 换一题检索弹窗（PRD-A-007 Wave4 改动②）-->
     <ReplaceQuestionDialog

@@ -35,7 +35,7 @@ import { getCurrentUser } from '@/api/user'
 import { usePaperBasket } from '@/composables/usePaperBasket'
 import { useAbortableRequest } from '@/composables/useAbortableRequest'
 import { useLoginGuard } from '@/composables/useLoginGuard'
-import AttachToLessonDialog from './AttachToLessonDialog.vue'
+// PRD-003 D7：AttachToLessonDialog（把卷挂到课次卷位）随卷位体系退役
 
 const props = defineProps<{
   /** PRD-C-212 增量：固定 scope 场景（卷库顶导航页 / 备课台我的卷库分区）；不传 = 现行为不变 */
@@ -170,14 +170,6 @@ function pickScope(s: 'public' | 'mine') { if (props.mode) return; scope.value =
 // PRD-B-101 卷型 tab 切换（全部 / 备课卷）
 function pickKind(k: 'all' | 'prep') { if (kindTab.value === k) return; kindTab.value = k; pageParams.pageIndex = 1; fetchPapers() }
 
-// PRD-B-101 D7：把 mine 卷挂到课次卷位
-const attachVisible = ref(false)
-const attachPaper = ref<{ id: string; name: string } | null>(null)
-async function openAttach(item: PaperListItem) {
-  if (!(await ensureLogin())) return
-  attachPaper.value = { id: item.id, name: item.name }
-  attachVisible.value = true
-}
 function pickSubject(code: number) { subject.value = code; normalizeStageGrade(); applyFilter() }
 function pickStage(code: number) { stage.value = code; normalizeStageGrade(); applyFilter(); pickerOpen.value = false } // 选好学段收起前半截
 function pickGrade(g: number) {
@@ -456,7 +448,6 @@ onMounted(async () => {
             <div class="paper-card-actions">
               <el-link type="primary" :underline="false" @click="handleView(item)">查看</el-link>
               <el-link v-if="isOwner(item)" type="primary" :underline="false" @click="handleEdit(item)">编辑</el-link>
-              <el-link v-if="scope === 'mine' && isOwner(item)" type="primary" :underline="false" @click="openAttach(item)">挂到课次</el-link>
               <el-link v-if="isOwner(item)" type="danger" :underline="false" @click="handleDelete(item)">删除</el-link>
               <el-link :type="basket.basketIds.value.has(item.id) ? 'danger' : 'primary'" :underline="false" :disabled="basket.isLoading(item.id)" @click="handleToggleBasket(item)">
                 {{ basket.basketIds.value.has(item.id) ? '移出试卷篮' : '加入试卷篮' }}
@@ -487,13 +478,6 @@ onMounted(async () => {
       </div>
     </section>
 
-    <!-- PRD-B-101 D7：挂到课次卷位 -->
-    <AttachToLessonDialog
-      v-if="attachPaper"
-      v-model="attachVisible"
-      :paper-id="attachPaper.id"
-      :paper-name="attachPaper.name"
-    />
   </div>
 </template>
 

@@ -240,6 +240,12 @@ const router = createRouter({
             },
           ],
         },
+        // PRD-003 — 专项编辑器（备课栏「编辑」入口；区块→难度档→题 CRUD + 导出）
+        {
+          path: '/special/:id/edit',
+          name: 'SpecialEditor',
+          component: () => import('@/views/special/editor.vue'),
+        },
         // PRD-C-207 退役：旧「讲义查看」单课时页 → 重定向到新讲义浏览器（兜老书签）
         {
           path: '/kg-lecture',

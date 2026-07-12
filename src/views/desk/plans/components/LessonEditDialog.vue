@@ -14,19 +14,16 @@ import {
   type PlanLessonVO,
   type PlanLessonBo,
   type LessonType,
-  type PaperSlot,
 } from '@/api/teacher/schedule'
 import type { SubjectNode } from '@/api/question/index'
-import PaperSlotsEditor from './PaperSlotsEditor.vue'
 import KgAnchorSelect from './KgAnchorSelect.vue'
 
+// PRD-003 D7：paper_slots 卷位编辑（PaperSlotsEditor）整套退役，课次材料统一走专项材料位（P6）。
 const props = defineProps<{
   modelValue: boolean
   planId: string
   /** null = 新增课次；非空 = 编辑该课次 */
   lesson: PlanLessonVO | null
-  /** 计划默认卷位模板（新增课次时 seed） */
-  defaultPaperSlots?: PaperSlot[]
   /** KG 章节树（父页统一加载注入） */
   kgTree?: SubjectNode[]
   kgLoading?: boolean
@@ -57,7 +54,6 @@ interface FormState {
   layerTarget: string
   parentCopy: string
   kgNodeIds: string[]
-  paperSlots: PaperSlot[]
 }
 
 const form = reactive<FormState>({
@@ -69,7 +65,6 @@ const form = reactive<FormState>({
   layerTarget: '',
   parentCopy: '',
   kgNodeIds: [],
-  paperSlots: [],
 })
 
 const rules: FormRules<FormState> = {
@@ -91,8 +86,6 @@ watch(
       form.layerTarget = l.layerTarget || ''
       form.parentCopy = l.parentCopy || ''
       form.kgNodeIds = (l.kgNodeIds || []).map(String)
-      // 编辑态：课次自有卷位为准；若继承计划模板（inherited）则以模板 seed（编辑保存即物化为自有）
-      form.paperSlots = (l.paperSlots || []).map((s) => ({ ...s }))
     } else {
       form.title = ''
       form.lessonType = '0'
@@ -102,8 +95,6 @@ watch(
       form.layerTarget = ''
       form.parentCopy = ''
       form.kgNodeIds = []
-      // 新增课次继承计划默认卷位模板
-      form.paperSlots = (props.defaultPaperSlots || []).map((s) => ({ ...s }))
     }
   },
 )
@@ -121,7 +112,6 @@ async function submit() {
     layerTarget: form.layerTarget.trim() || undefined,
     parentCopy: form.parentCopy.trim() || undefined,
     kgNodeIds: form.kgNodeIds.length ? form.kgNodeIds : undefined,
-    paperSlots: form.paperSlots.length ? form.paperSlots : undefined,
   }
   // 编辑态保留原 lessonSeq，新增态不传由服务端追加
   if (props.lesson) bo.lessonSeq = props.lesson.lessonSeq
@@ -186,12 +176,6 @@ async function submit() {
         />
       </el-form-item>
 
-      <el-form-item label="专项卷位">
-        <div class="seg-wrap">
-          <div class="seg-tip">留空则继承计划默认卷位模板；此处配置覆盖计划默认（绑定字段不在此编辑，绑卷走课次行）</div>
-          <PaperSlotsEditor v-model="form.paperSlots" />
-        </div>
-      </el-form-item>
     </el-form>
     <template #footer>
       <el-button @click="visible = false">取消</el-button>

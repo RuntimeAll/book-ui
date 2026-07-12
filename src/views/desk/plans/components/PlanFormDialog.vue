@@ -16,10 +16,10 @@ import {
   type PlanBo,
   type TargetType,
   type TargetCardVO,
-  type PaperSlot,
 } from '@/api/teacher/schedule'
 import { useDictStore } from '@/store/dict'
-import PaperSlotsEditor from './PaperSlotsEditor.vue'
+// PRD-003 D7：默认卷位编辑器（PaperSlotsEditor）随 paper_slots 编辑链整套退役，
+// 计划不再配默认卷位模板；课次材料统一走专项材料位（P6）。
 
 const props = defineProps<{
   modelValue: boolean
@@ -60,7 +60,6 @@ interface FormState {
   termTag: string
   year: number
   materialNote: string
-  defaultPaperSlots: PaperSlot[]
 }
 
 const form = reactive<FormState>({
@@ -70,7 +69,6 @@ const form = reactive<FormState>({
   termTag: '暑假',
   year: currentYear,
   materialNote: '',
-  defaultPaperSlots: [],
 })
 
 const rules: FormRules<FormState> = {
@@ -118,7 +116,6 @@ watch(
       form.termTag = props.plan.termTag || '暑假'
       form.year = props.plan.year || currentYear
       form.materialNote = props.plan.materialNote || ''
-      form.defaultPaperSlots = (props.plan.defaultPaperSlots || []).map((s) => ({ ...s }))
       void loadTargetOptions(props.plan.targetType) // 编辑态只为回显归属名
     } else {
       form.name = ''
@@ -128,11 +125,6 @@ watch(
       form.termTag = '暑假'
       form.year = currentYear
       form.materialNote = ''
-      form.defaultPaperSlots = [
-        { slot_seq: 1, name: '概念辨析', style: '选择/判断为主 · 单点突破', rules: '', note: '', paper_id: null, manual_ready: false },
-        { slot_seq: 2, name: '巩固提高', style: '解答为主 · 由浅入深', rules: '', note: '', paper_id: null, manual_ready: false },
-        { slot_seq: 3, name: '课内同步', style: '收尾过关 · 简单不费脑', rules: '', note: '', paper_id: null, manual_ready: false },
-      ]
     }
   },
 )
@@ -148,7 +140,6 @@ async function submit() {
     termTag: form.termTag,
     year: form.year,
     materialNote: form.materialNote.trim() || undefined,
-    defaultPaperSlots: form.defaultPaperSlots.length ? form.defaultPaperSlots : undefined,
   }
   submitting.value = true
   try {
@@ -214,12 +205,6 @@ async function submit() {
       </el-form-item>
       <el-form-item label="素材说明">
         <el-input v-model="form.materialNote" maxlength="200" placeholder="如：学而思 36 周书 · 挑题制" />
-      </el-form-item>
-      <el-form-item label="默认卷位">
-        <div class="seg-wrap">
-          <div class="seg-tip">课次未单独配置卷位时继承此默认模板（绑定字段不在此编辑，绑卷走课次行）</div>
-          <PaperSlotsEditor v-model="form.defaultPaperSlots" />
-        </div>
       </el-form-item>
     </el-form>
     <template #footer>
