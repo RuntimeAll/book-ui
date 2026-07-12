@@ -253,8 +253,8 @@ async function changeGap(item: SpecialItemVO, gap: number) {
 }
 
 // override 改题（简版：改题干文本，只影响本专项链路）
-const overrideDlg = reactive<{ visible: boolean; itemId: string; stem: string; answer: string; analysis: string }>(
-  { visible: false, itemId: '', stem: '', answer: '', analysis: '' },
+const overrideDlg = reactive<{ visible: boolean; itemId: string; stem: string; answer: string; analysis: string; clearOptions: boolean }>(
+  { visible: false, itemId: '', stem: '', answer: '', analysis: '', clearOptions: false },
 )
 function openOverride(item: SpecialItemVO) {
   const ov = (item.override as Record<string, unknown>) || {}
@@ -262,6 +262,8 @@ function openOverride(item: SpecialItemVO) {
   overrideDlg.stem = typeof ov.stem === 'string' ? ov.stem : ''
   overrideDlg.answer = typeof ov.answer === 'string' ? ov.answer : ''
   overrideDlg.analysis = typeof ov.analysis === 'string' ? ov.analysis : ''
+  // options 显式覆盖为空数组 = 已清空源选项
+  overrideDlg.clearOptions = Array.isArray(ov.options) && (ov.options as unknown[]).length === 0
   overrideDlg.visible = true
 }
 async function saveOverride() {
@@ -269,6 +271,8 @@ async function saveOverride() {
   if (overrideDlg.stem.trim()) ov.stem = overrideDlg.stem.trim()
   if (overrideDlg.answer.trim()) ov.answer = overrideDlg.answer.trim()
   if (overrideDlg.analysis.trim()) ov.analysis = overrideDlg.analysis.trim()
+  // 勾选「清空源选项」→ options=[] 显式覆盖，导出时不带原选择题 A/B/C/D（改编题防自相矛盾）
+  if (overrideDlg.clearOptions) ov.options = []
   try {
     await updateSpecialItem(overrideDlg.itemId, { overrideJson: Object.keys(ov).length ? ov : null })
     overrideDlg.visible = false
@@ -464,6 +468,9 @@ const loadAndSort = reInitAfter(load)
         <el-input v-model="overrideDlg.answer" type="textarea" :rows="2" />
         <label>解析覆盖</label>
         <el-input v-model="overrideDlg.analysis" type="textarea" :rows="2" />
+        <el-checkbox v-model="overrideDlg.clearOptions" style="margin-top: 8px">
+          清空源选项（改编题干时勾选，导出不带原选择题 A/B/C/D）
+        </el-checkbox>
       </div>
       <template #footer>
         <el-button @click="overrideDlg.visible = false">取消</el-button>
