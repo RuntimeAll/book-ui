@@ -37,6 +37,7 @@ const MENU_GROUPS: MenuGroup[] = [
       { title: '排课总览', path: '/desk/schedule', icon: 'schedule' },
       { title: '学生与班级', path: '/desk/targets', icon: 'targets' },
       { title: '课程计划', path: '/desk/plans', icon: 'plans' },
+      { title: '课后反馈', path: '/desk/feedback', icon: 'prep' },
     ],
   },
   {
@@ -61,6 +62,8 @@ const activePath = computed(() => {
   const p = route.path
   // 几何画板画廊子页归位到「几何画板」高亮
   if (p.startsWith('/desk/geo-board')) return '/desk/geo-board'
+  // 反馈单编辑子页归位到「课后反馈」高亮
+  if (p.startsWith('/desk/feedback')) return '/desk/feedback'
   return p
 })
 
