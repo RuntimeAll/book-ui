@@ -131,6 +131,31 @@ const imgStyle = computed(() => {
   font-size: 0.9em;
 }
 
+/* ── 表格区 ── */
+/* markdown-it 默认 preset 开启 GFM 表格：`| a | b |` 渲染成 <table>（DOMPurify 白名单放行
+   table/thead/tbody/tr/th/td）。此前 .qc-richtext 作用域内无任何 table CSS，浏览器默认
+   border:0 / padding:0 / border-collapse:separate，表头与数据行挤成一行 run-on 文本
+   （如 Q25 原料仓库进出数量表），列对不齐读不出对应关系。加在本组件=题干/答案/解析各页
+   全局生效，优于只在 book.vue .prose 局部补。 */
+.qc-richtext :deep(table) {
+  border-collapse: collapse;
+  width: auto;
+  max-width: 100%;
+  margin: 0.5em 0;
+}
+
+.qc-richtext :deep(th),
+.qc-richtext :deep(td) {
+  border: 1px solid var(--el-border-color, #dcdfe6);
+  padding: 4px 8px;
+  text-align: center;
+}
+
+.qc-richtext :deep(th) {
+  background: var(--el-fill-color-light, #f5f7fa);
+  font-weight: 600;
+}
+
 /* ── 图片区 ── */
 .qc-img {
   max-width: 100%;
