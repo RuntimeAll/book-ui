@@ -660,15 +660,68 @@ export const getQuestionLineage = (id: string) =>
 
 
 // Q' 卡 段① BE 新端点 — 按 ids 批查完整字段（含 answer / explain / freeTags / questionStdKnowledges）。
-// query string = ?ids=1,2,3 逗号分隔（axios params 对 string 不会重复 key）；上限 100（BE 端约束）；
-// 软删自动过滤（BE WHERE status<>'2'）；顺序按 FIND_IN_SET 保入参顺序（FE 仍需 reorder 兜底）。
+// query string = ?ids=1,2,3 逗号分隔（axios params 对 string 不会重复 key）；
+// 软删自动过滤（BE WHERE status<>'2'）；BE 顺序按 FIND_IN_SET 保入参顺序（本函数仍显式 reorder 兜底）。
 // PRD-A-013 T2 — ids 雪花 string[]
 // PRD-A-015：BE listByIds 已批量回填 blockJson（与单题 selectById 对称），故卷库预览/PDF 走本接口
 //    也能拿到结构化内容、命中 QuestionBlockRender 网格渲染（PaperPreview blockDocOf 分支）。
-export const questionListByIds = (ids: string[]) =>
-  request.get<QuestionDetail[], QuestionDetail[]>('/teacher/question/list', {
-    params: { ids: ids.join(',') },
-  })
+//
+// 🔴 中心化分批（≤100/批）——BE `/teacher/question/list` 有两条硬约束，一次性拼整本 ids 必炸：
+//   ① ids 太多 → URL/Header 过长 → HTTP 431（Request Header Fields Too Large）；
+//   ② 即便够短，BE 也有 100 题硬上限 → 500『单次最多100题导出』。
+//   任一都会让调用方 catch 到空结果：整本每题 itemStemText 返 null 全渲染「暂无内容」，
+//   顶部弹「网络请求失败，请检查网络连接」（request.ts 错误分支）。凡 >100 题的书（几乎所有真实教辅，
+//   如 834 题《暑假课本》bookId=2076707736518717441）书主打开整本即不可用。
+//   故在本函数内部按 ≤100 切片 → Promise.all 并发 → 按【入参顺序】合并（跨批稳定，软删/缺失自动跳过）。
+//   中心化修在此，book.vue load() / PaperPreview 卷库预览 / PDF 导出等所有调用方全部免改且同样受益。
+const QUESTION_LIST_BATCH = 100
+
+export const questionListByIds = async (ids: string[]): Promise<QuestionDetail[]> => {
+  if (!ids || ids.length === 0) return []
+
+  // 去重保序：BE SQL IN 本就按行去重，FE 先去重可避免重复 id 白撑大 URL / 合并阶段重复入列。
+  const uniqueIds: string[] = []
+  const seen = new Set<string>()
+  for (const raw of ids) {
+    const id = String(raw)
+    if (id && !seen.has(id)) {
+      seen.add(id)
+      uniqueIds.push(id)
+    }
+  }
+  if (uniqueIds.length === 0) return []
+
+  // ≤100/批切片
+  const chunks: string[][] = []
+  for (let i = 0; i < uniqueIds.length; i += QUESTION_LIST_BATCH) {
+    chunks.push(uniqueIds.slice(i, i + QUESTION_LIST_BATCH))
+  }
+
+  // 各批并发拉取（任一批失败即整体 reject，与原单请求语义一致；但 ≤100 已规避尺寸类失败）
+  const batches = await Promise.all(
+    chunks.map((chunk) =>
+      request.get<QuestionDetail[], QuestionDetail[]>('/teacher/question/list', {
+        params: { ids: chunk.join(',') },
+      }),
+    ),
+  )
+
+  // 建 id→题 映射，再按【入参顺序】取回：跨批稳定、显式 reorder 兜底；软删/BE 未返的 id 自动跳过。
+  const byId = new Map<string, QuestionDetail>()
+  for (const batch of batches) {
+    if (Array.isArray(batch)) {
+      for (const q of batch) {
+        if (q && q.id != null) byId.set(String(q.id), q)
+      }
+    }
+  }
+  const result: QuestionDetail[] = []
+  for (const id of uniqueIds) {
+    const q = byId.get(id)
+    if (q) result.push(q)
+  }
+  return result
+}
 
 /**
  * PRD-C-014 T3 — 按主知识点取候选自由标签池（DNA 标签维多选弹层的候选来源）。
