@@ -1005,14 +1005,25 @@ onBeforeUnmount(() => io?.disconnect())
 .q-opts {
   margin-top: 7px;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-  gap: 5px 24px;
+  /* 每选项独立成块，最多两列（短选项 A B / C D）；窄屏自动收成单列。
+     min(100%, 240px) 保证内容窄于 240px 时也退成单列，永不把 ABCD 挤成一行行文。 */
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  gap: 6px 24px;
   font-size: 15px;
   color: #1f2937;
 }
+/* 选项块级化：字母悬挂 + 正文换行对齐；长选项整块内换行不破版、不溢出栅格。 */
+.opt {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
 .opt b {
+  flex: none;
   color: var(--bk-teal-deep);
-  margin-right: 5px;
 }
 /* 题型标签：右上角低调 */
 .q-type {
