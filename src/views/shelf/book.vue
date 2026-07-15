@@ -25,6 +25,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import QuestionContent from '@/components/business/QuestionContent/index.vue'
 import QuestionBlockRender from '@/components/business/QuestionBlockRender/index.vue'
+import { parseBlockDoc, type QuestionBlockDoc } from '@/utils/blockSchema'
 import {
   getBookStructure,
   updateItem,
@@ -109,7 +110,8 @@ function walk(
 // 缺陷1：先序遍历收集「节点 + 全部后代」的内容块。
 //   t='group'   → 分组小标题（node + 相对层级 level）
 //   t='explain' → 讲解块（item.explain_json）
-//   t='question'→ 题目（item，no=同讲连续题序）
+//   t='question'→ 题目（item）。题号不再由本页自造连续大号——改为从题干行首剥
+//                 原书小题号（N．/N.）提到题号位显示，无自带号的留空（见 buildQRender）。
 // 单接口而非联合类型，避免 vue-tsc 模板窄化失效。
 // ───────────────────────────────────────────────────────────────────────────
 interface RenderBlock {
@@ -119,11 +121,10 @@ interface RenderBlock {
   level?: number
   qCount?: number
   item?: ShelfItemVO
-  no?: number
 }
 
-/** 先序：node 分组头 → 自身 items（seq）→ 递归 children（seq）。题号 ctr 跨讲连续。 */
-function collectBlocks(node: ShelfNodeVO, level: number, out: RenderBlock[], ctr: { n: number }) {
+/** 先序：node 分组头 → 自身 items（seq）→ 递归 children（seq）。 */
+function collectBlocks(node: ShelfNodeVO, level: number, out: RenderBlock[]) {
   const items = [...(node.items ?? [])].sort(bySeq)
   const children = [...(node.children ?? [])].sort(bySeq)
   out.push({ t: 'group', key: `g_${node.id}`, node, level, qCount: countQuestions(node) })
@@ -131,11 +132,10 @@ function collectBlocks(node: ShelfNodeVO, level: number, out: RenderBlock[], ctr
     if (it.kind === 'explain') {
       out.push({ t: 'explain', key: it.id, item: it })
     } else {
-      ctr.n += 1
-      out.push({ t: 'question', key: it.id, item: it, no: ctr.n })
+      out.push({ t: 'question', key: it.id, item: it })
     }
   }
-  for (const ch of children) collectBlocks(ch, level + 1, out, ctr)
+  for (const ch of children) collectBlocks(ch, level + 1, out)
 }
 
 /** 每「讲」= 一段 section（body = 讲根分组之后的所有块；estH = 未挂载时占位高度估算）。 */
@@ -148,7 +148,7 @@ const sections = computed<DocSection[]>(() => {
   const roots = [...(book.value?.tree ?? [])].sort(bySeq)
   return roots.map((root) => {
     const out: RenderBlock[] = []
-    collectBlocks(root, 0, out, { n: 0 })
+    collectBlocks(root, 0, out)
     const body = out.slice(1) // 去掉讲根分组（讲标题单独常驻渲染）
     let estH = 60
     for (const b of body) {
@@ -328,6 +328,93 @@ function isEdited(it: ShelfItemVO): boolean {
   return !!it.override && Object.keys(it.override).length > 0
 }
 const optLetters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
+
+// ───────────────────────────────────────────────────────────────────────────
+// 题号改造（2026-07-14 用户拍板）：删掉本页自造的跨节连续大题号；题干若以原书小题号
+//   `N．`/`N.`（行首、全角/半角顿点）开头，把这个号提到题号位显示；无自带号的（如
+//   【典型例题1】开头）题号位留空、绝不编造。
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * 纯函数：从一段文本的**行首**剥一次原书小题号。
+ *   - `12．` / `1．下列` → 全角顿点，恒当题号剥（题号后常紧跟数字，如「1．1000以内」，故不加数字前瞻）。
+ *   - `3.` / `3. 计算`  → 半角句点，仅当其后不紧跟数字才剥（挡住小数 `3.14` 被误拆成题号 3）。
+ *   - `（3）` / `（三）` 等括号号不是题号，不剥（正则以 `\d` 起，天然不匹配）。
+ * 只认字符串最开头（`^`），只剥一次；中段出现的 `N．` 不受影响。
+ */
+function liftLeadingNo(text: string | null | undefined): { liftedNo: string | null; rest: string } {
+  const s = text ?? ''
+  const m = s.match(/^[ \t\u00a0]*(\d{1,3})(?:\uff0e|\.(?!\d))[ \t\u00a0]*/)
+  if (!m) return { liftedNo: null, rest: s }
+  return { liftedNo: m[1], rest: s.slice(m[0].length) }
+}
+
+/**
+ * 在 blockJson 里剥号：只动**文档序第一个 text 块**（= 题干开头），中段/其它 text 块一律不碰，
+ * 避免误剥题干中段的 `N．`。命中则返回剥号后的新 doc（不污染原 qMap 对象）。
+ */
+function liftFromBlockDoc(doc: QuestionBlockDoc): { liftedNo: string | null; doc: QuestionBlockDoc } {
+  for (const row of doc.rows) {
+    for (const cell of row.cells) {
+      if (cell.type === 'text') {
+        const { liftedNo, rest } = liftLeadingNo(cell.md)
+        if (liftedNo == null) return { liftedNo: null, doc }
+        return {
+          liftedNo,
+          doc: {
+            v: doc.v,
+            rows: doc.rows.map((r) => ({
+              cells: r.cells.map((c) => (c === cell ? { type: 'text' as const, md: rest } : c)),
+            })),
+          },
+        }
+      }
+    }
+  }
+  return { liftedNo: null, doc }
+}
+
+/** 单题渲染模型：题号（noLabel 已含点，空串=不显示）+ 剥号后的结构化块 / 富文本题干。 */
+interface QRender {
+  noLabel: string
+  blockDoc: QuestionBlockDoc | null
+  stemText: string | null
+  stemImg: string | null
+}
+function buildQRender(it: ShelfItemVO): QRender {
+  // 结构化块优先（override 改题时 itemBlockJson 返 null，走富文本分支）
+  const raw = itemBlockJson(it)
+  if (raw) {
+    const doc = parseBlockDoc(raw)
+    if (doc) {
+      const { liftedNo, doc: lifted } = liftFromBlockDoc(doc)
+      return { noLabel: liftedNo ? `${liftedNo}.` : '', blockDoc: lifted, stemText: null, stemImg: null }
+    }
+  }
+  // 富文本分支（override 题面 / 无块原题）
+  const stem = itemStemText(it)
+  const { liftedNo, rest } = liftLeadingNo(stem)
+  return {
+    noLabel: liftedNo ? `${liftedNo}.` : '',
+    blockDoc: null,
+    stemText: liftedNo ? rest : stem,
+    stemImg: itemStemImg(it),
+  }
+}
+/** item.id → 渲染模型；随 sections（结构）/ qMap（题面）/ override 变化重算。 */
+const qRenderMap = computed<Record<string, QRender>>(() => {
+  const map: Record<string, QRender> = {}
+  for (const sec of sections.value) {
+    for (const b of sec.body) {
+      if (b.t === 'question' && b.item) map[b.item.id] = buildQRender(b.item)
+    }
+  }
+  return map
+})
+/** 模板取渲染模型（O(1) 查表）。 */
+function qr(it?: ShelfItemVO): QRender | undefined {
+  return it ? qRenderMap.value[it.id] : undefined
+}
 
 // —— 当前专项（备课栏数据源；C 线 PRD-003 未上线时用 localStorage 占位对接） ——
 const CUR_SPECIAL_KEY = 'bk_current_special'
@@ -531,13 +618,13 @@ onBeforeUnmount(() => io?.disconnect())
                   </div>
                 </div>
 
-                <!-- 题目（编号悬挂 + 正文；操作悬浮嵌入） -->
+                <!-- 题目（题号=题干剥出的原书小号，无则留空；正文；操作悬浮嵌入） -->
                 <div v-else class="q" :class="{ edited: isEdited(b.item!) }">
-                  <span class="q-no">{{ b.no }}.</span>
+                  <span class="q-no">{{ qr(b.item)?.noLabel }}</span>
                   <div class="q-body">
                     <div class="q-main prose">
-                      <QuestionBlockRender v-if="itemBlockJson(b.item!)" :doc="itemBlockJson(b.item!)" />
-                      <QuestionContent v-else :text="itemStemText(b.item!)" :img-url="itemStemImg(b.item!)" />
+                      <QuestionBlockRender v-if="qr(b.item)?.blockDoc" :doc="qr(b.item)!.blockDoc!" />
+                      <QuestionContent v-else :text="qr(b.item)?.stemText ?? null" :img-url="qr(b.item)?.stemImg ?? null" />
                     </div>
                     <div v-if="itemOptions(b.item!)" class="q-opts">
                       <span v-for="(op, i) in itemOptions(b.item!)" :key="i" class="opt">
