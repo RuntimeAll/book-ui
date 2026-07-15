@@ -343,6 +343,15 @@ function asImageBlock(b: Block): ImageBlock {
   vertical-align: middle;
 }
 
+/* 行内图护栏（2026-07-15 内嵌图原位内联修复轮）：
+   text 块 md 里的 ![](ossUrl) 句中图与文字同行、垂直居中，限高防撑行 */
+.qbr-text :deep(img) {
+  display: inline-block;
+  vertical-align: middle;
+  max-height: 2.5em;
+  max-width: 100%;
+}
+
 /* ── 图片 ────────────────────────────────────────────────────────────────────── */
 .qbr-img {
   /* 🔴 PRD-C-204 渲染修复：max-height + object-fit:contain 让图按比例缩放、不溢出不变形。
