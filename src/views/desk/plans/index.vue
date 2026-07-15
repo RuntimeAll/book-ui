@@ -14,7 +14,7 @@
  *
  * 🔴 id 全 string；枚举走 *_LABEL 映射；BE 未起时优雅空态（拦截器弹错，页面兜 null）。
  */
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -41,6 +41,18 @@ import {
   type SpecialSummary,
 } from '@/api/special'
 import { useSpecialStore } from '@/store/special'
+import {
+  pageBooks,
+  getBookStructure,
+  bindBookNodeToLesson,
+  unbindBookNodeFromLesson,
+  getLessonBookMaterials,
+  BOOK_TYPE_LABEL,
+  type ShelfBookVO,
+  type ShelfNodeVO,
+  type ShelfStructureVO,
+  type LessonBookMaterialVO,
+} from '@/api/shelf'
 import PlanFormDialog from './components/PlanFormDialog.vue'
 import LessonEditDialog from './components/LessonEditDialog.vue'
 import ParentExportDialog from './components/ParentExportDialog.vue'
@@ -312,9 +324,9 @@ const materialsByLesson = ref<Map<string, SpecialSummary[]>>(new Map())
 function materialsOf(lessonId: string): SpecialSummary[] {
   return materialsByLesson.value.get(lessonId) ?? []
 }
-// 备课态：有材料=已备好(2)，无=未备(0)（实时推导，不存冗余列）
+// 备课态：有专项材料或有书章节=已备好(2)，全空=未备(0)（实时推导，不存冗余列）
 function lessonPrepState(lessonId: string): string {
-  return materialsOf(lessonId).length > 0 ? '2' : '0'
+  return materialsOf(lessonId).length > 0 || bookMaterialsOf(lessonId).length > 0 ? '2' : '0'
 }
 
 async function loadMaterials(lessonId: string) {
@@ -329,7 +341,7 @@ async function loadMaterials(lessonId: string) {
 }
 
 async function loadAllMaterials(lessonsArr: PlanLessonVO[]) {
-  await Promise.allSettled(lessonsArr.map((l) => loadMaterials(l.id)))
+  await Promise.allSettled(lessonsArr.flatMap((l) => [loadMaterials(l.id), loadBookMaterials(l.id)]))
 }
 
 // 从备课栏当前专项添加到本课（bind）；无当前专项则引导去备课栏建/选
@@ -400,6 +412,133 @@ async function removeMaterial(lesson: PlanLessonVO, special: SpecialSummary) {
 
 function editSpecial(special: SpecialSummary) {
   router.push(`/special/${special.id}/edit`)
+}
+
+// ── 书籍章节材料位（课次绑定书「讲/节」，与专项材料并列）──────────────────
+// lessonId -> 已绑书章节材料列表（BE 反查书名/节名/子树题数）
+const bookMaterialsByLesson = ref<Map<string, LessonBookMaterialVO[]>>(new Map())
+
+function bookMaterialsOf(lessonId: string): LessonBookMaterialVO[] {
+  return bookMaterialsByLesson.value.get(lessonId) ?? []
+}
+
+async function loadBookMaterials(lessonId: string) {
+  try {
+    const res = await getLessonBookMaterials(lessonId)
+    const next = new Map(bookMaterialsByLesson.value)
+    next.set(lessonId, res?.materials ?? [])
+    bookMaterialsByLesson.value = next
+  } catch {
+    /* 拦截器已弹错 */
+  }
+}
+
+// 绑定弹窗：选书（pageBooks）→ 目录树挑一级/二级节点 → bind
+const bindBookVisible = ref(false)
+const bindingLesson = ref<PlanLessonVO | null>(null)
+const bindBooks = ref<ShelfBookVO[]>([])
+const bindBooksLoading = ref(false)
+const bindBookId = ref('')
+const bindStructure = ref<ShelfStructureVO | null>(null)
+const bindStructureLoading = ref(false)
+
+async function openBindBook(lesson: PlanLessonVO) {
+  bindingLesson.value = lesson
+  bindBookVisible.value = true
+  if (bindBooks.value.length === 0) {
+    bindBooksLoading.value = true
+    try {
+      const res = await pageBooks()
+      bindBooks.value = res?.rows ?? []
+    } catch {
+      bindBooks.value = []
+    } finally {
+      bindBooksLoading.value = false
+    }
+  }
+}
+
+// 🔴 选书 → 拉结构：watch 唯一触发源（不叠 @change，防双触发）
+watch(bindBookId, async (id) => {
+  bindStructure.value = null
+  if (!id) return
+  bindStructureLoading.value = true
+  try {
+    bindStructure.value = await getBookStructure(id)
+  } catch {
+    bindStructure.value = null
+  } finally {
+    bindStructureLoading.value = false
+  }
+})
+
+interface BindNodeRow {
+  id: string
+  name: string
+  count: number
+  children?: BindNodeRow[]
+}
+
+function subtreeQuestionCount(n: ShelfNodeVO): number {
+  let c = (n.items ?? []).filter((it) => it.kind === 'question').length
+  for (const ch of n.children ?? []) c += subtreeQuestionCount(ch)
+  return c
+}
+
+// 目录树只露一级/二级节点（绑「讲/节」粒度，不下探题型层）
+const bindTreeData = computed<BindNodeRow[]>(() => {
+  const mapNode = (n: ShelfNodeVO, depth: number): BindNodeRow => ({
+    id: n.id,
+    name: n.name,
+    count: subtreeQuestionCount(n),
+    children: depth < 1 ? (n.children ?? []).map((c) => mapNode(c, depth + 1)) : undefined,
+  })
+  return (bindStructure.value?.tree ?? []).map((n) => mapNode(n, 0))
+})
+
+const boundNodeIds = computed<Set<string>>(() => {
+  const l = bindingLesson.value
+  return new Set(l ? bookMaterialsOf(l.id).map((m) => m.nodeId) : [])
+})
+
+function bookTypeTag(b: ShelfBookVO): string {
+  return (BOOK_TYPE_LABEL as Record<string, string>)[String(b.bookType)] ?? String(b.bookType)
+}
+
+async function doBindNode(row: BindNodeRow) {
+  const lesson = bindingLesson.value
+  if (!lesson) return
+  try {
+    await bindBookNodeToLesson(lesson.id, row.id)
+    await loadBookMaterials(lesson.id)
+    ElMessage.success(`已绑定「${row.name}」`)
+  } catch {
+    /* 拦截器已弹错 */
+  }
+}
+
+async function removeBookMaterial(lesson: PlanLessonVO, bm: LessonBookMaterialVO) {
+  try {
+    await ElMessageBox.confirm(
+      `把「${bm.bookTitle} · ${bm.nodeTitle}」从本课材料移除？（书本身不受影响）`,
+      '移除书章节',
+      { type: 'warning', confirmButtonText: '移除', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
+  try {
+    await unbindBookNodeFromLesson(lesson.id, bm.nodeId)
+    await loadBookMaterials(lesson.id)
+    ElMessage.success('已移除')
+  } catch {
+    /* 拦截器已弹错 */
+  }
+}
+
+// 点击已绑章节卡 → 跳书浏览页并锚定该节
+function openBookNode(bm: LessonBookMaterialVO) {
+  router.push({ path: `/bookshelf/book/${bm.bookId}`, query: { nodeId: bm.nodeId } })
 }
 
 // ── FP22 家长版导出 ─────────────────────────────────────────────────────────
@@ -599,9 +738,10 @@ onMounted(async () => {
                 <span class="slots-t">本课材料</span>
                 <span class="spacer"></span>
                 <el-button size="small" @click="addMaterial(lesson)">+ 从备课栏添加专项</el-button>
+                <el-button size="small" @click="openBindBook(lesson)">+ 绑定书籍章节</el-button>
               </div>
 
-              <div v-if="materialsOf(lesson.id).length" class="materials">
+              <div v-if="materialsOf(lesson.id).length || bookMaterialsOf(lesson.id).length" class="materials">
                 <div v-for="sp in materialsOf(lesson.id)" :key="sp.id" class="mat-row">
                   <span class="mat-ic">📄</span>
                   <div class="mat-main">
@@ -613,8 +753,25 @@ onMounted(async () => {
                     <el-button link size="small" type="danger" @click="removeMaterial(lesson, sp)">移除</el-button>
                   </div>
                 </div>
+                <div
+                  v-for="bm in bookMaterialsOf(lesson.id)"
+                  :key="bm.nodeId"
+                  class="mat-row mat-book"
+                  title="点击到书浏览页查看该章节"
+                  @click="openBookNode(bm)"
+                >
+                  <span class="mat-ic">📖</span>
+                  <div class="mat-main">
+                    <b class="mat-name">{{ bm.bookTitle }} · {{ bm.nodeTitle }}</b>
+                    <span class="mat-meta">{{ bm.questionCount ?? 0 }} 题</span>
+                  </div>
+                  <div class="mat-acts">
+                    <el-button link size="small" type="primary" @click.stop="openBookNode(bm)">查看</el-button>
+                    <el-button link size="small" type="danger" @click.stop="removeBookMaterial(lesson, bm)">移除</el-button>
+                  </div>
+                </div>
               </div>
-              <p v-else class="slots-empty">本课还没有材料。从右下「备课栏」建/选专项后，点「+ 从备课栏添加专项」挂上来。</p>
+              <p v-else class="slots-empty">本课还没有材料。可「+ 从备课栏添加专项」，或「+ 绑定书籍章节」把书里的讲/节挂上来。</p>
 
               <!-- 思维动作 / 层数 -->
               <div v-if="lesson.thinkingAction || lesson.layerTarget" class="meta-line">
@@ -670,6 +827,56 @@ onMounted(async () => {
       @saved="onLessonSaved"
     />
     <ParentExportDialog v-model="parentExportVisible" :plan="planDetail" />
+
+    <!-- 绑定书籍章节弹窗 -->
+    <el-dialog
+      v-model="bindBookVisible"
+      :title="`绑定书籍章节到「${bindingLesson?.title ?? ''}」`"
+      width="560px"
+    >
+      <el-select
+        v-model="bindBookId"
+        placeholder="选择一本书"
+        filterable
+        clearable
+        :loading="bindBooksLoading"
+        style="width: 100%"
+      >
+        <el-option
+          v-for="b in bindBooks"
+          :key="b.id"
+          :label="`${b.title}（${bookTypeTag(b)}）`"
+          :value="b.id"
+        />
+      </el-select>
+      <div v-loading="bindStructureLoading" class="bind-tree">
+        <el-tree
+          v-if="bindTreeData.length"
+          :data="bindTreeData"
+          node-key="id"
+          default-expand-all
+          :expand-on-click-node="false"
+        >
+          <template #default="{ data }">
+            <div class="bind-node">
+              <span class="bn-name">{{ data.name }}</span>
+              <span class="bn-cnt">{{ data.count }} 题</span>
+              <span v-if="boundNodeIds.has(data.id)" class="bn-bound">✓ 已绑定</span>
+              <el-button v-else link type="primary" size="small" @click.stop="doBindNode(data)">绑定</el-button>
+            </div>
+          </template>
+        </el-tree>
+        <el-empty
+          v-else-if="bindBookId && !bindStructureLoading"
+          description="这本书还没有章节"
+          :image-size="60"
+        />
+        <p v-else class="bind-hint">先选择一本书，再从目录中挑「讲 / 节」绑定到本课。</p>
+      </div>
+      <template #footer>
+        <el-button @click="bindBookVisible = false">完成</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -778,6 +985,19 @@ onMounted(async () => {
 .mat-meta { font-size: 11.5px; color: var(--faint); }
 .mat-acts { flex: none; display: flex; align-items: center; gap: 2px; }
 .slots-empty { font-size: 12.5px; color: var(--faint); margin: 0 0 10px; }
+.mat-row.mat-book { cursor: pointer; transition: border-color .15s, background .15s; }
+.mat-row.mat-book:hover { border-color: var(--bk-teal-deep, #0f766e); background: #f2faf8; }
+
+/* 绑定书籍章节弹窗 */
+.bind-tree {
+  margin-top: 12px; min-height: 180px; max-height: 46vh; overflow: auto;
+  border: 1px solid var(--line-soft); border-radius: 9px; padding: 8px;
+}
+.bind-hint { color: var(--faint); font-size: 13px; text-align: center; padding: 44px 0; margin: 0; }
+.bind-node { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; padding-right: 8px; }
+.bind-node .bn-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bind-node .bn-cnt { flex: none; color: var(--faint); font-size: 12px; }
+.bind-node .bn-bound { flex: none; color: var(--bk-teal-deep, #0f766e); font-size: 12px; font-weight: 600; }
 .meta-line { font-size: 11.5px; color: var(--faint); margin-bottom: 10px; }
 
 .kg-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }

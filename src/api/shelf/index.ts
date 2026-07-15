@@ -226,6 +226,73 @@ export const incrItemUsed = (id: string) =>
   request.post<{ usedCount: number }, { usedCount: number }>(`${BASE}/item/${id}/used`)
 
 // ---------------------------------------------------------------------------
+// 课时 ↔ 书章节绑定（备课材料位，biz_course_plan_lesson.book_node_ids）
+// ---------------------------------------------------------------------------
+
+/** 课时已绑书章节材料（BE 按 nodeId 反查书名/节名 + 子树题数） */
+export interface LessonBookMaterialVO {
+  nodeId: string
+  nodeTitle: string
+  bookId: string
+  bookTitle: string
+  /** 该节点子树题数 */
+  questionCount?: number
+}
+
+/** bind/unbind 共用返回（最新 bookNodeIds 全量） */
+export interface LessonBindNodeResult {
+  lessonId: string
+  bookNodeIds: string[]
+}
+
+/** 课时书章节材料返回（materials 为可渲染卡片，含书名/节名/子树题数） */
+export interface LessonBookMaterialsResult extends LessonBindNodeResult {
+  materials: LessonBookMaterialVO[]
+}
+
+/** 绑书章节到课时：POST lesson/{lessonId}/bind-node {nodeId} */
+export const bindBookNodeToLesson = (lessonId: string, nodeId: string) =>
+  request.post<LessonBindNodeResult, LessonBindNodeResult>(`${BASE}/lesson/${lessonId}/bind-node`, { nodeId })
+
+/** 解绑书章节：POST lesson/{lessonId}/unbind-node {nodeId} */
+export const unbindBookNodeFromLesson = (lessonId: string, nodeId: string) =>
+  request.post<LessonBindNodeResult, LessonBindNodeResult>(`${BASE}/lesson/${lessonId}/unbind-node`, { nodeId })
+
+/** 课时已绑书章节材料列表：GET lesson/{lessonId}/book-materials */
+export const getLessonBookMaterials = (lessonId: string) =>
+  request.get<LessonBookMaterialsResult, LessonBookMaterialsResult>(`${BASE}/lesson/${lessonId}/book-materials`)
+
+// ---------------------------------------------------------------------------
+// 整书导出 PDF（BE BookExportService）
+// ---------------------------------------------------------------------------
+
+/** 整书导出入参。textbook 图片书无答案概念，不传 withAnswers。 */
+export interface BookExportBo {
+  /** 题后附【答案】区（answer_text_content；无答案的题自动跳过） */
+  withAnswers?: boolean
+}
+
+/** 整书导出结果（BE 返 {url, pages, bookId, bookType}） */
+export interface BookExportResult {
+  /** PDF 下载地址（OSS） */
+  url: string
+  /** 总页数 */
+  pages?: number
+  bookId?: string
+  bookType?: string
+}
+
+/**
+ * 整书导出 PDF：POST book/{bookId}/export → {url, pages}。
+ * 讲义/练习册=分讲 HTML→Chrome→PDF 合并；电子课本=整页图逐页拼 A4。
+ * 🔴 同步长任务（每讲 Chrome 渲染 60s 守卫，大书 1-3 分钟）——超时放宽 5 分钟覆盖默认 15s。
+ */
+export const exportBook = (bookId: string, bo: BookExportBo = {}) =>
+  request.post<BookExportResult, BookExportResult>(`${BASE}/book/${bookId}/export`, bo, {
+    timeout: 300_000,
+  })
+
+// ---------------------------------------------------------------------------
 // 三、A→C 挑题交接面（契约§3；C 实现，A 书浏览页调用，未上线时容错）
 // ---------------------------------------------------------------------------
 

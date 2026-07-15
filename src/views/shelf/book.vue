@@ -522,9 +522,12 @@ function viewInBank(it: ShelfItemVO) {
   if (it.questionId) router.push(`/question/detail/${it.questionId}`)
 }
 
-onMounted(() => {
+onMounted(async () => {
   loadCurrentSpecial()
-  load()
+  await load()
+  // 从备课台「书籍章节」材料卡跳入：?nodeId= 直接锚定该讲/节
+  const qNode = route.query.nodeId ? String(route.query.nodeId) : ''
+  if (qNode && nodeById.value[qNode]) goToNode(qNode)
 })
 onBeforeUnmount(() => io?.disconnect())
 </script>
