@@ -579,7 +579,7 @@ const hasVerifyEvidence = computed(
 const verifyComputedHuman = computed(() => {
   const raw = evidenceComputed.value
   if (!raw) return ''
-  let s = String(raw).trim().replace(/^[[{(]\s*/, '').replace(/\s*[\]})]$/, '')
+  const s = String(raw).trim().replace(/^[[{(]\s*/, '').replace(/\s*[\]})]$/, '')
   const parts = s.split(/\s*,\s*/).map((p) => p.trim()).filter(Boolean)
   return parts.join('、')
 })

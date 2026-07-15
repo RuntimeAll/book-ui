@@ -118,6 +118,7 @@ function getQuestionTypeTag(type: number): string {
       <!-- 分值 -->
       <div class="toolbar-score">
         <span class="toolbar-label">分值</span>
+        <!-- eslint-disable vue/no-mutating-props -- 工作台行内草稿字段（_score），父层收集时读回，历史既定模式 -->
         <el-input-number
           v-model="row._score"
           :min="0"
@@ -127,6 +128,7 @@ function getQuestionTypeTag(type: number): string {
           controls-position="right"
           style="width: 100px;"
         />
+        <!-- eslint-enable vue/no-mutating-props -->
       </div>
       <div class="toolbar-divider" />
       <!-- 解析 toggle -->

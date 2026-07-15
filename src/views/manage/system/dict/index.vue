@@ -213,13 +213,15 @@
           <el-input v-model="typeForm.dictName" placeholder="请输入字典名称" />
         </el-form-item>
         <el-form-item prop="dictType">
+          <template #label>
+            <span>
+              <el-tooltip content="数据存储中的Key值，如：sys_user_sex" placement="top">
+                <i class="el-icon-question"></i>
+              </el-tooltip>
+              字典类型
+            </span>
+          </template>
           <el-input v-model="typeForm.dictType" placeholder="请输入字典类型" maxlength="100" />
-          <span slot="label">
-            <el-tooltip content="数据存储中的Key值，如：sys_user_sex" placement="top">
-              <i class="el-icon-question"></i>
-            </el-tooltip>
-            字典类型
-          </span>
         </el-form-item>
         <el-form-item label="备注" prop="remark">
           <el-input v-model="typeForm.remark" type="textarea" placeholder="请输入内容"></el-input>
