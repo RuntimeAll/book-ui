@@ -31,11 +31,13 @@ import {
   updateItem,
   incrItemUsed,
   pickToSpecial,
+  exportBook,
   BOOK_TYPE_LABEL,
   type BookType,
   type ShelfNodeVO,
   type ShelfItemVO,
   type ShelfStructureVO,
+  type BookExportResult,
 } from '@/api/shelf'
 import { questionListByIds, type QuestionDetail } from '@/api/question'
 
@@ -522,6 +524,42 @@ function viewInBank(it: ShelfItemVO) {
   if (it.questionId) router.push(`/question/detail/${it.questionId}`)
 }
 
+// ── 导出本书 PDF ──────────────────────────────────────────────
+// 讲义/练习册可勾「含答案」（默认不勾）；电子课本（整页图书）无答案概念，隐藏该项。
+// 调 BE POST /teacher/shelf/book/{id}/export（同步长任务，大书 1–3 分钟，超时已放宽 5 分钟）。
+const exportVisible = ref(false)
+const exportWithAnswers = ref(false)
+const exporting = ref(false)
+const exportResult = ref<BookExportResult | null>(null)
+const isTextbook = computed(() => book.value?.bookType === 'textbook')
+
+function openExportDialog() {
+  exportWithAnswers.value = false
+  exportResult.value = null
+  exporting.value = false
+  exportVisible.value = true
+}
+
+async function doExportBook() {
+  exporting.value = true
+  exportResult.value = null
+  try {
+    const res = await exportBook(bookId, isTextbook.value ? {} : { withAnswers: exportWithAnswers.value })
+    exportResult.value = res
+    ElMessage.success(`已生成 PDF${res.pages ? `（${res.pages} 页）` : ''}`)
+    if (res.url) window.open(res.url, '_blank')
+  } catch (e) {
+    console.warn('[book] 导出失败:', e)
+    /* http 拦截器已弹错，此处静默 */
+  } finally {
+    exporting.value = false
+  }
+}
+
+function openExportUrl() {
+  if (exportResult.value?.url) window.open(exportResult.value.url, '_blank')
+}
+
 onMounted(async () => {
   loadCurrentSpecial()
   await load()
@@ -544,8 +582,51 @@ onBeforeUnmount(() => io?.disconnect())
         <template v-if="currentSpecial">正在备课：<b>{{ currentSpecial.name }}</b></template>
         <template v-else>未选择专项</template>
       </span>
-      <el-button size="small" @click="ElMessage.info('导出功能由备课链（PRD-003）承载')">导出本书</el-button>
+      <el-button size="small" type="primary" plain @click="openExportDialog">导出本书</el-button>
     </div>
+
+    <!-- 导出本书 PDF 对话框 -->
+    <el-dialog
+      v-model="exportVisible"
+      title="导出本书 PDF"
+      width="440px"
+      style="max-width: 94vw"
+      :close-on-click-modal="false"
+      append-to-body
+    >
+      <div class="bexp-body">
+        <div class="bexp-book">
+          《{{ book?.title ?? '本书' }}》
+          <span v-if="book" :class="bookTagClass">{{ bookTypeLabel }}</span>
+        </div>
+
+        <label v-if="!isTextbook" class="bexp-chk">
+          <el-checkbox v-model="exportWithAnswers" />
+          <span class="bexp-chk-t">
+            含答案
+            <span class="bexp-chk-d">题后附【答案】区（无答案的题自动跳过）</span>
+          </span>
+        </label>
+        <div v-else class="bexp-note">电子课本按整页图逐页拼版，无答案选项。</div>
+
+        <div class="bexp-tip">大书渲染较慢，可能需要 1–3 分钟，生成期间请勿关闭页面。</div>
+
+        <!-- 导出结果 -->
+        <div v-if="exportResult" class="bexp-result">
+          <div class="bexp-result-t">
+            导出完成{{ exportResult.pages ? `（${exportResult.pages} 页）` : '' }}，点击下载：
+          </div>
+          <el-button type="primary" plain size="small" @click="openExportUrl">下载 PDF</el-button>
+        </div>
+      </div>
+
+      <template #footer>
+        <el-button @click="exportVisible = false">{{ exportResult ? '关闭' : '取消' }}</el-button>
+        <el-button type="primary" :loading="exporting" @click="doExportBook">
+          {{ exporting ? '生成中…（1–3 分钟）' : '导出 PDF' }}
+        </el-button>
+      </template>
+    </el-dialog>
 
     <div class="split">
       <!-- 左目录树（导航） -->
@@ -1194,6 +1275,70 @@ onBeforeUnmount(() => io?.disconnect())
   color: var(--el-text-color-regular);
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* 导出本书对话框 */
+.bexp-body {
+  padding: 2px 2px 0;
+}
+.bexp-book {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--el-text-color-primary);
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.bexp-chk {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 4px;
+  cursor: pointer;
+}
+.bexp-chk-t {
+  font-size: 14px;
+  color: var(--el-text-color-primary);
+  display: flex;
+  flex-direction: column;
+  line-height: 1.4;
+}
+.bexp-chk-d {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  margin-top: 2px;
+}
+.bexp-note {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+  padding: 6px 4px;
+}
+.bexp-tip {
+  font-size: 12px;
+  color: #d48806;
+  background: #fffbe6;
+  border: 1px solid #ffe58f;
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-top: 12px;
+}
+.bexp-result {
+  margin-top: 14px;
+  padding: 12px;
+  background: #f2faf7;
+  border: 1px solid #d3ece5;
+  border-radius: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.bexp-result-t {
+  width: 100%;
+  font-size: 13px;
+  color: #0a8e6a;
+  font-weight: 600;
 }
 
 /* 响应式 */
