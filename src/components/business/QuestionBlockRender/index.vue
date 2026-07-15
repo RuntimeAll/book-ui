@@ -343,6 +343,17 @@ function asImageBlock(b: Block): ImageBlock {
   vertical-align: middle;
 }
 
+/* GFM 表格网格线：markdown-it 渲出的 <table> 默认无边框，浏览页/导出双端补网格 */
+.qbr-text :deep(table) {
+  border-collapse: collapse;
+}
+
+.qbr-text :deep(td),
+.qbr-text :deep(th) {
+  border: 1px solid #ccc;
+  padding: 2px 8px;
+}
+
 /* 行内图护栏（2026-07-15 内嵌图原位内联修复轮）：
    text 块 md 里的 ![](ossUrl) 句中图与文字同行、垂直居中，限高防撑行 */
 .qbr-text :deep(img) {
