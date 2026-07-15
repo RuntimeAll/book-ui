@@ -15,27 +15,45 @@ import {
   type BookType,
   type ShelfBookVO,
 } from '@/api/shelf'
+import {
+  useDictStore,
+  DICT_EDU_SUBJECT, DICT_EDU_STAGE, DICT_EDU_GRADE, DICT_EDU_VOLUME,
+} from '@/store/dict'
 import LineIcon from '@/components/LineIcon.vue'
 
 const router = useRouter()
+const dict = useDictStore()
 
-// 类型筛选（'' = 全部）
+// ══ 筛选状态（对齐卷库：类型 / 学科 / 学段 / 年级 / 册 + 书名）════
+// '' = 全部。书量小（按 owner 归属，通常十几本），一次全量拉回、纯前端过滤：
+// 点选即时联动、无逐维度往返，交互与卷库分层收放同构；无需 BE 分页/多参。
+type NumOrAll = number | ''
 const typeFilter = ref<'' | BookType>('')
-const filters: { key: '' | BookType; label: string }[] = [
+const subjectFilter = ref<NumOrAll>('')
+const stageFilter = ref<NumOrAll>('')
+const gradeFilter = ref<NumOrAll>('')
+const volumeFilter = ref<NumOrAll>('')
+const keyword = ref('')
+
+const GRADE_NUM: Record<number, string> = { 1: '一', 2: '二', 3: '三', 4: '四', 5: '五', 6: '六', 7: '七', 8: '八', 9: '九', 10: '高一', 11: '高二', 12: '高三' }
+const STAGE_GRADES: Record<number, number[]> = { 1: [1, 2, 3, 4, 5, 6], 2: [7, 8, 9], 3: [10, 11, 12] }
+
+// 类型段：书架不含专项（BE 已剔除 special），仅 讲义/练习册/电子课本
+const typeSegs: { key: '' | BookType; label: string }[] = [
   { key: '', label: '全部' },
   { key: 'lecture', label: '讲义' },
   { key: 'workbook', label: '练习册' },
-  { key: 'special', label: '专项' },
+  { key: 'textbook', label: '电子课本' },
 ]
 
-const keyword = ref('')
 const loading = ref(false)
 const books = ref<ShelfBookVO[]>([])
 
 async function load() {
   loading.value = true
   try {
-    const res = await pageBooks(typeFilter.value ? { bookType: typeFilter.value } : {})
+    // 一次全量拉本人书（不传 bookType：全部类型都要，前端再分维度过滤）
+    const res = await pageBooks({})
     books.value = res?.rows ?? []
   } catch (e) {
     console.warn('[shelf] 加载书架失败:', e)
@@ -46,21 +64,75 @@ async function load() {
   }
 }
 
-function selectType(k: '' | BookType) {
-  if (typeFilter.value === k) return
-  typeFilter.value = k
-  load()
+// —— 维度可用集（据已加载书集算，缺该维度数据的选项置灰，对齐卷库 dim 逻辑）——
+const subjectsAvail = computed(() => new Set(books.value.map((b) => b.subjectCode).filter((v): v is number => v != null)))
+const stagesAvail = computed(() => new Set(books.value.map((b) => b.stageCode).filter((v): v is number => v != null)))
+const volumesAvail = computed(() => new Set(books.value.map((b) => b.volumeCode).filter((v): v is number => v != null)))
+const typesAvail = computed(() => new Set(books.value.map((b) => String(b.bookType))))
+// 年级卡：受选中学科/学段收窄（未选则全集），只亮真有书的年级
+const gradesAvail = computed(() => {
+  const s = new Set<number>()
+  for (const b of books.value) {
+    if (b.gradeCode == null) continue
+    if (subjectFilter.value !== '' && b.subjectCode !== subjectFilter.value) continue
+    if (stageFilter.value !== '' && b.stageCode !== stageFilter.value) continue
+    s.add(b.gradeCode)
+  }
+  return s
+})
+// 年级卡网格：选了学段 → 该学段年级；否则 → 有书的年级并集升序
+const gradeCells = computed<number[]>(() => {
+  if (stageFilter.value !== '') return STAGE_GRADES[stageFilter.value as number] ?? []
+  return [...new Set(books.value.map((b) => b.gradeCode).filter((v): v is number => v != null))].sort((a, b) => a - b)
+})
+
+const subjectList = computed(() => dict.list(DICT_EDU_SUBJECT))
+const stageList = computed(() => dict.list(DICT_EDU_STAGE))
+
+// —— 交互 ——
+function pickType(k: '' | BookType) { typeFilter.value = k }
+function pickSubject(v: NumOrAll) { subjectFilter.value = subjectFilter.value === v ? '' : v }
+function pickStage(v: NumOrAll) {
+  stageFilter.value = stageFilter.value === v ? '' : v
+  // 换学段：若当前年级不在新学段可选年级内则清空
+  if (stageFilter.value !== '' && gradeFilter.value !== '' && !(STAGE_GRADES[stageFilter.value as number] ?? []).includes(gradeFilter.value as number)) {
+    gradeFilter.value = ''
+  }
+}
+function pickGrade(g: number) {
+  if (!gradesAvail.value.has(g)) return
+  gradeFilter.value = gradeFilter.value === g ? '' : g
+}
+function pickVolume(v: NumOrAll) { volumeFilter.value = volumeFilter.value === v ? '' : v }
+
+const hasActiveFilter = computed(() =>
+  typeFilter.value !== '' || subjectFilter.value !== '' || stageFilter.value !== '' ||
+  gradeFilter.value !== '' || volumeFilter.value !== '' || keyword.value.trim() !== '',
+)
+function resetFilters() {
+  typeFilter.value = ''
+  subjectFilter.value = ''
+  stageFilter.value = ''
+  gradeFilter.value = ''
+  volumeFilter.value = ''
+  keyword.value = ''
 }
 
-// 前端关键词过滤（书名/学科/年级；BE 未做搜索，本地兜底）
+// —— 过滤（AND 跨维度 + 书名/学科/年级关键词）——
 const shownBooks = computed<ShelfBookVO[]>(() => {
   const kw = keyword.value.trim().toLowerCase()
-  if (!kw) return books.value
-  return books.value.filter((b) =>
-    [b.title, b.subjectId, b.grade, b.edition]
-      .filter(Boolean)
-      .some((s) => String(s).toLowerCase().includes(kw)),
-  )
+  return books.value.filter((b) => {
+    if (typeFilter.value !== '' && String(b.bookType) !== typeFilter.value) return false
+    if (subjectFilter.value !== '' && b.subjectCode !== subjectFilter.value) return false
+    if (stageFilter.value !== '' && b.stageCode !== stageFilter.value) return false
+    if (gradeFilter.value !== '' && b.gradeCode !== gradeFilter.value) return false
+    if (volumeFilter.value !== '' && b.volumeCode !== volumeFilter.value) return false
+    if (kw) {
+      const hay = [b.title, b.subjectId, b.grade, b.edition].filter(Boolean).map((s) => String(s).toLowerCase())
+      if (!hay.some((s) => s.includes(kw))) return false
+    }
+    return true
+  })
 })
 
 function coverClass(t: string): string {
@@ -145,7 +217,14 @@ async function submitCreate() {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  // 筛选维度字典（学科/学段/年级/册）—— 与卷库同源 sys_dict
+  void dict.load(DICT_EDU_SUBJECT)
+  void dict.load(DICT_EDU_STAGE)
+  void dict.load(DICT_EDU_GRADE)
+  void dict.load(DICT_EDU_VOLUME)
+  load()
+})
 </script>
 
 <template>
@@ -158,24 +237,93 @@ onMounted(load)
       <p class="sub">讲义、练习册、专项——我的书统一入口</p>
     </div>
 
-    <div class="shelfbar">
-      <div class="filters">
-        <span
-          v-for="f in filters"
-          :key="f.key"
-          class="fbtn"
-          :class="{ on: typeFilter === f.key }"
-          @click="selectType(f.key)"
-        >{{ f.label }}</span>
+    <!-- ══ 筛选面板（对齐卷库：类型 / 学科 / 学段 / 年级 / 册 + 书名）══ -->
+    <div class="filter-panel">
+      <div class="frow">
+        <!-- 类型 -->
+        <div class="grp">
+          <div class="grp-lab">类型</div>
+          <div class="seg">
+            <button
+              v-for="t in typeSegs"
+              :key="t.key || 'all'"
+              :class="{ on: typeFilter === t.key }"
+              :disabled="!!t.key && !typesAvail.has(t.key)"
+              @click="pickType(t.key)"
+            >{{ t.label }}</button>
+          </div>
+        </div>
+        <!-- 学科 -->
+        <div class="grp">
+          <div class="grp-lab">学科</div>
+          <div class="seg">
+            <button :class="{ on: subjectFilter === '' }" @click="pickSubject('')">全部</button>
+            <button
+              v-for="s in subjectList"
+              :key="s.dictValue"
+              :class="{ on: subjectFilter === Number(s.dictValue) }"
+              :disabled="!subjectsAvail.has(Number(s.dictValue))"
+              @click="pickSubject(Number(s.dictValue))"
+            >{{ s.dictLabel }}</button>
+          </div>
+        </div>
+        <!-- 学段 -->
+        <div class="grp">
+          <div class="grp-lab">学段</div>
+          <div class="seg">
+            <button :class="{ on: stageFilter === '' }" @click="pickStage('')">全部</button>
+            <button
+              v-for="st in stageList"
+              :key="st.dictValue"
+              :class="{ on: stageFilter === Number(st.dictValue) }"
+              :disabled="!stagesAvail.has(Number(st.dictValue))"
+              @click="pickStage(Number(st.dictValue))"
+            >{{ st.dictLabel }}</button>
+          </div>
+        </div>
+        <!-- 册 -->
+        <div class="grp">
+          <div class="grp-lab">册</div>
+          <div class="seg">
+            <button :class="{ on: volumeFilter === '' }" @click="pickVolume('')">全部</button>
+            <button :class="{ on: volumeFilter === 1 }" :disabled="!volumesAvail.has(1)" @click="pickVolume(1)">上册</button>
+            <button :class="{ on: volumeFilter === 2 }" :disabled="!volumesAvail.has(2)" @click="pickVolume(2)">下册</button>
+          </div>
+        </div>
       </div>
-      <el-input
-        v-model="keyword"
-        class="search"
-        placeholder="搜书名 / 学科 / 年级"
-        clearable
-        :prefix-icon="undefined"
-      />
-      <el-button type="primary" plain @click="openCreate">＋ 新建书</el-button>
+      <!-- 年级卡（点选即定位；无书年级置灰）-->
+      <div v-if="gradeCells.length" class="frow grade-row">
+        <div class="grp grade-grp">
+          <div class="grp-lab">年级</div>
+          <div class="grades">
+            <div class="grade all" :class="{ on: gradeFilter === '' }" @click="gradeFilter = ''">
+              <div class="num">全</div><div class="cn">全部</div>
+            </div>
+            <div
+              v-for="g in gradeCells"
+              :key="g"
+              class="grade"
+              :class="{ on: gradeFilter === g, dim: !gradesAvail.has(g) }"
+              @click="pickGrade(g)"
+            >
+              <div class="num">{{ GRADE_NUM[g] }}</div>
+              <div class="cn">{{ dict.label(DICT_EDU_GRADE, g) }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- 底栏：书名搜索 + 重置 + 新建书 -->
+      <div class="frow foot-row">
+        <el-input
+          v-model="keyword"
+          class="search"
+          placeholder="搜书名 / 学科 / 年级"
+          clearable
+        />
+        <el-button v-if="hasActiveFilter" text class="reset-btn" @click="resetFilters">重置筛选</el-button>
+        <span class="count">共 {{ shownBooks.length }} 本</span>
+        <el-button type="primary" plain class="new-btn" @click="openCreate">＋ 新建书</el-button>
+      </div>
     </div>
 
     <div v-loading="loading" class="grid-wrap">
@@ -254,42 +402,137 @@ onMounted(load)
   margin-top: 3px;
 }
 
-.shelfbar {
+/* ── 筛选面板（与卷库目录同构：grp-lab + seg 段 + grade 卡）── */
+.filter-panel {
+  margin-top: 12px;
+  padding: 14px 16px;
+  background: #fff;
+  border: 1px solid var(--bk-line);
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(19, 49, 43, 0.05);
+}
+.frow {
   display: flex;
+  flex-wrap: wrap;
+  gap: 18px 22px;
+  align-items: flex-end;
+}
+.grade-row {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed #eef2f2;
+}
+.foot-row {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed #eef2f2;
   align-items: center;
   gap: 12px;
-  padding: 14px 0;
-  border-bottom: 1px solid var(--bk-line);
-  margin-bottom: 4px;
-  flex-wrap: wrap;
 }
-.filters {
+.grp {
+  min-width: 0;
+}
+.grp-lab {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: #7c8a90;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.seg {
+  display: inline-flex;
+  background: #eef2f2;
+  border-radius: 8px;
+  padding: 2px;
+  gap: 2px;
+}
+.seg button {
+  border: 0;
+  background: transparent;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #536268;
+  padding: 7px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: 0.15s;
+}
+.seg button.on {
+  background: #fff;
+  color: var(--bk-teal);
+  box-shadow: 0 1px 3px rgba(19, 49, 43, 0.05);
+}
+.seg button:disabled {
+  color: #b7c0c4;
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.grade-grp {
+  flex: 1;
+}
+.grades {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
 }
-.fbtn {
-  font-size: 13px;
-  padding: 5px 14px;
-  border-radius: 999px;
-  border: 1px solid var(--bk-line);
+.grade {
+  border: 1px solid #e3e9e9;
+  border-radius: 9px;
   background: #fff;
-  color: var(--el-text-color-regular);
   cursor: pointer;
-  user-select: none;
-  transition: all 0.15s;
+  padding: 6px 12px 5px;
+  text-align: center;
+  transition: 0.15s;
+  position: relative;
+  overflow: hidden;
+  min-width: 46px;
 }
-.fbtn:hover {
+.grade .num {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--bk-ink);
+  line-height: 1.1;
+}
+.grade .cn {
+  font-size: 10px;
+  color: #7c8a90;
+  margin-top: 2px;
+  font-weight: 600;
+}
+.grade:hover {
+  border-color: #14958a;
+}
+.grade.on {
   border-color: var(--bk-teal);
+  background: linear-gradient(180deg, #f0faf9, #fff);
+}
+.grade.on .num {
   color: var(--bk-teal);
 }
-.fbtn.on {
+.grade.on::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
   background: var(--bk-teal);
-  border-color: var(--bk-teal);
-  color: #fff;
-  font-weight: 700;
+}
+.grade.dim {
+  opacity: 0.32;
+  pointer-events: none;
+  filter: grayscale(0.4);
 }
 .search {
   width: 240px;
+}
+.reset-btn {
+  color: var(--el-text-color-secondary);
+}
+.count {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+.new-btn {
   margin-left: auto;
 }
 

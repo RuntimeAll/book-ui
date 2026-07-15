@@ -14,11 +14,12 @@ import request from '@/http/request'
 // 一、类型
 // ---------------------------------------------------------------------------
 
-/** 书类型：lecture 讲义 / workbook 练习册 / special 专项 */
-export type BookType = 'lecture' | 'workbook' | 'special'
+/** 书类型：lecture 讲义 / workbook 练习册 / textbook 电子课本 / special 专项 */
+export type BookType = 'lecture' | 'workbook' | 'textbook' | 'special'
 export const BOOK_TYPE_LABEL: Record<BookType, string> = {
   lecture: '讲义',
   workbook: '练习册',
+  textbook: '电子课本',
   special: '专项',
 }
 
@@ -66,6 +67,17 @@ export interface ShelfBookVO {
   nodeCount?: number
   itemCount?: number
   questionCount?: number
+  // 结构化维度码（列表页由 BE 从 biz_subject 结构列回填，对齐卷库筛选；未分类书为 null）
+  /** 学科 biz_edu_subject（1数学 2科学） */
+  subjectCode?: number | null
+  /** 学段 biz_edu_stage（1小学 2初中 3高中） */
+  stageCode?: number | null
+  /** 年级 biz_edu_grade（1一年级…9九年级 10高一…） */
+  gradeCode?: number | null
+  /** 册 biz_edu_volume（1上册 2下册） */
+  volumeCode?: number | null
+  /** 版本 biz_edu_edition（1浙教 2人教…） */
+  editionCode?: number | null
 }
 
 /** 内容项 VO */
