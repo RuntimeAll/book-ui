@@ -643,6 +643,11 @@ export interface LineageNode {
 export interface QuestionLineage {
   /** 本题角色：mother=母题 / variant=变式 / none=无血缘 */
   role: 'mother' | 'variant' | 'none'
+  /**
+   * 母题来源（mother_source）—— 家族性质区分依据。
+   * '教材配套' = 典型例题/配套练习对；其余（含 null）= 举一反三母题/变式题。
+   */
+  motherSource?: string | null
   /** 本题为变式时，其母题（role=mother / none 时为 null） */
   mother: LineageNode | null
   /** 变式列表（role=mother→本题的变式；role=variant→同门变式；none→空数组） */

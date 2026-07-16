@@ -269,6 +269,7 @@ async function loadLineage() {
     if (res && (res.role === 'mother' || res.role === 'variant' || res.role === 'none')) {
       lineage.value = {
         role: res.role,
+        motherSource: res.motherSource ?? null,
         mother: res.mother ?? null,
         variants: Array.isArray(res.variants) ? res.variants : [],
       }
@@ -282,6 +283,19 @@ async function loadLineage() {
     lineageLoading.value = false
   }
 }
+
+// 血缘家族文案：mother_source='教材配套' → 典型例题/配套练习（教材天然母子）；其余 → 母题/变式题（举一反三）
+const lineageWords = computed(() => {
+  const tb = lineage.value?.motherSource === '教材配套'
+  return {
+    motherTag: tb ? '典型例题' : '母题',
+    variantTag: tb ? '配套练习' : '变式题',
+    motherDesc: tb ? '本题为典型例题，下列为其配套练习：' : '本题为母题，下列为其变式：',
+    motherLabel: tb ? '典型例题：' : '母题：',
+    siblingLabel: tb ? '配套练习：' : '同门变式：',
+    emptyVariants: tb ? '暂无配套练习' : '暂无变式',
+  }
+})
 
 // 题型/难度文案真读字典（biz_question_type / biz_question_difficulty，超管改字典即生效）
 const dict = useDictStore()
@@ -591,7 +605,7 @@ watch(questionId, async () => {
               :type="lineage.role === 'mother' ? 'warning' : 'primary'"
               size="small"
             >
-              {{ lineage.role === 'mother' ? '母题' : '变式题' }}
+              {{ lineage.role === 'mother' ? lineageWords.motherTag : lineageWords.variantTag }}
             </el-tag>
           </div>
 
@@ -602,7 +616,7 @@ watch(questionId, async () => {
           <template v-else-if="lineage">
             <!-- role=mother：本题为母题，下列为其变式 -->
             <template v-if="lineage.role === 'mother'">
-              <p class="lineage-desc">本题为母题，下列为其变式：</p>
+              <p class="lineage-desc">{{ lineageWords.motherDesc }}</p>
               <div v-if="lineage.variants.length" class="lineage-list">
                 <div
                   v-for="v in lineage.variants"
@@ -617,13 +631,13 @@ watch(questionId, async () => {
                   </span>
                 </div>
               </div>
-              <p v-else class="lineage-empty">暂无变式</p>
+              <p v-else class="lineage-empty">{{ lineageWords.emptyVariants }}</p>
             </template>
 
             <!-- role=variant：本题为变式，显示母题 + 同门变式 -->
             <template v-else-if="lineage.role === 'variant'">
               <div v-if="lineage.mother" class="lineage-sub">
-                <span class="lineage-sub-label">母题：</span>
+                <span class="lineage-sub-label">{{ lineageWords.motherLabel }}</span>
                 <div class="lineage-item lineage-item--mother" @click="goToLineageNode(lineage.mother)">
                   <span class="lineage-item-brief">{{ lineage.mother.stemBrief || '（无摘要）' }}</span>
                   <span class="lineage-item-meta">
@@ -632,7 +646,7 @@ watch(questionId, async () => {
                 </div>
               </div>
               <div v-if="lineage.variants.length" class="lineage-sub">
-                <span class="lineage-sub-label">同门变式：</span>
+                <span class="lineage-sub-label">{{ lineageWords.siblingLabel }}</span>
                 <div class="lineage-list">
                   <div
                     v-for="v in lineage.variants"

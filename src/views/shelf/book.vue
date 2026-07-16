@@ -327,7 +327,13 @@ function itemTypeLabel(it: ShelfItemVO): string | null {
   return t != null ? QTYPE_LABEL[t] ?? null : null
 }
 function isEdited(it: ShelfItemVO): boolean {
-  return !!it.override && Object.keys(it.override).length > 0
+  // 「本书已修改」只认真实改题（stem / options）；role/roleLabel/roleSeq 是迁移写入的角色元数据，
+  // 不构成改题，否则教材配套书每道题都会误挂「本书已修改」旗标。
+  const ov = it.override
+  if (!ov) return false
+  const stemEdited = typeof ov.stem === 'string' && ov.stem.trim() !== ''
+  const optsEdited = Array.isArray(ov.options) && ov.options.length > 0
+  return stemEdited || optsEdited
 }
 const optLetters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
 
@@ -376,21 +382,41 @@ function liftFromBlockDoc(doc: QuestionBlockDoc): { liftedNo: string | null; doc
   return { liftedNo: null, doc }
 }
 
-/** 单题渲染模型：题号（noLabel 已含点，空串=不显示）+ 剥号后的结构化块 / 富文本题干。 */
+/** 角色徽标（教材配套书迁移后 override_json 携 role/roleLabel/roleSeq；其余书返 null 不显示）。 */
+interface RoleTag {
+  /** 醒目/浅色区分依据：example=典型例题（醒目）/ practice=对应练习（浅色） */
+  role: string
+  /** 展示文案 = roleLabel + roleSeq（如「典型例题1」「对应练习2」） */
+  label: string
+}
+function itemRole(it: ShelfItemVO): RoleTag | null {
+  const ov = it.override
+  if (!ov) return null
+  const role = ov.role
+  const roleLabel = ov.roleLabel
+  if (typeof role !== 'string' || !role || typeof roleLabel !== 'string' || !roleLabel) return null
+  const seq = ov.roleSeq
+  const seqStr = seq == null || seq === '' ? '' : String(seq)
+  return { role, label: `${roleLabel}${seqStr}` }
+}
+
+/** 单题渲染模型：题号（noLabel 已含点，空串=不显示）+ 剥号后的结构化块 / 富文本题干 + 角色徽标。 */
 interface QRender {
   noLabel: string
   blockDoc: QuestionBlockDoc | null
   stemText: string | null
   stemImg: string | null
+  roleTag: RoleTag | null
 }
 function buildQRender(it: ShelfItemVO): QRender {
+  const roleTag = itemRole(it)
   // 结构化块优先（override 改题时 itemBlockJson 返 null，走富文本分支）
   const raw = itemBlockJson(it)
   if (raw) {
     const doc = parseBlockDoc(raw)
     if (doc) {
       const { liftedNo, doc: lifted } = liftFromBlockDoc(doc)
-      return { noLabel: liftedNo ? `${liftedNo}.` : '', blockDoc: lifted, stemText: null, stemImg: null }
+      return { noLabel: liftedNo ? `${liftedNo}.` : '', blockDoc: lifted, stemText: null, stemImg: null, roleTag }
     }
   }
   // 富文本分支（override 题面 / 无块原题）
@@ -401,6 +427,7 @@ function buildQRender(it: ShelfItemVO): QRender {
     blockDoc: null,
     stemText: liftedNo ? rest : stem,
     stemImg: itemStemImg(it),
+    roleTag,
   }
 }
 /** item.id → 渲染模型；随 sections（结构）/ qMap（题面）/ override 变化重算。 */
@@ -717,7 +744,14 @@ onBeforeUnmount(() => io?.disconnect())
                     </div>
                   </div>
                   <span v-if="isEdited(b.item!)" class="q-flag">本书已修改</span>
-                  <span v-if="itemTypeLabel(b.item!)" class="q-type">{{ itemTypeLabel(b.item!) }}</span>
+                  <div v-if="qr(b.item)?.roleTag || itemTypeLabel(b.item!)" class="q-tags">
+                    <span
+                      v-if="qr(b.item)?.roleTag"
+                      class="q-role"
+                      :class="qr(b.item)!.roleTag!.role === 'example' ? 'role-example' : 'role-practice'"
+                    >{{ qr(b.item)!.roleTag!.label }}</span>
+                    <span v-if="itemTypeLabel(b.item!)" class="q-type">{{ itemTypeLabel(b.item!) }}</span>
+                  </div>
                   <div class="q-ops">
                     <el-button size="small" type="primary" @click="pick({ questionId: b.item!.questionId ?? undefined }, b.item!.id)">＋ 入专项</el-button>
                     <el-button size="small" @click="openEdit(b.item!)">✎ 改题</el-button>
@@ -1196,11 +1230,17 @@ onBeforeUnmount(() => io?.disconnect())
   flex: none;
   color: var(--bk-teal-deep);
 }
-/* 题型标签：右上角低调 */
-.q-type {
+/* 标签组：右上角，角色徽标 + 题型标签横排 */
+.q-tags {
   position: absolute;
   top: 10px;
   right: 12px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+/* 题型标签：右上角低调 */
+.q-type {
   font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
   font-size: 11px;
   font-weight: 700;
@@ -1210,6 +1250,25 @@ onBeforeUnmount(() => io?.disconnect())
   border-radius: 5px;
   padding: 0 7px;
   opacity: 0.9;
+}
+/* 角色徽标：example=典型例题（醒目实心）/ practice=对应练习（浅色） */
+.q-role {
+  font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 5px;
+  padding: 0 7px;
+  white-space: nowrap;
+}
+.q-role.role-example {
+  color: #fff;
+  background: var(--bk-teal);
+  border: 1px solid var(--bk-teal-deep);
+}
+.q-role.role-practice {
+  color: var(--bk-teal-deep);
+  background: #eef7f5;
+  border: 1px solid var(--bk-teal);
 }
 .q-flag {
   position: absolute;
