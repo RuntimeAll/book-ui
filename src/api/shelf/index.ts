@@ -58,6 +58,8 @@ export interface ShelfBookVO {
   ownerId?: string | null
   /** 状态：'0' 草稿 / '1' 启用（BE 默认建书 '0'） */
   status?: string | null
+  /** 公开可读：true=全员可见（读/导出/绑定），写仍限 owner */
+  isPublic?: boolean
   styleMeta?: Record<string, unknown> | null
   sourceJobId?: string | null
   remark?: string | null
