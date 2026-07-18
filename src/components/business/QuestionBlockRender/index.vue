@@ -363,6 +363,13 @@ function asImageBlock(b: Block): ImageBlock {
   max-width: 100%;
 }
 
+/* 表格 cell 内的 md 图（媒体表：图排+作答格，如低年级数一数/照样子画一画）：
+   2.5em 句中钳制会把计数图压到不可辨认，表格上下文放开限高 */
+.qbr-text :deep(td) img,
+.qbr-text :deep(th) img {
+  max-height: 100px;
+}
+
 /* ── 图片 ────────────────────────────────────────────────────────────────────── */
 .qbr-img {
   /* 🔴 PRD-C-204 渲染修复：max-height + object-fit:contain 让图按比例缩放、不溢出不变形。
