@@ -40,10 +40,20 @@ import {
   type BookExportResult,
 } from '@/api/shelf'
 import { questionListByIds, type QuestionDetail } from '@/api/question'
+import { useUserStore } from '@/store/user'
 
 const route = useRoute()
 const router = useRouter()
 const bookId = String(route.params.id)
+const userStore = useUserStore()
+
+/** 公开书全员可读，但改题仅 owner / 超管（与 BE requireOwnedBook 对齐）。 */
+const canEdit = computed(() => {
+  if (userStore.isSuperAdmin) return true
+  const uid = userStore.userInfo?.id
+  const owner = book.value?.ownerId
+  return !!uid && !!owner && String(uid) === String(owner)
+})
 
 const loading = ref(false)
 const book = ref<ShelfStructureVO | null>(null)
@@ -754,7 +764,7 @@ onBeforeUnmount(() => io?.disconnect())
                   </div>
                   <div class="q-ops">
                     <el-button size="small" type="primary" @click="pick({ questionId: b.item!.questionId ?? undefined }, b.item!.id)">＋ 入专项</el-button>
-                    <el-button size="small" @click="openEdit(b.item!)">✎ 改题</el-button>
+                    <el-button v-if="canEdit" size="small" @click="openEdit(b.item!)">✎ 改题</el-button>
                     <el-button v-if="b.item!.questionId" size="small" text @click="viewInBank(b.item!)">原题</el-button>
                   </div>
                 </div>
