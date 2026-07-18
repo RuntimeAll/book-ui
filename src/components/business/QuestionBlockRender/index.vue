@@ -352,6 +352,8 @@ function asImageBlock(b: Block): ImageBlock {
 .qbr-text :deep(th) {
   border: 1px solid #ccc;
   padding: 2px 8px;
+  /* 空作答格行高保底：GFM 空 cell 会塌缩成一条线，学生没地方写 */
+  height: 1.9em;
 }
 
 /* 行内图护栏（2026-07-15 内嵌图原位内联修复轮）：
