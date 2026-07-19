@@ -50,7 +50,19 @@ interface BasketGroup {
 }
 
 const basket = ref<BasketGroup[]>([])
-const basketTotal = computed(() => basket.value.reduce((s, g) => s + g.count, 0))
+
+/** 该组实际生效的每行题数（全局手动栏数优先，否则按题型默认）。 */
+function colsOf(g: BasketGroup): number {
+  if (!cfg.colsAuto) return cfg.cols
+  return allTypes.value.find(t => t.code === g.type)?.cols || 3
+}
+/** 勾了「凑满整行」时预告补齐后的实际题量，避免"填 30 出 32"的落差；默认按原样生成。 */
+function effCount(g: BasketGroup): number {
+  if (!cfg.fillRows) return g.count
+  const c = colsOf(g)
+  return Math.ceil(g.count / c) * c
+}
+const basketTotal = computed(() => basket.value.reduce((s, g) => s + effCount(g), 0))
 
 function addType(t: TypeRow) {
   if (t.count < 1) return
@@ -83,6 +95,7 @@ const cfg = reactive({
   title: '口算训练',
   seed: '',
   withAnswer: false,           // 🔴 口算默认不出答案卷（2026-07-17 拍板）
+  fillRows: false,             // 🔴 凑行补足=可选不默认（2026-07-19 拍板）：默认按填的题数原样生成
   groupLabel: true,            // 组标（卷面只印「一、二」序号）
   numbered: false,             // 🔴 默认无题号（2026-07-18 拍板）
   frame: true,
@@ -132,6 +145,7 @@ function buildBody(): CalcExportBo {
   return {
     title: cfg.title || '口算训练',
     ...(cfg.seed.trim() ? { seed: cfg.seed.trim() } : {}),
+    fillRows: cfg.fillRows,   // BE 缺省是 true（agent 路径），页面显式传，默认 false=原样题数
     withGroupLabel: cfg.groupLabel,
     papers: cfg.withAnswer ? ['question', 'answer'] : ['question'],
     groups: basket.value.map(g => ({
@@ -285,6 +299,7 @@ function restoreBody(body: CalcExportBo) {
   cfg.title = body.title || '口算训练'
   cfg.seed = body.seed || ''
   cfg.withAnswer = !!body.papers?.includes('answer')
+  cfg.fillRows = body.fillRows !== false   // 旧记录无此字段=当年默认凑行
   cfg.groupLabel = body.withGroupLabel !== false
   const l = body.layout || {}
   cfg.numbered = l.numbered === true
@@ -307,7 +322,7 @@ function restoreBody(body: CalcExportBo) {
 async function resetAll() {
   await ElMessageBox.confirm('清空组卷篮并恢复默认配置？', '重置', { type: 'warning' })
   basket.value = []
-  restoreBody({ groups: [] })
+  restoreBody({ groups: [], fillRows: false })
   result.value = null
   cfg.seed = ''
 }
@@ -342,6 +357,10 @@ onMounted(loadTypes)
           <span class="cg-basket-name">{{ g.name }}</span>
           <el-tag v-if="g.mode !== 'oral'" size="small" type="warning">{{ MODE_NAMES[g.mode] }}</el-tag>
           <el-input-number v-model="g.count" :min="1" :max="100" size="small" class="cg-count" />
+          <span
+            v-if="effCount(g) !== g.count" class="cg-eff"
+            :title="`每行 ${colsOf(g)} 题、行必凑满，实际生成 ${effCount(g)} 题`"
+          >→{{ effCount(g) }}</span>
           <span class="cg-mini-btns">
             <el-button size="small" text :disabled="i === 0" @click="moveGroup(i, -1)">↑</el-button>
             <el-button size="small" text :disabled="i === basket.length - 1" @click="moveGroup(i, 1)">↓</el-button>
@@ -394,6 +413,7 @@ onMounted(loadTypes)
           </div>
           <div class="cg-switches">
             <el-checkbox v-model="cfg.withAnswer">附教师答案卷</el-checkbox>
+            <el-checkbox v-model="cfg.fillRows" title="题数向上补齐到每行的整数倍，末行不留空位">凑满整行</el-checkbox>
             <el-checkbox v-model="cfg.groupLabel">组标（一、二）</el-checkbox>
             <el-checkbox v-model="cfg.numbered">小题号</el-checkbox>
             <el-checkbox v-model="cfg.frame">卷面边框</el-checkbox>
@@ -545,6 +565,7 @@ onMounted(loadTypes)
 .cg-ord { color: var(--bk-teal, #1a7f74); font-weight: 700; width: 26px; flex: none; }
 .cg-basket-name { flex: 1; min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cg-count { width: 86px; flex: none; }
+.cg-eff { font-size: 12px; color: #e6a23c; font-weight: 700; flex: none; cursor: help; }
 .cg-mini-btns { display: flex; flex: none; }
 .cg-mini-btns .el-button { padding: 4px; }
 .cg-gen { width: 100%; margin-top: 10px; }

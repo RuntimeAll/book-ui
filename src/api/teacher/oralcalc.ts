@@ -14,6 +14,8 @@ export interface CalcTypeInfo {
   name: string
   grade: number
   term: number
+  /** 每行题数（BE 会把每组题数向上凑整到它的倍数，保证每行凑满）。 */
+  cols: number
 }
 
 /** 呈现形态：口算一行式 / 竖式留白 / 脱式留白（卷面去＝）。 */
@@ -47,6 +49,8 @@ export interface CalcLayoutBo {
 export interface CalcExportBo {
   title?: string
   seed?: string
+  /** 凑行补足：题数向上凑整到每行倍数。BE 缺省 true；自选页默认显式传 false（原样题数）。 */
+  fillRows?: boolean
   withGroupLabel?: boolean
   papers?: Array<'question' | 'answer'>
   groups: CalcGroupBo[]
