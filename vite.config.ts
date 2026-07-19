@@ -82,6 +82,14 @@ export default defineConfig({
         secure: false,
         rewrite: (p) => p.replace(/^\/agent/, ''),
       },
+      // 🔴 计算出题页：OSS 产物同源转发（OSS 桶无 CORS 头，pdfjs 取字节/内嵌预览需同源）。
+      //   prod 部署时 nginx 需配等价 location /oss/ → OSS 反代。
+      '/oss': {
+        target: 'https://ai-book.oss-cn-hangzhou.aliyuncs.com',
+        changeOrigin: true,
+        secure: true,
+        rewrite: (p) => p.replace(/^\/oss/, ''),
+      },
     },
   },
   // 🔴 PRD-A-013 T4 (H-4)：jspdf + html2canvas 切独立 chunk 'pdf-vendor'（≈530KB），

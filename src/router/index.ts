@@ -214,6 +214,8 @@ const router = createRouter({
             { path: 'my-papers', name: 'MyPapers', component: () => import('@/views/desk/my-papers.vue') },
             // 🔴 举一反三（PRD-C-009）= 图片变式入口（toolkit :8093，vite proxy /agent）
             { path: 'ai-variant', name: 'AiVariant', component: () => import('@/views/variant/index.vue') },
+            // 计算出题（2026-07-19）——自选题型/形态/版式一键出计算卷（BE 出题器 /teacher/oralcalc）
+            { path: 'calc-gen', name: 'CalcGen', component: () => import('@/views/desk/calc-gen.vue') },
             // 几何画板（GeoBoard）——JSXGraph 引擎，draw 主页 + 只读画廊
             { path: 'geo-board', name: 'GeoBoardStudio', component: () => import('@/views/geo-board/index.vue') },
             { path: 'geo-board/gallery', name: 'GeoBoardGallery', component: () => import('@/views/geo-board/gallery.vue') },

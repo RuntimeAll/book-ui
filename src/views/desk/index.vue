@@ -51,6 +51,7 @@ const MENU_GROUPS: MenuGroup[] = [
   {
     title: 'AI 工具',
     items: [
+      { title: '计算出题', path: '/desk/calc-gen', icon: 'papers' },
       { title: '举一反三', path: '/desk/ai-variant', icon: 'ai-variant' },
       { title: '几何画板', path: '/desk/geo-board', icon: 'geo-board' },
       { title: '我的工作台', path: '/desk/workspace', icon: 'workspace' },
