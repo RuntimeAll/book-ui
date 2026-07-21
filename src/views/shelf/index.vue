@@ -19,6 +19,7 @@ import {
   useDictStore,
   DICT_EDU_SUBJECT, DICT_EDU_STAGE, DICT_EDU_GRADE, DICT_EDU_VOLUME,
 } from '@/store/dict'
+import { getProgress, type ReviewProgress } from '@/api/review'
 import LineIcon from '@/components/LineIcon.vue'
 
 const router = useRouter()
@@ -49,12 +50,18 @@ const typeSegs: { key: '' | BookType; label: string }[] = [
 const loading = ref(false)
 const books = ref<ShelfBookVO[]>([])
 
+// 🔴 PRD-006 AC5 — 每本书的录入审核进度（角标）。bookId → 进度。
+// 不阻塞列表渲染：load() 只等书列表，进度角标 fire-and-forget、限并发池逐本回填。
+const progressMap = ref<Record<string, ReviewProgress>>({})
+
 async function load() {
   loading.value = true
   try {
     // 一次全量拉本人书（不传 bookType：全部类型都要，前端再分维度过滤）
     const res = await pageBooks({})
     books.value = res?.rows ?? []
+    // 列表已就位即渲染；进度角标异步补（不 await，不挡首屏）
+    void loadProgressBadges(books.value)
   } catch (e) {
     console.warn('[shelf] 加载书架失败:', e)
     ElMessage.error('加载书架失败')
@@ -63,6 +70,37 @@ async function load() {
     loading.value = false
   }
 }
+
+/** 限并发（5）逐本拉审核进度回填 progressMap；单本失败静默（角标非关键，不打断列表）。 */
+async function loadProgressBadges(list: ShelfBookVO[]) {
+  progressMap.value = {}
+  const ids = list.map((b) => b.id)
+  let idx = 0
+  const worker = async () => {
+    while (idx < ids.length) {
+      const id = ids[idx++]
+      try {
+        const p = await getProgress(id)
+        if (p) progressMap.value = { ...progressMap.value, [id]: p }
+      } catch {
+        /* 角标失败静默 */
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(5, ids.length) }, worker))
+}
+
+/** 书卡审核角标：totalPages>0 才展示；done = 全书页审完（AC5 录入确认完成语义，前端计算）。 */
+const reviewInfoMap = computed(() => {
+  const m: Record<string, { reviewed: number; total: number; pct: number; done: boolean }> = {}
+  for (const [id, p] of Object.entries(progressMap.value)) {
+    const total = Number(p?.totalPages ?? 0)
+    if (total <= 0) continue
+    const reviewed = Math.max(0, Math.min(Number(p?.reviewedPages ?? 0), total))
+    m[id] = { reviewed, total, pct: Math.round((reviewed / total) * 100), done: reviewed >= total }
+  }
+  return m
+})
 
 // —— 维度可用集（据已加载书集算，缺该维度数据的选项置灰，对齐卷库 dim 逻辑）——
 const subjectsAvail = computed(() => new Set(books.value.map((b) => b.subjectCode).filter((v): v is number => v != null)))
@@ -160,6 +198,11 @@ function statLine(b: ShelfBookVO): string {
 
 function openBook(b: ShelfBookVO) {
   router.push(`/bookshelf/book/${b.id}`)
+}
+
+// 🔴 PRD-006 — 录入审核入口（按页比对源书原版 → 逐页确认；普通用户可见）
+function openReview(b: ShelfBookVO) {
+  router.push(`/bookshelf/review/${b.id}`)
 }
 
 function onExport() {
@@ -333,13 +376,22 @@ onMounted(() => {
           <div class="bd">
             <span :class="tagClass(b.bookType)">{{ typeLabel(b.bookType) }}</span>
             <div class="stat">{{ statLine(b) }}</div>
+            <!-- 🔴 PRD-006 录入审核进度角标（AC5）：done→录入确认完成徽标 / 否则迷你进度条 -->
+            <div v-if="reviewInfoMap[b.id]" class="rv-badge">
+              <span v-if="reviewInfoMap[b.id].done" class="rv-done">✓ 录入确认完成</span>
+              <template v-else>
+                <div class="rv-mini-bar"><i :style="{ width: reviewInfoMap[b.id].pct + '%' }"></i></div>
+                <span class="rv-mini-num">已审 {{ reviewInfoMap[b.id].reviewed }}/{{ reviewInfoMap[b.id].total }} 页</span>
+              </template>
+            </div>
             <div class="ops">
               <el-button size="small" type="primary" @click="openBook(b)">打开</el-button>
-              <el-button size="small" @click="onExport">导出</el-button>
-              <el-dropdown trigger="click" @command="(c: string) => c === 'del' && onDelete(b)">
+              <el-button size="small" class="review-btn" @click="openReview(b)">录入审核</el-button>
+              <el-dropdown trigger="click" @command="(c: string) => c === 'del' ? onDelete(b) : c === 'export' && onExport()">
                 <el-button size="small">⋯</el-button>
                 <template #dropdown>
                   <el-dropdown-menu>
+                    <el-dropdown-item command="export">导出</el-dropdown-item>
                     <el-dropdown-item command="del" style="color: var(--el-color-danger)">删除书</el-dropdown-item>
                   </el-dropdown-menu>
                 </template>
@@ -604,10 +656,58 @@ onMounted(() => {
   color: var(--el-text-color-secondary);
   margin-top: 5px;
 }
+/* ── 录入审核进度角标（PRD-006 AC5）── */
+.rv-badge {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 7px;
+  min-height: 16px;
+}
+.rv-mini-bar {
+  flex: 1;
+  height: 5px;
+  border-radius: 4px;
+  background: var(--bg-100, #edf2f2);
+  overflow: hidden;
+}
+.rv-mini-bar > i {
+  display: block;
+  height: 100%;
+  background: var(--bk-teal);
+  transition: width 0.25s ease;
+}
+.rv-mini-num {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--el-text-color-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.rv-done {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--bk-red-pen, #e0526b);
+  background: #fdecef;
+  border: 1px solid #f4c6d0;
+  border-radius: 999px;
+  padding: 1px 9px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
 .ops {
   margin-top: 10px;
   display: flex;
   gap: 6px;
   align-items: center;
+}
+.review-btn {
+  color: var(--bk-teal-deep);
+  border-color: var(--el-color-primary-light-7);
+}
+.review-btn:hover {
+  color: #fff;
+  background: var(--bk-teal);
+  border-color: var(--bk-teal);
 }
 </style>

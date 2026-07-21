@@ -262,6 +262,12 @@ const router = createRouter({
           name: 'BookshelfBook',
           component: () => import('@/views/shelf/book.vue'),
         },
+        // 🔴 PRD-006 批2 — 录题比对审核页（左源书原图 / 右系统该页题；页级确认 + 问题登记）
+        {
+          path: '/bookshelf/review/:bookId',
+          name: 'BookshelfReview',
+          component: () => import('@/views/shelf/review.vue'),
+        },
         // 🔴 PRD-002 D5 退役：旧讲义模块（/kg-lecture 重定向、/kg-lecture-edit 编辑页、/lecture-hub 浏览器）
         // 整体删除，讲义并入书架（type=lecture）。存量数据留库不展示（D7）。
         // PRD-C-211 — 系统管理中心（B 线 admin 系统管理直接移植）；壳=左菜单+右内容区。
