@@ -13,7 +13,7 @@
  */
 import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Picture } from '@element-plus/icons-vue'
 import QuestionCard from '@/components/business/QuestionCard/index.vue'
 import QuestionContent from '@/components/business/QuestionContent/index.vue'
@@ -29,6 +29,7 @@ import {
   updateIssueStatus,
   ISSUE_TYPES,
   ISSUE_STATUSES,
+  QUICK_ISSUE_GROUPS,
   type ReviewPageItem,
   type ReviewIssue,
 } from '@/api/review'
@@ -41,7 +42,11 @@ const bookId = String(route.params.bookId)
 const bookTitle = ref('')
 const totalPages = ref(0)
 const reviewedPages = ref(0)
-const page = ref(clampPage(Number(route.query.page) || 1))
+/** 断点续审（2026-07-21 用户拍板）：每次翻页记 localStorage，重进还原上次审核位置；URL query 优先。 */
+const POS_KEY = `rv-pos-${bookId}`
+const page = ref(
+  clampPage(Number(route.query.page) || Number(localStorage.getItem(POS_KEY)) || 1),
+)
 
 function clampPage(p: number): number {
   if (!Number.isFinite(p) || p < 1) return 1
@@ -73,6 +78,8 @@ interface DisplayItem {
   q?: QuestionItem
   explainTitle?: string
   explainText?: string | null
+  /** 审核置信度（>=90 可速过 / 60-89 常规 / <60 重点审） */
+  confidence?: number | null
 }
 const displayItems = ref<DisplayItem[]>([])
 const questionCount = computed(() => displayItems.value.filter((d) => d.kind === 'question').length)
@@ -80,6 +87,17 @@ const questionCount = computed(() => displayItems.value.filter((d) => d.kind ===
 // ── 问题登记 ──────────────────────────────────────────────────────────────────
 const issues = ref<ReviewIssue[]>([])
 const issuesOnPage = computed(() => issues.value.filter((i) => i.sourcePage === page.value))
+/** 本页是否有「待处理」问题（刚记完 bug）→ 底栏切成「直接下一页」不强迫通过。 */
+const pageHasPending = computed(() => issuesOnPage.value.some((i) => i.status === '待处理'))
+/** 本页问题按题分组（2026-07-21 用户拍板：问题直接挂对应题卡上就地确认，不藏抽屉）；'__page__' = 整页问题。 */
+const issuesByQuestion = computed(() => {
+  const m: Record<string, ReviewIssue[]> = {}
+  for (const i of issuesOnPage.value) {
+    const k = i.questionId ? String(i.questionId) : '__page__'
+    ;(m[k] ||= []).push(i)
+  }
+  return m
+})
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 加载
@@ -178,8 +196,15 @@ async function loadPageItems() {
         kind: 'question' as const,
         questionId: qid,
         q: full ?? fallbackQuestion(it),
+        confidence: it.confidence ?? null,
       }
     })
+    // 🔴 无题页自动跳过（2026-07-21 用户拍板"不要默认停目录，直接全部跳过"）：
+    //    前进方向遇无题页 → 自动标通过并跳到下一个有题页；往回翻(prevPage)不劫持。
+    if (!displayItems.value.length && !skippingEmpty.value && !suppressAutoSkip.value) {
+      void skipEmptyPages()
+    }
+    suppressAutoSkip.value = false
   } catch {
     if (cur === page.value) displayItems.value = []
   } finally {
@@ -212,15 +237,19 @@ function goPage(p: number) {
 const canPrev = computed(() => page.value > 1)
 const canNext = computed(() => totalPages.value === 0 || page.value < totalPages.value)
 function prevPage() {
-  if (canPrev.value) goPage(page.value - 1)
+  if (canPrev.value) {
+    suppressAutoSkip.value = true // 往回翻允许停在无题页（不被自动跳过劫持）
+    goPage(page.value - 1)
+  }
 }
 function nextPage() {
   if (canNext.value) goPage(page.value + 1)
 }
 
-// page 变 → 重载左右 + 同步 URL（router.replace 不触发重挂）
+// page 变 → 重载左右 + 同步 URL（router.replace 不触发重挂）+ 记断点续审位置
 watch(page, () => {
   router.replace({ query: { ...route.query, page: String(page.value) } })
+  localStorage.setItem(POS_KEY, String(page.value))
   pageReviewed.value = false
   void loadSourcePage()
   void loadPageItems()
@@ -233,9 +262,20 @@ const confirming = ref(false)
 async function onConfirmPage() {
   confirming.value = true
   try {
+    // 🔴 2026-07-21 用户拍板：页级通过 = 本页所有「待确认」问题一并确认闭环（不留尾巴）；
+    //    「待处理」保留——那是还没修的，通过页不代表问题已解决。
+    const pend = issuesOnPage.value.filter((i) => i.status === '待确认')
+    for (const i of pend) {
+      try {
+        await updateIssueStatus(i.id, '已确认')
+        i.status = '已确认'
+      } catch {
+        /* 单条失败不阻塞页通过；http 拦截器已弹错 */
+      }
+    }
     await confirmPage(bookId, page.value)
     pageReviewed.value = true
-    ElMessage.success(`第 ${page.value} 页已通过`)
+    ElMessage.success(pend.length ? `第 ${page.value} 页已通过，${pend.length} 条待确认问题一并确认` : `第 ${page.value} 页已通过`)
     await loadProgress()
     // 自动翻下一页（末页则停留并提示）
     if (canNext.value) {
@@ -251,6 +291,37 @@ async function onConfirmPage() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// 跳过无题页（2026-07-21 用户反馈：封面/目录页拦着进不了正题，一页页点太磨人）
+//   从当前无题页起：逐页标通过 → 探下一页，直到遇到有题页停下（该页留给用户审）。
+// ═══════════════════════════════════════════════════════════════════════════
+const skippingEmpty = ref(false)
+/** 置 true 时抑制下一次 loadPageItems 的自动跳过（往回翻/跳过刚结束的场景）。 */
+const suppressAutoSkip = ref(false)
+async function skipEmptyPages() {
+  skippingEmpty.value = true
+  try {
+    let p = page.value
+    const max = totalPages.value || p + 60 // 防呆上限（totalPages 未知时最多探 60 页）
+    for (;;) {
+      await confirmPage(bookId, p) // 无题页直接标通过
+      if (p >= max) break
+      const next = p + 1
+      const res = await getPageItems(bookId, next)
+      p = next
+      if ((res?.items ?? []).length > 0) break // 下一页有题 → 停在那页交给用户审
+    }
+    suppressAutoSkip.value = true // 停点若仍无题（末页情形）不再连环触发
+    goPage(p)
+    await loadProgress()
+    ElMessage.success(`无题页已自动通过，跳到第 ${p} 页`)
+  } catch {
+    /* http 拦截器已弹错 */
+  } finally {
+    skippingEmpty.value = false
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // 「改」→ 题目详情页（复用 detail.vue；改完 router.back 返回本页自动刷新）
 // ═══════════════════════════════════════════════════════════════════════════
 function goEdit(d: DisplayItem) {
@@ -258,26 +329,57 @@ function goEdit(d: DisplayItem) {
     ElMessage.warning('该题项无题库题（无法定位详情）')
     return
   }
-  router.push(`/question/detail/${d.questionId}`)
+  // 🔴 2026-07-21 bug 修：原 router.push 跳详情，返回时历史栈落回编辑页死循环。
+  //    改为新页签打开——审核页原地不动，改完关页签切回来自动刷新（见 visibilitychange）。
+  window.open(router.resolve(`/question/detail/${d.questionId}`).href, '_blank')
+}
+// 切回本页签（改题回来）→ 自动重载当前页题目，立即看到改后效果
+function onVisibleRefresh() {
+  if (document.visibilityState === 'visible') void loadPageItems()
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 「记问题」对话框
+// 「记问题」对话框 —— 草稿暂存 → 点「完成录入」才落库（2026-07-21 用户拍板改版）
+//   点标签 = 本地选中（再点取消），不直接进库；补充说明同样先入草稿；
+//   底部「完成录入 (N)」一次性批量 POST；关闭弹窗不点完成 = 丢弃草稿（有草稿时先确认）。
 // ═══════════════════════════════════════════════════════════════════════════
 const issueDialogVisible = ref(false)
-const issueSubmitting = ref(false)
-const issueForm = ref<{ questionId: string | null; issueType: string; description: string }>({
-  questionId: null,
-  issueType: ISSUE_TYPES[0],
-  description: '',
+/** 本次记录目标（某题 questionId / 整页 null）。 */
+const issueTarget = ref<{ questionId: string | null }>({ questionId: null })
+
+/** 草稿条目：kind=tag(标签) / text(补充说明)。落库前只存在本地。 */
+interface DraftIssue {
+  kind: 'tag' | 'text'
+  category: string
+  description: string
+}
+const draftIssues = ref<DraftIssue[]>([])
+const finishSubmitting = ref(false)
+/** 标签是否已选（胶囊高亮由草稿派生）。 */
+const tagSelected = computed<Record<string, boolean>>(() => {
+  const m: Record<string, boolean> = {}
+  for (const d of draftIssues.value) if (d.kind === 'tag') m[d.description] = true
+  return m
 })
 
+// 补充说明（默认收起，仅特殊问题需打字时展开）
+const supplementOpen = ref(false)
+const supplementType = ref('')
+const supplementText = ref('')
+/** 补充说明归类可选项 = 三大类 + 其它。 */
+const supplementTypeOptions = [...QUICK_ISSUE_GROUPS.map((g) => g.category), '其它']
+
+/** 问题清单筛选类型可选项 = 快捷大类 + 历史类型（去重，兼容旧数据）。 */
+const typeFilterOptions = Array.from(
+  new Set([...QUICK_ISSUE_GROUPS.map((g) => g.category), ...ISSUE_TYPES]),
+)
+
 function openIssueDialog(d?: DisplayItem) {
-  issueForm.value = {
-    questionId: d?.questionId ?? null,
-    issueType: ISSUE_TYPES[0],
-    description: '',
-  }
+  issueTarget.value = { questionId: d?.questionId ?? null }
+  draftIssues.value = []
+  supplementOpen.value = false
+  supplementType.value = ''
+  supplementText.value = ''
   issueDialogVisible.value = true
 }
 function shortId(id: string | null | undefined): string {
@@ -285,29 +387,86 @@ function shortId(id: string | null | undefined): string {
   const s = String(id)
   return s.length > 6 ? `…${s.slice(-6)}` : s
 }
-async function submitIssue() {
-  if (!issueForm.value.issueType) {
-    ElMessage.warning('请选择问题类型')
+
+/** 点标签 = 草稿里 toggle 这条（选中/取消），不落库。 */
+function toggleDraftTag(category: string, tag: string) {
+  const idx = draftIssues.value.findIndex((d) => d.kind === 'tag' && d.description === tag)
+  if (idx >= 0) draftIssues.value.splice(idx, 1)
+  else draftIssues.value.push({ kind: 'tag', category, description: tag })
+}
+
+/** 补充说明：加入草稿（不落库），可加多条。 */
+function addSupplementDraft() {
+  const text = supplementText.value.trim()
+  if (!text) {
+    ElMessage.warning('请填写补充说明')
     return
   }
-  issueSubmitting.value = true
-  try {
-    await createIssue({
-      bookId,
-      questionId: issueForm.value.questionId,
-      sourcePage: page.value,
-      issueType: issueForm.value.issueType,
-      description: issueForm.value.description.trim() || undefined,
-    })
-    ElMessage.success('已登记问题')
+  draftIssues.value.push({ kind: 'text', category: supplementType.value || '其它', description: text })
+  supplementText.value = ''
+}
+function removeDraft(idx: number) {
+  draftIssues.value.splice(idx, 1)
+}
+
+/** 🔴「完成录入」= 唯一落库动作：批量 POST 草稿；失败的留在草稿里可重试。 */
+async function finishRecord() {
+  if (!draftIssues.value.length) {
     issueDialogVisible.value = false
-    await loadIssues()
-    if (issuesDrawerVisible.value) await loadDrawerIssues()
-  } catch {
-    /* http 拦截器已弹错 */
-  } finally {
-    issueSubmitting.value = false
+    return
   }
+  finishSubmitting.value = true
+  const failed: DraftIssue[] = []
+  let okCount = 0
+  for (const d of draftIssues.value) {
+    try {
+      const res = await createIssue({
+        bookId,
+        questionId: issueTarget.value.questionId,
+        sourcePage: page.value,
+        issueType: d.category,
+        description: d.description,
+      })
+      okCount += 1
+      issues.value.push({
+        id: res?.id ? String(res.id) : `tmp-${Date.now()}-${okCount}`,
+        bookId,
+        questionId: issueTarget.value.questionId ?? null,
+        sourcePage: page.value,
+        issueType: d.category,
+        description: d.description,
+        status: ISSUE_STATUSES[0],
+      })
+    } catch {
+      failed.push(d) // http 拦截器已弹错；失败条目保留草稿可重试
+    }
+  }
+  finishSubmitting.value = false
+  draftIssues.value = failed
+  if (okCount) {
+    ElMessage.success(`已录入 ${okCount} 条`)
+    if (issuesDrawerVisible.value) void loadDrawerIssues()
+  }
+  if (!failed.length) issueDialogVisible.value = false
+  else ElMessage.warning(`${failed.length} 条录入失败，已保留可重试`)
+}
+
+/** 关闭弹窗（不点完成录入）：有草稿先确认丢弃，防误关丢记录。 */
+function beforeCloseIssueDialog(done: () => void) {
+  if (!draftIssues.value.length || finishSubmitting.value) {
+    done()
+    return
+  }
+  ElMessageBox.confirm(`还有 ${draftIssues.value.length} 条未录入，关闭将丢弃。确认？`, '未完成录入', {
+    confirmButtonText: '丢弃并关闭',
+    cancelButtonText: '继续记录',
+    type: 'warning',
+  })
+    .then(() => {
+      draftIssues.value = []
+      done()
+    })
+    .catch(() => {})
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -348,21 +507,57 @@ watch(issuesDrawerVisible, (open) => {
 watch([filterType, filterStatus], () => {
   if (issuesDrawerVisible.value) void loadDrawerIssues()
 })
-function issueStatusTag(s: string): 'info' | 'success' | 'warning' {
-  if (s === '已改') return 'success'
+function issueStatusTag(s: string): 'info' | 'success' | 'warning' | 'primary' {
+  if (s === '已确认') return 'success' // 老师已确认 = 闭环
+  if (s === '待确认') return 'primary' // Claude 已改、待老师确认（醒目=你要动的）
   if (s === '搁置') return 'info'
-  return 'warning'
+  return 'warning' // 待处理
 }
 async function changeIssueStatus(row: ReviewIssue, status: string) {
   if (status === row.status) return
   try {
     await updateIssueStatus(row.id, status)
-    ElMessage.success('状态已更新')
+    ElMessage.success(status === '已确认' ? '已确认修改完成 ✓' : '状态已更新')
     await Promise.all([loadIssues(), loadDrawerIssues()])
   } catch {
     /* http 拦截器已弹错 */
   }
 }
+/** 置信度分档（评审效率）：>=90 可速过 / 60-89 常规 / <60 重点审。 */
+function confClass(c: number): string {
+  return c >= 90 ? 'hi' : c >= 60 ? 'mid' : 'lo'
+}
+function confLabel(c: number): string {
+  return c >= 90 ? `可速过 ${c}` : c >= 60 ? `常规 ${c}` : `重点审 ${c}`
+}
+/** 老师一键确认：待确认 → 已确认（协同闭环的老师侧动作）。 */
+function confirmIssueFixed(row: ReviewIssue) {
+  void changeIssueStatus(row, '已确认')
+}
+/** 点问题行 → 跳到该问题所在源页复看（关抽屉）；sourcePage=0 的全书性批量条目不跳。 */
+function gotoIssuePage(row: ReviewIssue) {
+  const p = Number(row.sourcePage)
+  if (!p || p < 1) {
+    ElMessage.info('该条是全书性批量问题，无固定页；直接翻看任意受影响页即可')
+    return
+  }
+  suppressAutoSkip.value = true // 定点跳页不被自动跳过劫持
+  issuesDrawerVisible.value = false
+  goPage(p)
+}
+/** 全书问题进度统计（顶栏角标 issues 全量算，抽屉筛选不影响）。 */
+const issueStat = computed(() => {
+  const s = { 待处理: 0, 待确认: 0, 已确认: 0, 搁置: 0, total: 0 } as Record<string, number>
+  for (const i of issues.value) {
+    s.total += 1
+    if (i.status in s) s[i.status] += 1
+  }
+  return s
+})
+/** 全书问题是否已全部闭环（有登记问题、且无 待处理/待确认 剩余）。 */
+const allIssuesCleared = computed(
+  () => issueStat.value.total > 0 && issueStat.value['待处理'] === 0 && issueStat.value['待确认'] === 0,
+)
 
 // ── 导出问题清单 CSV（前端生成；含 页/题/类型/描述/状态；BOM 让 Excel 认中文）──
 function csvCell(v: unknown): string {
@@ -421,10 +616,14 @@ function goShelf() {
 
 onMounted(async () => {
   window.addEventListener('keydown', onKeydown)
+  document.addEventListener('visibilitychange', onVisibleRefresh)
   await Promise.all([loadBook(), loadProgress(), loadIssues()])
   await Promise.all([loadSourcePage(), loadPageItems()])
 })
-onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKeydown)
+  document.removeEventListener('visibilitychange', onVisibleRefresh)
+})
 </script>
 
 <template>
@@ -440,6 +639,14 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
       </div>
       <el-button size="small" class="rv-issues-btn" @click="issuesDrawerVisible = true">
         问题登记 <b v-if="issues.length">({{ issues.length }})</b>
+        <el-badge
+          v-if="issueStat['待确认'] > 0"
+          :value="issueStat['待确认']"
+          class="rv-confirm-badge"
+          type="primary"
+        >
+          <span class="rv-confirm-hint">待你确认</span>
+        </el-badge>
       </el-button>
       <div class="rv-pager">
         <button class="rv-pgbtn" :disabled="!canPrev" aria-label="上一页" @click="prevPage">‹</button>
@@ -484,6 +691,17 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
         <div v-loading="itemsLoading" class="rv-items">
           <template v-if="displayItems.length">
+            <!-- 整页问题（不关联具体题）：挂在页顶就地闭环 -->
+            <div v-if="issuesByQuestion['__page__']?.length" class="rv-qissues rv-pageissues">
+              <div v-for="iss in issuesByQuestion['__page__']" :key="iss.id" class="rv-qissue">
+                <el-tag :type="issueStatusTag(iss.status)" size="small" effect="light">{{ iss.status }}</el-tag>
+                <span class="rv-qissue-desc">{{ iss.issueType }} · {{ iss.description }}</span>
+                <el-button v-if="iss.status === '待确认'" type="success" size="small" @click="confirmIssueFixed(iss)">
+                  ✓ 确认修改完成
+                </el-button>
+              </div>
+            </div>
+
             <template v-for="d in displayItems" :key="d.itemId">
               <!-- explain：方法点拨块 -->
               <div v-if="d.kind === 'explain'" class="rv-explain">
@@ -496,14 +714,32 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
               <!-- question：QuestionCard 真机渲染 + 审核动作条 -->
               <div v-else class="rv-qwrap">
                 <QuestionCard v-if="d.q" :question="d.q" :actions="[]" />
+                <!-- 该题已记的问题：直接展示在题卡下，待确认可就地点确认（问题生命周期终点） -->
+                <div v-if="d.questionId && issuesByQuestion[d.questionId]?.length" class="rv-qissues">
+                  <div v-for="iss in issuesByQuestion[d.questionId]" :key="iss.id" class="rv-qissue">
+                    <el-tag :type="issueStatusTag(iss.status)" size="small" effect="light">{{ iss.status }}</el-tag>
+                    <span class="rv-qissue-desc">{{ iss.issueType }} · {{ iss.description }}</span>
+                    <el-button v-if="iss.status === '待确认'" type="success" size="small" @click="confirmIssueFixed(iss)">
+                      ✓ 确认修改完成
+                    </el-button>
+                  </div>
+                </div>
                 <div class="rv-qacts">
                   <el-button size="small" type="primary" plain @click="goEdit(d)">改</el-button>
                   <el-button size="small" class="rv-issue-mini" @click="openIssueDialog(d)">记问题</el-button>
+                  <!-- 审核置信度（评审效率）：高=可速过 / 低=重点审 -->
+                  <span v-if="d.confidence != null" class="rv-conf" :class="confClass(d.confidence)">
+                    {{ confLabel(d.confidence) }}
+                  </span>
                 </div>
               </div>
             </template>
           </template>
-          <el-empty v-else-if="!itemsLoading" description="该页暂无系统题目（source_page 未回填或本页无题）" />
+          <el-empty v-else-if="!itemsLoading" description="该页暂无系统题目（封面/目录/无题页）">
+            <el-button type="primary" :loading="skippingEmpty" @click="skipEmptyPages">
+              ⏩ 跳过无题页（自动通过，停在下一个有题页）
+            </el-button>
+          </el-empty>
         </div>
 
         <!-- ══ 页级审核栏 ══ -->
@@ -514,7 +750,17 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
             <em v-if="issuesOnPage.length">本页已记 {{ issuesOnPage.length }} 个问题</em>
           </div>
           <el-button text class="rv-pr-issue" @click="openIssueDialog()">记整页问题</el-button>
+          <!-- 本页有「待处理」问题（刚记完 bug）→ 主按钮=直接下一页（不通过）；无待处理才显示「本页通过」 -->
           <el-button
+            v-if="pageHasPending"
+            type="warning"
+            class="rv-pr-btn"
+            @click="nextPage"
+          >
+            已记问题 · 直接下一页 ›
+          </el-button>
+          <el-button
+            v-else
             type="primary"
             class="rv-pr-btn"
             :loading="confirming"
@@ -526,39 +772,96 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
       </div>
     </div>
 
-    <!-- ══ 记问题对话框 ══ -->
-    <el-dialog v-model="issueDialogVisible" title="记一条问题" width="480px" append-to-body>
-      <el-form label-width="72px">
-        <el-form-item label="源页">
-          <el-tag type="info" effect="plain">P.{{ page }}</el-tag>
-          <span class="rv-form-hint">（当前页自动带入）</span>
-        </el-form-item>
-        <el-form-item label="关联题">
-          <template v-if="issueForm.questionId">
-            <span class="rv-linked-q">题 {{ shortId(issueForm.questionId) }}</span>
-            <el-button link type="primary" size="small" @click="issueForm.questionId = null">改为整页问题</el-button>
-          </template>
-          <span v-else class="rv-form-hint">整页问题（不关联具体题）</span>
-        </el-form-item>
-        <el-form-item label="问题类型">
-          <el-select v-model="issueForm.issueType" style="width: 100%">
-            <el-option v-for="t in ISSUE_TYPES" :key="t" :label="t" :value="t" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="描述">
+    <!-- ══ 记问题对话框：先选标签暂存，点「完成录入」才落库 ══ -->
+    <el-dialog
+      v-model="issueDialogVisible"
+      title="记问题 · 选好后点「完成录入」"
+      width="560px"
+      append-to-body
+      class="rv-issue-dialog"
+      :before-close="beforeCloseIssueDialog"
+    >
+      <!-- 目标信息条 -->
+      <div class="rv-iss-meta">
+        <el-tag type="info" effect="plain" size="small">源页 P.{{ page }}</el-tag>
+        <template v-if="issueTarget.questionId">
+          <el-tag effect="plain" size="small" class="rv-iss-qtag">题 {{ shortId(issueTarget.questionId) }}</el-tag>
+          <el-button link type="primary" size="small" @click="issueTarget.questionId = null">改为整页问题</el-button>
+        </template>
+        <span v-else class="rv-form-hint">整页问题（不关联具体题）</span>
+        <span v-if="draftIssues.length" class="rv-iss-count">待录 {{ draftIssues.length }} 条（未保存）</span>
+      </div>
+
+      <!-- 快捷标签区：点选中/再点取消，仅暂存 -->
+      <div class="rv-tag-groups">
+        <div v-for="g in QUICK_ISSUE_GROUPS" :key="g.category" class="rv-tag-group">
+          <div class="rv-tag-cat">{{ g.category }}</div>
+          <div class="rv-tag-chips">
+            <button
+              v-for="t in g.tags"
+              :key="t"
+              type="button"
+              class="rv-chip"
+              :class="{ hit: tagSelected[t] }"
+              @click="toggleDraftTag(g.category, t)"
+            >
+              <span class="rv-chip-txt">{{ t }}</span>
+              <span v-if="tagSelected[t]" class="rv-chip-hit">✓</span>
+            </button>
+          </div>
+        </div>
+      </div>
+      <p class="rv-tag-tip">点标签选中（再点取消）；🔴 只有点底部「完成录入」才会保存进系统。</p>
+
+      <!-- 补充说明（默认收起，特殊问题需打字时展开） -->
+      <div class="rv-supp">
+        <el-button link type="primary" class="rv-supp-toggle" @click="supplementOpen = !supplementOpen">
+          {{ supplementOpen ? '收起补充说明 ▴' : '＋ 补充说明（特殊问题需打字时展开）' }}
+        </el-button>
+        <div v-if="supplementOpen" class="rv-supp-body">
+          <div class="rv-supp-row">
+            <el-select v-model="supplementType" placeholder="归类（可选）" size="small" clearable style="width: 140px">
+              <el-option v-for="c in supplementTypeOptions" :key="c" :label="c" :value="c" />
+            </el-select>
+            <el-button type="primary" size="small" @click="addSupplementDraft">加入待录</el-button>
+          </div>
           <el-input
-            v-model="issueForm.description"
+            v-model="supplementText"
             type="textarea"
-            :rows="4"
+            :rows="3"
             placeholder="如：看图列式的小鸡图未渲染，学生无法作答…"
             maxlength="500"
             show-word-limit
           />
-        </el-form-item>
-      </el-form>
+        </div>
+        <!-- 已加入草稿的补充说明条目（可删） -->
+        <div v-if="draftIssues.some((d) => d.kind === 'text')" class="rv-draft-texts">
+          <template v-for="(d, di) in draftIssues" :key="di">
+            <el-tag
+              v-if="d.kind === 'text'"
+              closable
+              type="info"
+              effect="plain"
+              size="small"
+              class="rv-draft-tag"
+              @close="removeDraft(di)"
+            >
+              {{ d.category }}：{{ d.description.length > 24 ? d.description.slice(0, 24) + '…' : d.description }}
+            </el-tag>
+          </template>
+        </div>
+      </div>
+
       <template #footer>
-        <el-button @click="issueDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="issueSubmitting" @click="submitIssue">登记</el-button>
+        <el-button @click="beforeCloseIssueDialog(() => (issueDialogVisible = false))">取消</el-button>
+        <el-button
+          type="primary"
+          :loading="finishSubmitting"
+          :disabled="!draftIssues.length"
+          @click="finishRecord"
+        >
+          完成录入{{ draftIssues.length ? `（${draftIssues.length} 条）` : '' }}
+        </el-button>
       </template>
     </el-dialog>
 
@@ -566,7 +869,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
     <el-drawer v-model="issuesDrawerVisible" title="本书问题清单" size="480px" append-to-body>
       <div class="rv-issue-filters">
         <el-select v-model="filterType" placeholder="全部类型" clearable size="small" style="width: 132px">
-          <el-option v-for="t in ISSUE_TYPES" :key="t" :label="t" :value="t" />
+          <el-option v-for="t in typeFilterOptions" :key="t" :label="t" :value="t" />
         </el-select>
         <el-select v-model="filterStatus" placeholder="全部状态" clearable size="small" style="width: 108px">
           <el-option v-for="s in ISSUE_STATUSES" :key="s" :label="s" :value="s" />
@@ -576,28 +879,61 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
         </el-button>
         <span class="rv-issue-count">共 {{ shownIssues.length }} 条</span>
       </div>
+
+      <!-- 协同闭环进度条：待处理 → 待确认(点确认) → 已确认 -->
+      <div class="rv-issue-flow">
+        <span class="rv-flow-seg rv-flow-todo">待处理 {{ issueStat['待处理'] }}</span>
+        <span class="rv-flow-arrow">→</span>
+        <span class="rv-flow-seg rv-flow-confirm">待你确认 {{ issueStat['待确认'] }}</span>
+        <span class="rv-flow-arrow">→</span>
+        <span class="rv-flow-seg rv-flow-done">已确认 {{ issueStat['已确认'] }}</span>
+        <span v-if="allIssuesCleared" class="rv-flow-cleared">✓ 全部闭环</span>
+      </div>
+      <p class="rv-flow-tip">
+        问题生命周期：你标问题 → Claude 修改（待你确认）→ <b>点问题行跳到那一页</b>复看 → 点「确认修改完成」即结束。
+      </p>
+
       <el-table
         v-loading="drawerLoading"
         :data="shownIssues"
         size="small"
         style="width: 100%"
         empty-text="暂无登记问题"
+        :row-class-name="({ row }) => (row.status === '待确认' ? 'rv-row-confirm rv-row-click' : 'rv-row-click')"
+        @row-click="gotoIssuePage"
       >
-        <el-table-column label="页" width="52" align="center">
+        <el-table-column label="页" width="46" align="center">
           <template #default="{ row }">{{ row.sourcePage ?? '—' }}</template>
         </el-table-column>
-        <el-table-column label="类型" width="92">
+        <el-table-column label="类型" width="80">
           <template #default="{ row }">{{ row.issueType }}</template>
         </el-table-column>
-        <el-table-column label="描述" min-width="120">
+        <el-table-column label="描述" min-width="110">
           <template #default="{ row }">
             <span class="rv-issue-desc" :title="row.description || ''">{{ row.description || '—' }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="110">
+        <el-table-column label="状态 / 操作" width="128">
           <template #default="{ row }">
-            <el-dropdown trigger="click" @command="(s: string) => changeIssueStatus(row, s)">
-              <el-tag :type="issueStatusTag(row.status)" effect="light" size="small" class="rv-status-tag">
+            <!-- 待确认：一键「确认修改完成」= 老师侧闭环动作（.stop 防触发行点击跳页） -->
+            <el-button
+              v-if="row.status === '待确认'"
+              type="success"
+              size="small"
+              class="rv-confirm-btn"
+              @click.stop="confirmIssueFixed(row)"
+            >
+              ✓ 确认修改完成
+            </el-button>
+            <!-- 其余状态：下拉手动流转 -->
+            <el-dropdown v-else trigger="click" @command="(s: string) => changeIssueStatus(row, s)">
+              <el-tag
+                :type="issueStatusTag(row.status)"
+                effect="light"
+                size="small"
+                class="rv-status-tag"
+                @click.stop
+              >
                 {{ row.status }} ▾
               </el-tag>
               <template #dropdown>
@@ -885,6 +1221,125 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   margin-right: 8px;
 }
 
+/* ── 记问题弹窗：快捷标签 ── */
+.rv-iss-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-bottom: 12px;
+  margin-bottom: 4px;
+  border-bottom: 1px dashed var(--bk-line);
+}
+.rv-iss-qtag {
+  color: var(--bk-teal-deep);
+  font-weight: 600;
+}
+.rv-iss-count {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--bk-teal-deep);
+  background: var(--bk-teal-soft, #e6f3f1);
+  border-radius: 999px;
+  padding: 2px 10px;
+}
+.rv-tag-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+}
+.rv-tag-group {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.rv-tag-cat {
+  flex: 0 0 44px;
+  font-size: 12.5px;
+  font-weight: 800;
+  color: var(--el-text-color-secondary);
+  padding-top: 6px;
+  text-align: right;
+}
+.rv-tag-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+.rv-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 13px;
+  border-radius: 999px;
+  border: 1px solid var(--bk-line, #d9e4e2);
+  background: #fff;
+  color: var(--bk-ink);
+  font-size: 13px;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: all 0.14s ease;
+  user-select: none;
+}
+.rv-chip:hover {
+  border-color: var(--bk-teal, #2fa39a);
+  color: var(--bk-teal-deep, #1f7a72);
+  background: var(--bk-teal-soft, #e6f3f1);
+}
+.rv-chip:active {
+  transform: scale(0.94);
+}
+.rv-chip.hit {
+  border-color: var(--bk-teal, #2fa39a);
+  background: var(--bk-teal, #2fa39a);
+  color: #fff;
+  font-weight: 600;
+}
+.rv-chip.hit:hover {
+  background: var(--bk-teal-deep, #1f7a72);
+  color: #fff;
+}
+.rv-chip-hit {
+  font-size: 11px;
+  font-weight: 700;
+}
+.rv-tag-tip {
+  margin: 12px 0 4px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+/* ── 补充说明（默认收起） ── */
+.rv-supp {
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--bk-line);
+}
+.rv-supp-toggle {
+  font-size: 12.5px;
+}
+.rv-supp-body {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.rv-supp-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.rv-iss-foot-hint {
+  font-size: 12px;
+  color: var(--bk-teal-deep);
+  font-weight: 600;
+  margin-right: 8px;
+}
+
 /* 问题清单抽屉 */
 .rv-issue-filters {
   display: flex;
@@ -915,6 +1370,128 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 }
 .rv-status-tag {
   cursor: pointer;
+}
+
+/* ── 协同闭环进度条 ── */
+.rv-issue-flow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  border-radius: 6px;
+  background: var(--bk-teal-soft, #e6f3f1);
+  font-size: 12.5px;
+}
+.rv-flow-seg {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+.rv-flow-todo {
+  color: #b76a00;
+  background: #fdf3e6;
+}
+.rv-flow-confirm {
+  color: #0f766e;
+  background: #d6ece9;
+}
+.rv-flow-done {
+  color: #237804;
+  background: #e6f4e0;
+}
+.rv-flow-arrow {
+  color: var(--el-text-color-secondary);
+}
+.rv-flow-cleared {
+  margin-left: auto;
+  color: var(--bk-teal-deep, #0b5d56);
+  font-weight: 700;
+}
+/* 待确认行高亮：老师这轮要动的 */
+:deep(.rv-row-confirm) {
+  background: var(--bk-teal-soft, #eef8f6);
+}
+/* 问题行可点跳页 */
+:deep(.rv-row-click) {
+  cursor: pointer;
+}
+/* 题卡下挂的问题条（就地闭环） */
+.rv-qissues {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 6px 0 2px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #fdf9ef;
+  border: 1px dashed #e5c580;
+}
+.rv-pageissues {
+  background: var(--bk-teal-soft, #e6f3f1);
+  border-color: var(--bk-teal, #0f766e);
+}
+.rv-qissue {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.rv-qissue-desc {
+  font-size: 12.5px;
+  color: var(--el-text-color-primary);
+  flex: 1;
+  min-width: 0;
+}
+/* 置信度徽标（评审效率）：高绿可速过 / 中灰常规 / 低红重点审 */
+.rv-conf {
+  margin-left: auto;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+.rv-conf.hi {
+  color: #237804;
+  background: #e6f4e0;
+}
+.rv-conf.mid {
+  color: #6b7671;
+  background: #eef1f0;
+}
+.rv-conf.lo {
+  color: #c02b3d;
+  background: #fbe9ec;
+}
+.rv-flow-tip {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  margin: 0 0 10px;
+  line-height: 1.6;
+}
+/* 记问题草稿：已加入的补充说明条目 */
+.rv-draft-texts {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.rv-draft-tag {
+  max-width: 100%;
+}
+.rv-confirm-btn {
+  --el-button-size: 26px;
+  padding: 4px 8px;
+  font-weight: 600;
+}
+.rv-confirm-badge {
+  margin-left: 8px;
+}
+.rv-confirm-hint {
+  font-size: 12px;
+  color: var(--bk-teal-deep, #0b5d56);
+  font-weight: 600;
 }
 
 /* 响应式：窄屏上下堆叠 */

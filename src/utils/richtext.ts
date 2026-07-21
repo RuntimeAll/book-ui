@@ -109,6 +109,38 @@ export function renderRichText(text: string): string {
   // 值受正则约束（仅 hex 颜色 / 数字字号）+ v-safe-html DOMPurify 兜底，无注入面。
   result = applyInlineMarkers(result)
 
+  // ── Step 5：作答算式串放大（2026-07-21 三修·范围收窄，用户拍板）──
+  // 🔴 只放大「作答算式串」= 连续符号串里 **既含框（□○◯）又含等号（＝/=）** 的
+  //    （□○□＝□ / □＋□＝□＋□＝□＋□ / 4○□□=□…，即图转符号那批的形态）。
+  //    正文零散的 □ ○ △ ☆（"在○的上面画□"等指令、图形符号）保持正常字号不放大。
+  //    单位（人）（只）在串外，也保持正文字号。KaTeX 已占位还原，替换安全。
+  result = result.replace(
+    /[□○◯△☆◇＝＋－=+\-\d]{3,}/g,
+    (s) => (/[□○◯]/.test(s) && /[＝=]/.test(s) ? `<span class="glyph-ans">${s}</span>` : s),
+  )
+
+  // ── Step 5.5：作答括号不可拆行（2026-07-21 用户："括号应该是合在一起的，不能被拆分的"）──
+  // 作答括号（　　）/(        ) 落在行尾会被折行拆成「（」+「）」两截；包 nowrap 让
+  // 括号连同内部作答空位当一个整体换行。全角/半角括号+空白（含 U+3000/NBSP）都兼容。
+  result = result.replace(
+    /[（(][ 　 ]{1,}[）)]/g,
+    (s) => `<span style="white-space:nowrap">${s}</span>`,
+  )
+
+  // ── Step 6：内联图显式宽度标记（2026-07-21"图片大小可修改"）──
+  // md 写法 ![](url "w=30") → 图按容器宽 30% 渲染并解除全局 1.4em 限高钳制。
+  // markdown-it 把 title 渲成 <img ... title="w=30">，此处转成行内样式；
+  // 无标记的内联图仍走全局钳制（小图标语义）。数值钳 1-100，无注入面。
+  // 🔴 2026-07-21 二修：原 display:block 让带宽图强制独占一行（用户"完全独立了"）——
+  //    改 inline-block 留在行内与文字同行，宽度%仍相对容器生效。
+  result = result.replace(
+    /<img([^>]*?)\stitle="w=(\d{1,3})"([^>]*?)>/g,
+    (_m, pre: string, w: string, post: string) => {
+      const pct = Math.min(100, Math.max(1, Number(w)))
+      return `<img${pre} style="width:${pct}%;max-height:none;display:inline-block;vertical-align:middle"${post}>`
+    },
+  )
+
   return result
 }
 

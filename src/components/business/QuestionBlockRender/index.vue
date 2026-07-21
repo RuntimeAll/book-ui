@@ -132,16 +132,14 @@ function imageStyle(b: ImageBlock) {
 
 /**
  * figgroup 内单张图的 flex-item 样式。
- * 基准宽由 block.width 折算：width% / 2 作为 flex-basis（两张图能轻松并排，
- * 窄屏 flex-wrap 自动换行，宽屏 4 张一行）。
- * max-width 使用 block.width% 原始值做上限，防止单图被过度拉宽。
+ * 🔴 2026-07-21 修（用户"图片宽度调不动"根因）：原 basis=width/2 px + 下限 120px 的组内算法
+ *    覆盖了 width% 语义——编辑器把 64 拖到 100 视觉几乎不变。改为直接尊重 width%：
+ *    所设即所得；两张 w44 图 88% 仍并排，超 100% 自动换行（2×2 场景与源书一致）。
  */
 function figItemStyle(b: ImageBlock) {
   const w = Math.min(100, Math.max(1, Number(b.width) || 40))
-  // basis = width%/2，让两张能并排；太小的图（<30%）给 120px 最小基准
-  const basis = Math.max(120, Math.round((w / 2) * 10) / 10)
   return {
-    flex: `0 1 ${basis}px`,
+    flex: `0 1 ${w}%`,
     maxWidth: `${w}%`,
   }
 }
@@ -150,12 +148,22 @@ function figItemStyle(b: ImageBlock) {
 function asImageBlock(b: Block): ImageBlock {
   return b as ImageBlock
 }
+
+/** 图点击看原图（2026-07-21 审核"图片不能放大缩小"）：事件委托覆盖结构图+md 内联图，新页签开原图可任意缩放。 */
+function onRootClick(e: MouseEvent) {
+  const t = e.target as HTMLElement
+  if (t?.tagName === 'IMG') {
+    const src = (t as HTMLImageElement).src
+    if (src) window.open(src, '_blank')
+  }
+}
 </script>
 
 <template>
   <div
     v-if="rows.length > 0"
     class="qbr-root"
+    @click="onRootClick"
   >
     <template
       v-for="(group, gi) in displayGroups"
@@ -327,6 +335,17 @@ function asImageBlock(b: Block): ImageBlock {
   margin: 0 0 0.4em;
 }
 
+/* 🔴 2026-07-21 一上审核根因（代码层）：作答括号「(        )」内的连续半角空格被 HTML
+   默认 white-space:normal 折叠成 1 个 → 渲染成「( )」没了作答位（用户"空格没有填充"）。
+   pre-wrap 保留文本节点内的连续空格与 U+3000，只挂叶子元素（p/li/td/th），
+   不挂 .qbr-text 容器本身——容器直接子级是标签间的格式化换行，挂了会渲出空白行。 */
+.qbr-text :deep(p),
+.qbr-text :deep(li),
+.qbr-text :deep(td),
+.qbr-text :deep(th) {
+  white-space: pre-wrap;
+}
+
 .qbr-text :deep(p:last-child) {
   margin-bottom: 0;
 }
@@ -356,12 +375,23 @@ function asImageBlock(b: Block): ImageBlock {
   height: 1.9em;
 }
 
+/* 作答/图形字符放大（richtext Step 5 包的 span）：□○△☆＝＋－按源书大号印刷框渲染，
+   学生有地方写（"答题的框太小"根因，2026-07-21；1.35→1.8em 用户拍板"默认都是大号"）。 */
+.qbr-text :deep(.glyph-ans) {
+  font-size: 1.8em;
+  line-height: 1.15;
+  vertical-align: -0.1em;
+}
+
 /* 行内图护栏（2026-07-15 内嵌图原位内联修复轮）：
-   text 块 md 里的 ![](ossUrl) 句中图与文字同行、垂直居中，限高防撑行 */
+   text 块 md 里的 ![](ossUrl) 句中图与文字同行、垂直居中，限高防撑行。
+   🔴 2026-07-21 一上审核根因A：内联 ![]() 图无逐图尺寸旋钮（=用户"月亮图标太大且不能修改"的代码根因），
+   仅此全局上限可调。源书里 月牙/△○□ 类符号约 1 字高，2.5em(≈35px) 相对 14px 正文偏大 →
+   收到 1.8em；2026-07-21 二轮用户复看仍偏大（月亮比☆○□字符大一圈）→ 再收到 1.4em ≈ 字符高。 */
 .qbr-text :deep(img) {
   display: inline-block;
   vertical-align: middle;
-  max-height: 2.5em;
+  max-height: 1.4em;
   max-width: 100%;
 }
 
@@ -381,7 +411,14 @@ function asImageBlock(b: Block): ImageBlock {
   max-height: 240px;
   height: auto;
   object-fit: contain;
-  border-radius: 6px;
+  /* 🔴 2026-07-21 审核根因：教辅线稿图(作答框条/几何图)白底贴边，border-radius:6px
+     会把贴边框线削掉一截——用户看着像"图被切了角"。线稿图为主，圆角一律去掉。 */
+  border-radius: 0;
+  cursor: zoom-in; /* 点击开原图（onRootClick 委托） */
+}
+
+.qbr-text :deep(img) {
+  cursor: zoom-in;
 }
 
 /* figgroup 内的图：max-height 可稍大，让分子结构图等有足够高度展示细节 */
