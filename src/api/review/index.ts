@@ -113,6 +113,12 @@ export interface CreateIssueBo {
   description?: string
 }
 
+/** 问题来源：human=人工审核提出（金标准，准度最高）/ agent=agent 自查（线索级） */
+export const ISSUE_SOURCES = [
+  { value: 'human', label: '人工' },
+  { value: 'agent', label: '自查' },
+] as const
+
 /** 问题登记行（GET /issues） */
 export interface ReviewIssue {
   id: string
@@ -122,8 +128,30 @@ export interface ReviewIssue {
   issueType: string
   description?: string | null
   status: string
+  /** human=人工（金标准）/ agent=自查；旧数据缺省按 human */
+  source?: string
   createBy?: string | null
   createTime?: string | null
+}
+
+/** 页级置信度地图条目（GET /page-map，速审跳页用） */
+export interface PageMapEntry {
+  page: number
+  /** 页内题项数 */
+  items: number
+  /** 页内最低置信度（null=无评分） */
+  minConf: number | null
+  /** hi=全部>=90 可速过 / mid=常规 / lo=重点审 / null=未评 */
+  tier: 'hi' | 'mid' | 'lo' | null
+  reviewed: boolean
+  /** 未闭环问题数（待处理+待确认） */
+  issues: number
+}
+
+export interface ReviewPageMap {
+  bookId?: string
+  totalPages: number
+  pages: PageMapEntry[]
 }
 
 // ---------------------------------------------------------------------------
@@ -153,10 +181,26 @@ export const confirmPage = (bookId: string, page: number) =>
 export const createIssue = (bo: CreateIssueBo) =>
   request.post<{ id: string }, { id: string }>(`${BASE}/issue`, bo)
 
-/** 问题列表：GET /issues?bookId&type?&status? */
-export const listIssues = (bookId: string, type?: string, status?: string) =>
+/** 问题列表：GET /issues?bookId&type?&status?&source?（source: human=人工 / agent=自查） */
+export const listIssues = (bookId: string, type?: string, status?: string, source?: string) =>
   request.get<ReviewIssue[], ReviewIssue[]>(`${BASE}/issues`, {
-    params: { bookId, ...(type ? { type } : {}), ...(status ? { status } : {}) },
+    params: {
+      bookId,
+      ...(type ? { type } : {}),
+      ...(status ? { status } : {}),
+      ...(source ? { source } : {}),
+    },
+  })
+
+/** 页级置信度地图：GET /page-map?bookId */
+export const getPageMap = (bookId: string) =>
+  request.get<ReviewPageMap, ReviewPageMap>(`${BASE}/page-map`, { params: { bookId } })
+
+/** 批量页级确认（高置信页一键通过）：PUT /confirm-pages body{bookId,pages} */
+export const confirmPages = (bookId: string, pages: number[]) =>
+  request.put<{ confirmed: number }, { confirmed: number }>(`${BASE}/confirm-pages`, {
+    bookId,
+    pages,
   })
 
 /** 更新问题状态：PUT /issue/{id}/status body{status} */

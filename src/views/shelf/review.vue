@@ -24,14 +24,18 @@ import {
   getSourcePage,
   getPageItems,
   confirmPage,
+  confirmPages,
   createIssue,
   listIssues,
+  getPageMap,
   updateIssueStatus,
   ISSUE_TYPES,
   ISSUE_STATUSES,
+  ISSUE_SOURCES,
   QUICK_ISSUE_GROUPS,
   type ReviewPageItem,
   type ReviewIssue,
+  type PageMapEntry,
 } from '@/api/review'
 
 const route = useRoute()
@@ -83,6 +87,71 @@ interface DisplayItem {
 }
 const displayItems = ref<DisplayItem[]>([])
 const questionCount = computed(() => displayItems.value.filter((d) => d.kind === 'question').length)
+
+// ── 页级置信度地图（速审跳页，2026-07-23）──────────────────────────────────────
+/** 全书页级地图：tier hi=页内全部题项置信度>=90（可闭眼速过）/ mid / lo=重点审。 */
+const pageMapEntries = ref<PageMapEntry[]>([])
+const pageMapByPage = computed<Record<number, PageMapEntry>>(() => {
+  const m: Record<number, PageMapEntry> = {}
+  for (const e of pageMapEntries.value) m[e.page] = e
+  return m
+})
+async function loadPageMap() {
+  try {
+    const r = await getPageMap(bookId)
+    pageMapEntries.value = r?.pages ?? []
+  } catch {
+    pageMapEntries.value = []
+  }
+}
+/** 一页可速过 = 有地图条目、hi 档、无未闭环问题、未审。无条目页（无题页）在跳段里也一并通过。 */
+function pageSkippable(p: number): boolean {
+  const e = pageMapByPage.value[p]
+  if (!e) return true // 无题页
+  return e.tier === 'hi' && e.issues === 0
+}
+/** 当前页往后可连续速过的页数（到下一个重点页为止）。 */
+const speedSkipInfo = computed(() => {
+  if (!totalPages.value || !pageMapEntries.value.length) return { count: 0, stop: 0 }
+  let count = 0
+  let p = page.value
+  while (p <= totalPages.value && pageSkippable(p)) {
+    count += 1
+    p += 1
+  }
+  return { count, stop: p > totalPages.value ? 0 : p }
+})
+const speedSkipping = ref(false)
+/**
+ * ⚡ 速审：从当前页起把连续的「高置信且无问题」页批量通过，停在下一个重点页。
+ * 高置信语义 = 录入管线置信度全部 >=90（人工审过金标准判例回灌后的机器闸口径）。
+ */
+async function speedSkip() {
+  const info = speedSkipInfo.value
+  if (!info.count) {
+    ElMessage.info('当前页就是重点页，先审这页')
+    return
+  }
+  speedSkipping.value = true
+  try {
+    const pages: number[] = []
+    for (let p = page.value; p < page.value + info.count; p += 1) pages.push(p)
+    await confirmPages(bookId, pages)
+    await Promise.all([loadProgress(), loadPageMap()])
+    if (info.stop) {
+      suppressAutoSkip.value = true
+      goPage(info.stop)
+      ElMessage.success(`已速过 ${pages.length} 页（高置信），停在重点页 P.${info.stop}`)
+    } else {
+      ElMessage.success(`已速过 ${pages.length} 页（高置信），全书审核完成 🎉`)
+      pageReviewed.value = true
+    }
+  } catch {
+    /* http 拦截器已弹错 */
+  } finally {
+    speedSkipping.value = false
+  }
+}
 
 // ── 问题登记 ──────────────────────────────────────────────────────────────────
 const issues = ref<ReviewIssue[]>([])
@@ -475,7 +544,9 @@ function beforeCloseIssueDialog(done: () => void) {
 const issuesDrawerVisible = ref(false)
 const filterType = ref('')
 const filterStatus = ref('')
-/** 抽屉表格数据 = 服务端按 type/status 过滤（GET /issues?type&status），与顶栏 issues 全量分开。 */
+/** 来源筛选：human=人工（金标准）/ agent=自查（线索级）。 */
+const filterSource = ref('')
+/** 抽屉表格数据 = 服务端按 type/status/source 过滤，与顶栏 issues 全量分开。 */
 const drawerIssues = ref<ReviewIssue[]>([])
 const drawerLoading = ref(false)
 async function loadDrawerIssues() {
@@ -485,6 +556,7 @@ async function loadDrawerIssues() {
       bookId,
       filterType.value || undefined,
       filterStatus.value || undefined,
+      filterSource.value || undefined,
     )
   } catch {
     drawerIssues.value = []
@@ -492,21 +564,29 @@ async function loadDrawerIssues() {
     drawerLoading.value = false
   }
 }
-/** 客户端兜底过滤（BE 若忽略 type/status 参数也保证展示正确）。 */
+/** 客户端兜底过滤（BE 若忽略参数也保证展示正确）。 */
 const shownIssues = computed(() =>
   drawerIssues.value.filter(
     (i) =>
       (!filterType.value || i.issueType === filterType.value) &&
-      (!filterStatus.value || i.status === filterStatus.value),
+      (!filterStatus.value || i.status === filterStatus.value) &&
+      (!filterSource.value || (i.source ?? 'human') === filterSource.value),
   ),
 )
-// 打开抽屉 / 改筛选 → 服务端重取（?type&status）
+// 打开抽屉 / 改筛选 → 服务端重取（?type&status&source）
 watch(issuesDrawerVisible, (open) => {
   if (open) void loadDrawerIssues()
 })
-watch([filterType, filterStatus], () => {
+watch([filterType, filterStatus, filterSource], () => {
   if (issuesDrawerVisible.value) void loadDrawerIssues()
 })
+/** 来源徽标：人工=金标准（amber 醒目）/ 自查=agent 线索（灰）。 */
+function sourceLabel(s?: string): string {
+  return (s ?? 'human') === 'human' ? '人工' : '自查'
+}
+function sourceTagType(s?: string): 'warning' | 'info' {
+  return (s ?? 'human') === 'human' ? 'warning' : 'info'
+}
 function issueStatusTag(s: string): 'info' | 'success' | 'warning' | 'primary' {
   if (s === '已确认') return 'success' // 老师已确认 = 闭环
   if (s === '待确认') return 'primary' // Claude 已改、待老师确认（醒目=你要动的）
@@ -617,7 +697,7 @@ function goShelf() {
 onMounted(async () => {
   window.addEventListener('keydown', onKeydown)
   document.addEventListener('visibilitychange', onVisibleRefresh)
-  await Promise.all([loadBook(), loadProgress(), loadIssues()])
+  await Promise.all([loadBook(), loadProgress(), loadIssues(), loadPageMap()])
   await Promise.all([loadSourcePage(), loadPageItems()])
 })
 onBeforeUnmount(() => {
@@ -647,6 +727,17 @@ onBeforeUnmount(() => {
         >
           <span class="rv-confirm-hint">待你确认</span>
         </el-badge>
+      </el-button>
+      <!-- ⚡ 速审：连续高置信页（录入置信度全部>=90 且无问题）一键通过，直达下一重点页 -->
+      <el-button
+        v-if="speedSkipInfo.count > 0"
+        type="success"
+        size="small"
+        class="rv-speed-btn"
+        :loading="speedSkipping"
+        @click="speedSkip"
+      >
+        ⚡ 速过 {{ speedSkipInfo.count }} 页高置信
       </el-button>
       <div class="rv-pager">
         <button class="rv-pgbtn" :disabled="!canPrev" aria-label="上一页" @click="prevPage">‹</button>
@@ -686,6 +777,13 @@ onBeforeUnmount(() => {
       <div class="rv-pane rv-right">
         <div class="rv-pane-h">
           系统 · 第 {{ page }} 页 · 共 {{ questionCount }} 题
+          <span
+            v-if="pageMapByPage[page]?.tier"
+            class="rv-page-tier"
+            :class="pageMapByPage[page]!.tier"
+          >
+            {{ pageMapByPage[page]!.tier === 'hi' ? '高置信页' : pageMapByPage[page]!.tier === 'lo' ? '重点审' : '常规' }}
+          </span>
           <span class="rv-pane-h-sub">整页比对，不逐题确认</span>
         </div>
 
@@ -694,6 +792,7 @@ onBeforeUnmount(() => {
             <!-- 整页问题（不关联具体题）：挂在页顶就地闭环 -->
             <div v-if="issuesByQuestion['__page__']?.length" class="rv-qissues rv-pageissues">
               <div v-for="iss in issuesByQuestion['__page__']" :key="iss.id" class="rv-qissue">
+                <el-tag :type="sourceTagType(iss.source)" size="small" effect="plain">{{ sourceLabel(iss.source) }}</el-tag>
                 <el-tag :type="issueStatusTag(iss.status)" size="small" effect="light">{{ iss.status }}</el-tag>
                 <span class="rv-qissue-desc">{{ iss.issueType }} · {{ iss.description }}</span>
                 <el-button v-if="iss.status === '待确认'" type="success" size="small" @click="confirmIssueFixed(iss)">
@@ -717,6 +816,7 @@ onBeforeUnmount(() => {
                 <!-- 该题已记的问题：直接展示在题卡下，待确认可就地点确认（问题生命周期终点） -->
                 <div v-if="d.questionId && issuesByQuestion[d.questionId]?.length" class="rv-qissues">
                   <div v-for="iss in issuesByQuestion[d.questionId]" :key="iss.id" class="rv-qissue">
+                    <el-tag :type="sourceTagType(iss.source)" size="small" effect="plain">{{ sourceLabel(iss.source) }}</el-tag>
                     <el-tag :type="issueStatusTag(iss.status)" size="small" effect="light">{{ iss.status }}</el-tag>
                     <span class="rv-qissue-desc">{{ iss.issueType }} · {{ iss.description }}</span>
                     <el-button v-if="iss.status === '待确认'" type="success" size="small" @click="confirmIssueFixed(iss)">
@@ -874,6 +974,9 @@ onBeforeUnmount(() => {
         <el-select v-model="filterStatus" placeholder="全部状态" clearable size="small" style="width: 108px">
           <el-option v-for="s in ISSUE_STATUSES" :key="s" :label="s" :value="s" />
         </el-select>
+        <el-select v-model="filterSource" placeholder="全部来源" clearable size="small" style="width: 96px">
+          <el-option v-for="s in ISSUE_SOURCES" :key="s.value" :label="s.label" :value="s.value" />
+        </el-select>
         <el-button size="small" class="rv-export-btn" :disabled="!shownIssues.length" @click="exportIssues">
           导出 CSV
         </el-button>
@@ -904,6 +1007,11 @@ onBeforeUnmount(() => {
       >
         <el-table-column label="页" width="46" align="center">
           <template #default="{ row }">{{ row.sourcePage ?? '—' }}</template>
+        </el-table-column>
+        <el-table-column label="来源" width="58" align="center">
+          <template #default="{ row }">
+            <el-tag :type="sourceTagType(row.source)" size="small" effect="plain">{{ sourceLabel(row.source) }}</el-tag>
+          </template>
         </el-table-column>
         <el-table-column label="类型" width="80">
           <template #default="{ row }">{{ row.issueType }}</template>
@@ -1025,6 +1133,31 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+/* ⚡ 速审按钮（高置信连续页一键通过） */
+.rv-speed-btn {
+  font-weight: 700;
+}
+/* 页级置信档位（pane 头）：hi 绿可速过 / mid 灰常规 / lo 红重点审 */
+.rv-page-tier {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 8px;
+  border-radius: 999px;
+}
+.rv-page-tier.hi {
+  color: #237804;
+  background: #e6f4e0;
+}
+.rv-page-tier.mid {
+  color: #6b7671;
+  background: #eef1f0;
+}
+.rv-page-tier.lo {
+  color: #c02b3d;
+  background: #fbe9ec;
 }
 .rv-pgbtn {
   width: 29px;
