@@ -365,6 +365,11 @@ function onRootClick(e: MouseEvent) {
 /* GFM 表格网格线：markdown-it 渲出的 <table> 默认无边框，浏览页/导出双端补网格 */
 .qbr-text :deep(table) {
   border-collapse: collapse;
+  /* 超宽表格自行横滚，配合 keep-all 不再把窄列数字拆行（2026-07-22 自查批量：22→"2/2"） */
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  width: fit-content;
 }
 
 .qbr-text :deep(td),
@@ -373,6 +378,8 @@ function onRootClick(e: MouseEvent) {
   padding: 2px 8px;
   /* 空作答格行高保底：GFM 空 cell 会塌缩成一条线，学生没地方写 */
   height: 1.9em;
+  /* 数字/单词永不拆行（"22"被窄列拆成两行的根因），中文仍按标点断行；超宽走表格横滚 */
+  word-break: keep-all;
 }
 
 /* 作答/图形字符放大（richtext Step 5 包的 span）：□○△☆＝＋－按源书大号印刷框渲染，
