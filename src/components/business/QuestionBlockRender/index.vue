@@ -149,6 +149,35 @@ function asImageBlock(b: Block): ImageBlock {
   return b as ImageBlock
 }
 
+/**
+ * 图注切段（2026-07-22 图文列对齐方案）：合成图（一张图内含 N 个子图）的作答位图注
+ * 「( )个角　( )个角　( )个角」按全角空格/连续空白切段，flex space-around 均布在图宽内，
+ * 与子图逐列对齐。单段图注也走 flex（space-around 单项=居中），行为不变。
+ */
+function captionSegs(c: string): string[] {
+  return c
+    .split(/　+|\s{2,}/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
+
+/** 单图行图注样式：宽度/对齐随图（imageStyle 同款 margin 方案），确保图注均布区间=图的实际宽度。 */
+function captionStyle(b: ImageBlock) {
+  const w = Math.min(100, Math.max(1, Number(b.width) || 40))
+  const style: Record<string, string> = { width: `${w}%` }
+  if (b.align === 'center') {
+    style.marginLeft = 'auto'
+    style.marginRight = 'auto'
+  } else if (b.align === 'right') {
+    style.marginLeft = 'auto'
+    style.marginRight = '0'
+  } else {
+    style.marginLeft = '0'
+    style.marginRight = 'auto'
+  }
+  return style
+}
+
 /** 图点击看原图（2026-07-21 审核"图片不能放大缩小"）：事件委托覆盖结构图+md 内联图，新页签开原图可任意缩放。 */
 function onRootClick(e: MouseEvent) {
   const t = e.target as HTMLElement
@@ -192,7 +221,10 @@ function onRootClick(e: MouseEvent) {
             v-if="img.caption"
             class="qbr-figcaption"
           >
-            {{ img.caption }}
+            <span
+              v-for="(seg, si2) in captionSegs(img.caption!)"
+              :key="si2"
+            >{{ seg }}</span>
           </figcaption>
         </figure>
       </div>
@@ -232,8 +264,12 @@ function onRootClick(e: MouseEvent) {
             <figcaption
               v-if="asImageBlock(cell).caption"
               class="qbr-figcaption"
+              :style="captionStyle(asImageBlock(cell))"
             >
-              {{ asImageBlock(cell).caption }}
+              <span
+                v-for="(seg, si2) in captionSegs(asImageBlock(cell).caption!)"
+                :key="si2"
+              >{{ seg }}</span>
             </figcaption>
           </figure>
 
@@ -304,10 +340,14 @@ function onRootClick(e: MouseEvent) {
 }
 
 .qbr-figcaption {
-  margin-top: 4px;
-  font-size: 12px;
-  color: var(--el-text-color-secondary, #86909c);
-  line-height: 1.4;
+  margin-top: 6px;
+  /* 题卡语境里图注=作答位(「( )个角」等题目内容,非装饰注释)——正文样式(2026-07-22 图文列对齐方案)。
+     flex space-around: 多段作答位均布在图宽内与子图逐列对齐;单段时=居中,行为不变。 */
+  display: flex;
+  justify-content: space-around;
+  font-size: 15px;
+  color: var(--el-text-color-primary, #1d2129);
+  line-height: 1.5;
   text-align: center;
   white-space: nowrap;
 }
