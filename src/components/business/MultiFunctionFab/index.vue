@@ -65,10 +65,19 @@ const doneJobCount = computed(() => jobs.value.filter((j) => j.status === 'DONE'
 let timer: ReturnType<typeof setTimeout> | null = null
 let stopped = false
 
+// 🔴 PRD-011 verifier #4 闪回竞态双闸：
+//   ① 请求代次——归档/删除等本地变更让飞行中的旧 GET 响应作废（代次不符直接丢弃）；
+//   ② 已摘集合——即便同代响应仍含刚归档/删除的 id（BE 写后读的极小窗口），赋值时过滤兜底。
+let jobsGeneration = 0
+const locallyRemoved = new Set<string>()
+
 async function refreshJobs() {
+  const gen = jobsGeneration
   try {
     const rows = await listIngestJobs('active')
-    jobs.value = Array.isArray(rows) ? rows : []
+    if (gen !== jobsGeneration) return // 期间发生过本地摘条，旧响应作废
+    const list = Array.isArray(rows) ? rows : []
+    jobs.value = list.filter((j) => !locallyRemoved.has(String(j.id)))
   } catch (e) {
     console.warn('[mf-fab] listIngestJobs failed', e)
   }
@@ -149,9 +158,14 @@ const histLoading = ref(false)
 const TERMINAL_STATUS = new Set<IngestJobStatus>(['DONE', 'FAILED'])
 function isTerminal(s: IngestJobStatus): boolean { return TERMINAL_STATUS.has(s) }
 
-/** 从两个列表里就地摘掉某条（归档 / 删除后本地同步，免整表重拉） */
+/** 从两个列表里就地摘掉某条（归档 / 删除后本地同步，免整表重拉）。
+ *  🔴 同时推代次 + 记已摘集合：飞行中的旧轮询响应作废、后续响应过滤该 id，防「闪回」。
+ *  注：归档的 id 留在 locallyRemoved 里只影响「进行中」（它本就该退场），历史 tab 是独立
+ *  接口（scope=handled）不经此过滤，可正常显示。 */
 function dropJobLocally(jobId: string | number) {
   const key = String(jobId)
+  jobsGeneration++
+  locallyRemoved.add(key)
   jobs.value = jobs.value.filter((j) => String(j.id) !== key)
   histJobs.value = histJobs.value.filter((j) => String(j.id) !== key)
 }
