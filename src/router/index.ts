@@ -336,6 +336,13 @@ router.beforeEach(async (to) => {
     return { path: '/home' }
   }
 
+  // PRD-011 D6 — 已登录时首页 = 备课台总览（含超管，不分流）：
+  //   访问 '/'（静态 redirect 到 /home）、直达 '/home'、点导航「首页」一律落 /desk/overview。
+  //   未登录一切照旧（'/' 走静态 redirect 到 /home，/home 在游客白名单里放行）。
+  if ((to.path === '/' || to.path === '/home') && useUserStore().isLoggedIn) {
+    return { path: '/desk/overview' }
+  }
+
   if (PUBLIC_ROUTES.has(to.path)) {
     return true
   }

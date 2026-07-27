@@ -15,8 +15,11 @@
  *
  * getQuestionTypeLabel / getQuestionTypeTag 是无副作用纯函数，随题卡一并迁入。
  */
+import { computed } from 'vue'
 import { Top, Bottom, Delete, InfoFilled, Refresh } from '@element-plus/icons-vue'
 import QuestionContent from '@/components/business/QuestionContent/index.vue'
+import QuestionBlockRender from '@/components/business/QuestionBlockRender/index.vue'
+import { parseBlockDoc } from '@/utils/blockSchema'
 import { useDictStore, DICT_QUESTION_TYPE } from '@/store/dict'
 import type { PaperSourceQuestion } from '@/api/question/index'
 
@@ -29,13 +32,18 @@ interface EditRow extends PaperSourceQuestion {
   _replacing: boolean
 }
 
-defineProps<{
+const props = defineProps<{
   row: EditRow
   globalIndex: number
   editRowIndex: number
   /** editRows 总长（上移/下移 disabled 边界判断，与父级 editRows.length 一致）*/
   total: number
 }>()
+
+// PRD-011 题块保真 — 与题库 QuestionCard 同口径：blockJson 能解析成非空文档则走
+// QuestionBlockRender 网格渲染（选项/配图/公式与题库·详情·PDF 四端一致）；
+// 老题（无 blockJson）回落扁平 QuestionContent。🔴 只对齐题干，答案/解析块一概不加。
+const parsedBlock = computed(() => parseBlockDoc(props.row.blockJson))
 
 const emit = defineEmits<{
   (e: 'toggle-explain', row: EditRow): void
@@ -94,9 +102,14 @@ function getQuestionTypeTag(type: number): string {
       <div class="q-global-num">{{ globalIndex }}</div>
     </div>
 
-    <!-- 题干区（富文本/图片/占位统一走 QuestionContent） -->
+    <!-- 题干区：结构化题(blockJson)走 QuestionBlockRender 网格；老题回落 QuestionContent 扁平 -->
     <div class="q-stem-area">
+      <QuestionBlockRender
+        v-if="parsedBlock"
+        :doc="parsedBlock"
+      />
       <QuestionContent
+        v-else
         :text="row.stemText"
         :img-url="row.stemImg"
         alt="题干"
