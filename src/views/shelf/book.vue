@@ -509,6 +509,9 @@ function itemToBasketQ(it: ShelfItemVO): QuestionItem | null {
     stemImg: itemStemImg(it),
     stemText: itemStemText(it),
     stemTextContent: itemStemText(it),
+    // 🔴 PRD-011 bug轮：blockJson 必须带上——图/选项网格全在里面，漏了则试题栏/工作台
+    //   只剩纯文本（「看图列式（瓶）」图丢的根因）。override 改过题面的题不带（保改后文本）。
+    blockJson: it.override?.stem ? null : (q?.blockJson ?? null),
   } as QuestionItem
 }
 

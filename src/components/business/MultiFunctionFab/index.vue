@@ -254,7 +254,10 @@ function openHub() {
   else if (m === 'paper') activeTab.value = 'paper'
   // idle 保持上次 tab
   void refreshJobs()
-  if (activeTab.value === 'bskt') void nextTick(initBasketSortable)
+  if (activeTab.value === 'bskt') {
+    void nextTick(initBasketSortable)
+    void qBasket.hydrateMissingBlockJson() // PRD-011：老缓存缺 blockJson 的项补水（图丢自愈）
+  }
   // idle 保持上次 tab 时若停在「历史」，重开也刷一次（历史不轮询）
   if (activeTab.value === 'hist') void refreshHistJobs()
 }
@@ -267,7 +270,10 @@ function onBallClick() {
 
 function switchTab(t: TabKey) {
   activeTab.value = t
-  if (t === 'bskt') void nextTick(initBasketSortable)
+  if (t === 'bskt') {
+    void nextTick(initBasketSortable)
+    void qBasket.hydrateMissingBlockJson() // PRD-011：老缓存缺 blockJson 的项补水（图丢自愈）
+  }
   if (t === 'prep') void specialStore.refresh()
   if (t === 'hist') void refreshHistJobs()
 }

@@ -47,6 +47,7 @@ import {
   addBasket as apiAddBasket,
   removeBasket as apiRemoveBasket,
   genExamData,
+  questionListByIds,
   type QuestionItem,
 } from '@/api/question/index'
 
@@ -152,6 +153,44 @@ const _items = computed<QuestionItem[]>(() => {
   })
   return items
 })
+
+// ── PRD-011 bug轮 · 题面补水（存量自愈） ─────────────────────
+// 历史入口（书架挑题旧版映射 / 老 LS 缓存）进栏的对象可能缺 blockJson/stemImg →
+// 渲染端只剩纯文本（「看图列式（瓶）」图丢）。打开试题栏/工作台消费 items 前调本方法：
+// 批量补拉缺 blockJson 的题并回写 cache + LS（只补空字段不覆盖 override 面），一次会话内不重复拉。
+const _hydratedIds = new Set<string>()
+async function hydrateMissingBlockJson(): Promise<void> {
+  const missing = [..._basketIds.value].filter((id) => {
+    const q = _cache.get(id)
+    return !_hydratedIds.has(id) && (!q || q.blockJson == null || q.blockJson === '')
+  })
+  if (missing.length === 0) return
+  missing.forEach((id) => _hydratedIds.add(id)) // 先标记，失败也不无限重试
+  try {
+    const fulls = await questionListByIds(missing)
+    for (const full of fulls || []) {
+      const id = String(full.id)
+      const old = _cache.get(id)
+      _cache.set(id, {
+        ...(old ?? {}),
+        ...{
+          questionType: old?.questionType ?? full.questionType,
+          difficult: old?.difficult ?? full.difficult,
+        },
+        id,
+        blockJson: full.blockJson ?? old?.blockJson ?? null,
+        stemImg: old?.stemImg ?? full.stemImg ?? null,
+        stemText: old?.stemText ?? full.stemText ?? null,
+        stemTextContent: old?.stemTextContent ?? full.stemTextContent ?? null,
+      } as QuestionItem)
+    }
+    // _cache 非响应式：重建 ids Set 触发 _items 重算 + 落盘
+    _basketIds.value = new Set(_basketIds.value)
+    syncToStorage()
+  } catch (e) {
+    console.warn('[basket] hydrateMissingBlockJson failed', e)
+  }
+}
 
 // ── 持久化 helper（每次 ids 变化触发） ───────────────────────
 function syncToStorage() {
@@ -384,6 +423,8 @@ export interface UseQuestionBasket {
   openDialog: () => void
   closeDialog: () => void
   syncFromServer: () => Promise<void>
+  /** PRD-011 题面补水：批量补拉缺 blockJson 的项回写 cache（试题栏/工作台消费前调，幂等） */
+  hydrateMissingBlockJson: () => Promise<void>
   composeAndDownload: () => Promise<void>
   /** PRD-B-101 当前命名空间仓（'default' | 'lesson:{id}:slot{n}'），只读 */
   currentNamespace: Readonly<Ref<string>>
@@ -418,6 +459,7 @@ export function useQuestionBasket(): UseQuestionBasket {
     openDialog,
     closeDialog,
     syncFromServer,
+    hydrateMissingBlockJson,
     composeAndDownload,
     currentNamespace: _ns as Readonly<Ref<string>>,
     switchNamespace,

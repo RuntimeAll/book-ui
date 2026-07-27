@@ -657,6 +657,9 @@ onMounted(async () => {
   } else {
     // 新建态：从 basket 同步
     buildEditRowsFromBasket()
+    // PRD-011：老缓存进栏的题可能缺 blockJson（书架旧映射/历史 LS）→ 补水回写后
+    // 由下面的 watch 自动重建行，图/选项网格恢复（「看图列式（瓶）」图丢根治）
+    void basket.hydrateMissingBlockJson()
     // basket 变化时同步（SPA 内 basket 可能在题库页更新）
     watch(
       () => basket.items.value,
