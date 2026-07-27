@@ -475,6 +475,13 @@ export type IngestJobStatus =
   | 'FAILED'
   | string
 
+/**
+ * 作业列表查询范围（PRD-011）：
+ *   active（缺省）= 未归档（老师"进行中"看板，DONE/FAILED 未点「处理完成」的也在内）
+ *   handled       = 已归档（历史 tab，归档时间倒序，BE 限 ≤50 条）
+ */
+export type IngestJobScope = 'active' | 'handled'
+
 /** 作业列表行（GET /teacher/ingest/jobs?mine=1 单项） */
 export interface IngestJobRow {
   id: string | number
@@ -484,6 +491,8 @@ export interface IngestJobRow {
   sourceFileName: string | null
   errorMsg: string | null
   createTime: string | null
+  /** PRD-011 归档时间；null / 缺省 = 未归档 */
+  handledTime?: string | null
 }
 
 /** 作业详情头（GET /teacher/ingest/job/{jobId} 的 job 字段） */
@@ -548,11 +557,14 @@ export function createIngestJob(form: FormData): Promise<{ jobId: string }> {
   )
 }
 
-/** ② 我的作业列表（时间倒序）。 */
-export function listIngestJobs(): Promise<IngestJobRow[]> {
+/**
+ * ② 我的作业列表（时间倒序）。
+ * @param scope PRD-011：缺省 / 'active' = 未归档；'handled' = 已归档（归档时间倒序 ≤50）
+ */
+export function listIngestJobs(scope?: IngestJobScope): Promise<IngestJobRow[]> {
   return request.get<IngestJobRow[], IngestJobRow[]>(
     '/teacher/ingest/jobs',
-    { params: { mine: 1 } },
+    { params: { mine: 1, ...(scope ? { scope } : {}) } },
   )
 }
 
@@ -608,4 +620,27 @@ export function updateIngestJobItem(
     `/teacher/ingest/job/${jobId}/item/${itemId}`,
     payload,
   )
+}
+
+/**
+ * ⑦ 标记处理完成 / 归档（PRD-011）：作业从「进行中」看板退场，转入「历史」tab。
+ * 只改归档标记，已入库的题不受影响。
+ */
+export function markJobHandled(jobId: string | number): Promise<{ handled: boolean }> {
+  return request.post<{ handled: boolean }, { handled: boolean }>(
+    `/teacher/ingest/job/${jobId}/handled`,
+  )
+}
+
+/**
+ * ⑧ 硬删作业（PRD-011）：删作业记录 + 其题项，不可恢复；已入库的题不受影响。
+ * @returns { deleted, deletedItems: 连带删掉的题项数 }
+ */
+export function deleteJob(
+  jobId: string | number,
+): Promise<{ deleted: boolean; deletedItems: number }> {
+  return request.delete<
+    { deleted: boolean; deletedItems: number },
+    { deleted: boolean; deletedItems: number }
+  >(`/teacher/ingest/job/${jobId}`)
 }
