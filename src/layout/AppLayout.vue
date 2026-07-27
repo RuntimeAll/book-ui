@@ -108,14 +108,30 @@ const allMenuItems: MenuItem[] = [
 
 // PRD-A-005 T2 — 菜单按 userStore.roles 过滤显隐（单一事实源 = store roles）。
 // 无 roles 声明的项始终显示；声明了则需与当前用户 roles 有交集。
-const menuItems = computed<MenuItem[]>(() =>
-  allMenuItems.filter(
+// 🔴 PRD-011 终审拍板 — 登录后「备课台就叫首页」：登录态去掉游客首页(/home)项、
+//   把 /desk 项改名「首页」置首（老师的首页=备课台，路由守卫已把 /home 改道 /desk/overview 双保险）；
+//   未登录保持原样（游客门面 /home）。
+const menuItems = computed<MenuItem[]>(() => {
+  const visible = allMenuItems.filter(
     (item) =>
       !item.roles
       || item.roles.length === 0
       || item.roles.some((r) => userStore.roles.includes(r)),
-  ),
-)
+  )
+  if (!userStore.isLoggedIn) {
+    return visible
+  }
+  const merged = visible
+    .filter((item) => item.path !== '/home')
+    .map((item) => (item.path === '/desk' ? { ...item, label: '首页', icon: 'home' as LineIconName } : item))
+  // 「首页」(=/desk) 挪到第一位，其余保持原序
+  const idx = merged.findIndex((item) => item.path === '/desk')
+  if (idx > 0) {
+    const [home] = merged.splice(idx, 1)
+    merged.unshift(home)
+  }
+  return merged
+})
 
 function isActive(path: string): boolean {
   if (route.path === path) return true

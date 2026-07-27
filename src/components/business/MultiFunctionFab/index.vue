@@ -42,6 +42,10 @@ import {
 } from '@/api/ingest/index'
 import QuestionCard from '@/components/business/QuestionCard/index.vue'
 import QuestionContent from '@/components/business/QuestionContent/index.vue'
+// 🔴 PRD-011 bug轮：试题栏条目题面走 blockJson 网格（图/选项/公式与题库·工作台四端一致），
+//   老题回落 QuestionContent。终审反馈=「看图列式」的图在 blockJson 里，扁平渲染丢图。
+import QuestionBlockRender from '@/components/business/QuestionBlockRender/index.vue'
+import { parseBlockDoc, type QuestionBlockDoc } from '@/utils/blockSchema'
 
 const router = useRouter()
 const qBasket = useQuestionBasket()
@@ -276,6 +280,16 @@ function goIngest() {
 // ── 试题栏 tab：复用 QuestionBasket 的列表 + 拖拽重排 + 解析展开 ──
 const listEl = ref<HTMLElement | null>(null)
 let sortable: Sortable | null = null
+
+// 题面 blockJson 解析缓存（列表逐条渲染避免重复 JSON.parse；key=id+blockJson 长度防改题后陈旧）
+const _blockDocCache = new Map<string, QuestionBlockDoc | null>()
+function blockDocOf(item: { id: string; blockJson?: string | null }): QuestionBlockDoc | null {
+  const key = `${item.id}:${item.blockJson?.length ?? 0}`
+  if (!_blockDocCache.has(key)) {
+    _blockDocCache.set(key, parseBlockDoc(item.blockJson))
+  }
+  return _blockDocCache.get(key) ?? null
+}
 
 function onBasketDrop() {
   const root = listEl.value
@@ -649,7 +663,13 @@ onBeforeUnmount(() => {
                       </div>
                     </div>
                     <div class="basket-item-stem" style="cursor: zoom-in;" @click="openPreview(item)">
+                      <!-- 结构化题(blockJson)走网格：图/选项/公式与题库·工作台一致；老题回落扁平 -->
+                      <QuestionBlockRender
+                        v-if="blockDocOf(item)"
+                        :doc="blockDocOf(item)!"
+                      />
                       <QuestionContent
+                        v-else
                         :text="item.stemText"
                         :img-url="item.stemImg"
                         alt="题干（点击放大）"
