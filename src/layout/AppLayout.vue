@@ -142,8 +142,10 @@ const showMultiFunctionFab = computed(() => {
     return false
   }
   // PRD-C-212 D3 — 工作台/我的题库/举一反三已收进备课台，白名单同步 /desk/* 新路径
+  // 书架（/bookshelf/*）：书内浏览时逐题/整节挑题进试题栏，球是挑题成果的唯一可见处，必须显形
   return route.path.startsWith('/question/')
     || route.path.startsWith('/papers/')
+    || route.path.startsWith('/bookshelf')
     || route.path === '/desk/workspace'
     || route.path === '/desk/my-question'
     || route.path === '/desk/ai-variant'
