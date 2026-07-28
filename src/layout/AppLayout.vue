@@ -119,7 +119,8 @@ const menuItems = computed<MenuItem[]>(() => {
       || item.roles.some((r) => userStore.roles.includes(r)),
   )
   if (!userStore.isLoggedIn) {
-    return visible
+    // 游客顶栏不出「备课台」（点了也会被守卫拦去登录，占位无意义——2026-07-28 用户拍板去掉）
+    return visible.filter((item) => item.path !== '/desk')
   }
   const merged = visible
     .filter((item) => item.path !== '/home')
