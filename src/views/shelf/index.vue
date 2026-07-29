@@ -39,12 +39,14 @@ const keyword = ref('')
 const GRADE_NUM: Record<number, string> = { 1: '一', 2: '二', 3: '三', 4: '四', 5: '五', 6: '六', 7: '七', 8: '八', 9: '九', 10: '高一', 11: '高二', 12: '高三' }
 const STAGE_GRADES: Record<number, number[]> = { 1: [1, 2, 3, 4, 5, 6], 2: [7, 8, 9], 3: [10, 11, 12] }
 
-// 类型段：书架不含专项（BE 已剔除 special），仅 讲义/练习册/电子课本
+// 类型段：书架不含专项（BE 已剔除 special），仅 讲义/练习册/电子课本/每日打卡
+// 🔴 PRD-013 — daily_punch 打卡书也是书架书（天=节点的有结构书），入口即本页卡片
 const typeSegs: { key: '' | BookType; label: string }[] = [
   { key: '', label: '全部' },
   { key: 'lecture', label: '讲义' },
   { key: 'workbook', label: '练习册' },
   { key: 'textbook', label: '电子课本' },
+  { key: 'daily_punch', label: '每日打卡' },
 ]
 
 const loading = ref(false)
@@ -176,12 +178,18 @@ const shownBooks = computed<ShelfBookVO[]>(() => {
 function coverClass(t: string): string {
   if (t === 'lecture') return 'cover c1'
   if (t === 'special') return 'cover c3'
+  if (t === 'daily_punch') return 'cover c4'
   return 'cover c2'
 }
 function tagClass(t: string): string {
   if (t === 'lecture') return 'tag lec'
   if (t === 'special') return 'tag sp'
+  if (t === 'daily_punch') return 'tag punch'
   return 'tag wb'
+}
+/** 每日打卡书 = 独立阅读/审核页（PRD-013），与常规书浏览页分流。 */
+function isPunchBook(b: ShelfBookVO): boolean {
+  return String(b.bookType) === 'daily_punch'
 }
 function typeLabel(t: string): string {
   return BOOK_TYPE_LABEL[t as BookType] ?? t
@@ -196,7 +204,16 @@ function statLine(b: ShelfBookVO): string {
   return parts.join(' · ') || '空书'
 }
 
+/**
+ * 打开书 —— 按 bookType 分流（PRD-013 FP1）：
+ *   daily_punch → 打卡书阅读+审核页（天目录 + punch-v1 纸面 + 人眼审核流）
+ *   其他类型     → 原书浏览页，行为不变
+ */
 function openBook(b: ShelfBookVO) {
+  if (isPunchBook(b)) {
+    router.push(`/bookshelf/punch/${b.id}`)
+    return
+  }
   router.push(`/bookshelf/book/${b.id}`)
 }
 
@@ -386,7 +403,8 @@ onMounted(() => {
             </div>
             <div class="ops">
               <el-button size="small" type="primary" @click="openBook(b)">打开</el-button>
-              <el-button size="small" class="review-btn" @click="openReview(b)">录入审核</el-button>
+              <!-- 🔴 PRD-013：打卡书的人眼审核在打卡页内（逐天通过/记问题），不走 PRD-006 页级源书比对 -->
+              <el-button v-if="!isPunchBook(b)" size="small" class="review-btn" @click="openReview(b)">录入审核</el-button>
               <el-dropdown trigger="click" @command="(c: string) => c === 'del' ? onDelete(b) : c === 'export' && onExport()">
                 <el-button size="small">⋯</el-button>
                 <template #dropdown>
@@ -629,6 +647,10 @@ onMounted(() => {
 .cover.c3 {
   background: linear-gradient(135deg, #7a4fc0, #a98ae0);
 }
+/* PRD-013 每日打卡：暖橙一档，与讲义/练习册/专项一眼分得开 */
+.cover.c4 {
+  background: linear-gradient(135deg, #c2701a, #f0b45c);
+}
 .bd {
   padding: 10px 14px 12px;
 }
@@ -650,6 +672,10 @@ onMounted(() => {
 .tag.sp {
   background: #f3ecfb;
   color: #7a4fc0;
+}
+.tag.punch {
+  background: #fdf3e3;
+  color: #b45309;
 }
 .stat {
   font-size: 11.5px;

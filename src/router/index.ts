@@ -268,6 +268,13 @@ const router = createRouter({
           name: 'BookshelfReview',
           component: () => import('@/views/shelf/review.vue'),
         },
+        // 🔴 PRD-013 批2 — 每日打卡书阅读 + 审核页（左天目录 / 中 punch-v1 纸面 iframe / 审核流）。
+        //   入口 = 书架 daily_punch 类型书卡片点击（G4 可达性铁则，不许 goto 直达）。
+        {
+          path: '/bookshelf/punch/:bookId',
+          name: 'BookshelfPunch',
+          component: () => import('@/views/shelf/punch.vue'),
+        },
         // 🔴 PRD-002 D5 退役：旧讲义模块（/kg-lecture 重定向、/kg-lecture-edit 编辑页、/lecture-hub 浏览器）
         // 整体删除，讲义并入书架（type=lecture）。存量数据留库不展示（D7）。
         // PRD-C-211 — 系统管理中心（B 线 admin 系统管理直接移植）；壳=左菜单+右内容区。

@@ -14,13 +14,17 @@ import request from '@/http/request'
 // 一、类型
 // ---------------------------------------------------------------------------
 
-/** 书类型：lecture 讲义 / workbook 练习册 / textbook 电子课本 / special 专项 */
-export type BookType = 'lecture' | 'workbook' | 'textbook' | 'special'
+/**
+ * 书类型：lecture 讲义 / workbook 练习册 / textbook 电子课本 / special 专项
+ *        / daily_punch 每日打卡（PRD-013 D1：打卡内容 = 一本有结构的书，天=节点）
+ */
+export type BookType = 'lecture' | 'workbook' | 'textbook' | 'special' | 'daily_punch'
 export const BOOK_TYPE_LABEL: Record<BookType, string> = {
   lecture: '讲义',
   workbook: '练习册',
   textbook: '电子课本',
   special: '专项',
+  daily_punch: '每日打卡',
 }
 
 /** 内容项类型：explain 讲解块 / question 题引用 */
