@@ -197,6 +197,9 @@ function typeLabel(t: string): string {
 
 /** 结构统计串（讲/节 + 题；卷面无内部词）。 */
 function statLine(b: ShelfBookVO): string {
+  // 打卡书：天=节点、计算题在 content_json 不计入 questionCount——按天数口径显示，
+  // 防「10 节 · 20 题」误导（实际 31 题/天，verifier S12）
+  if (isPunchBook(b)) return b.nodeCount != null ? `${b.nodeCount} 天 · 每天一练` : '空书'
   const parts: string[] = []
   if (b.nodeCount != null) parts.push(`${b.nodeCount} 节`)
   if (b.questionCount != null) parts.push(`${b.questionCount} 题`)
