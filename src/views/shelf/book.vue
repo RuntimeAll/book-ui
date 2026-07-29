@@ -39,8 +39,9 @@ import {
   type ShelfStructureVO,
   type BookExportResult,
 } from '@/api/shelf'
-import { questionListByIds, type QuestionDetail } from '@/api/question'
+import { questionListByIds, type QuestionDetail, type QuestionItem } from '@/api/question'
 import { useUserStore } from '@/store/user'
+import { useQuestionBasket } from '@/composables/useQuestionBasket'
 
 const route = useRoute()
 const router = useRouter()
@@ -490,6 +491,65 @@ function pickNode() {
   if (activeNode.value) pick({ nodeId: activeNode.value.id })
 }
 
+// —— 试题栏（全局单例仓，与题库/卷库同一个栏；成果在右下多功能球「试题栏」tab 里看） ——
+const basket = useQuestionBasket()
+
+/**
+ * 书架 item → 试题栏 QuestionItem。
+ * 题面口径与页面渲染一致：override.stem 优先于原题（书内改过的题，进栏的也是改后的面）。
+ * 无 questionId（纯讲解块 / 脏数据）返 null，由调用方过滤。
+ */
+function itemToBasketQ(it: ShelfItemVO): QuestionItem | null {
+  if (it.kind !== 'question' || !it.questionId) return null
+  const q = origQ(it)
+  return {
+    id: it.questionId,
+    questionType: q?.questionType ?? 1,
+    difficult: q?.difficult ?? null,
+    stemImg: itemStemImg(it),
+    stemText: itemStemText(it),
+    stemTextContent: itemStemText(it),
+    // 🔴 PRD-011 bug轮：blockJson 必须带上——图/选项网格全在里面，漏了则试题栏/工作台
+    //   只剩纯文本（「看图列式（瓶）」图丢的根因）。override 改过题面的题不带（保改后文本）。
+    blockJson: it.override?.stem ? null : (q?.blockJson ?? null),
+  } as QuestionItem
+}
+
+/** 该题是否已在试题栏（模板按钮态；读 ref.value 以保持响应式追踪）。 */
+function inBasket(qid?: string | null): boolean {
+  return !!qid && basket.basketIds.value.has(qid)
+}
+
+/** 单题加入试题栏（成功后给源书 item 的 used_count +1，与入专项同口径）。 */
+async function addToBasket(it: ShelfItemVO) {
+  const q = itemToBasketQ(it)
+  if (!q) {
+    ElMessage.warning('这一项不是题目，无法加入试题栏')
+    return
+  }
+  await basket.add(q)
+  incrItemUsed(it.id).catch(() => {})
+}
+
+/** 整节点（含全部后代）加入试题栏：复用 collectBlocks 收集子树题目，批量入栏单条汇总提示。 */
+async function addNodeToBasket(node: ShelfNodeVO) {
+  const out: RenderBlock[] = []
+  collectBlocks(node, 0, out)
+  const items = out.filter((b) => b.t === 'question' && b.item).map((b) => b.item!)
+  const qs = items.map(itemToBasketQ).filter((q): q is QuestionItem => q !== null)
+  if (!qs.length) {
+    ElMessage.info('该节点下没有题目')
+    return
+  }
+  const added = await basket.addMany(qs)
+  if (added > 0) items.forEach((it) => incrItemUsed(it.id).catch(() => {}))
+}
+
+/** 顶栏「当前节点入试题栏」（跟随左树高亮节点）。 */
+function addActiveNodeToBasket() {
+  if (activeNode.value) addNodeToBasket(activeNode.value)
+}
+
 // —— override 编辑对话框 ——
 const editVisible = ref(false)
 const editing = ref(false)
@@ -694,7 +754,10 @@ onBeforeUnmount(() => io?.disconnect())
               <span :class="{ cur: i === crumb.length - 1 }">{{ c }}</span>
             </template>
           </span>
-          <el-button size="small" type="primary" plain class="crumb-pick" @click="pickNode">＋ 当前节点入专项</el-button>
+          <span class="crumb-ops">
+            <el-button size="small" type="success" plain class="crumb-pick" @click="addActiveNodeToBasket">＋ 当前节点入试题栏</el-button>
+            <el-button size="small" type="primary" plain class="crumb-pick" @click="pickNode">＋ 当前节点入专项</el-button>
+          </span>
         </div>
 
         <div class="doc">
@@ -708,6 +771,7 @@ onBeforeUnmount(() => io?.disconnect())
             <h1 :id="`n-${sec.node.id}`" class="doc-h lv0" :data-node-id="sec.node.id">
               <span class="h-name">{{ sec.node.name }}</span>
               <span class="h-ops">
+                <span class="h-basket" @click="addNodeToBasket(sec.node)">＋ 整讲入试题栏</span>
                 <span class="h-pick" @click="pick({ nodeId: sec.node.id })">＋ 整讲入专项</span>
               </span>
             </h1>
@@ -727,6 +791,7 @@ onBeforeUnmount(() => io?.disconnect())
                   <span class="h-name">{{ b.node?.name }}</span>
                   <span v-if="b.qCount" class="h-cnt">{{ b.qCount }} 题</span>
                   <span class="h-ops">
+                    <span class="h-basket" @click="addNodeToBasket(b.node!)">＋ 入试题栏</span>
                     <span class="h-pick" @click="pick({ nodeId: b.node!.id })">＋ 入专项</span>
                   </span>
                 </component>
@@ -763,6 +828,13 @@ onBeforeUnmount(() => io?.disconnect())
                     <span v-if="itemTypeLabel(b.item!)" class="q-type">{{ itemTypeLabel(b.item!) }}</span>
                   </div>
                   <div class="q-ops">
+                    <el-button
+                      v-if="b.item!.questionId"
+                      size="small"
+                      type="success"
+                      :disabled="inBasket(b.item!.questionId)"
+                      @click="addToBasket(b.item!)"
+                    >{{ inBasket(b.item!.questionId) ? '✓ 已在试题栏' : '＋ 试题栏' }}</el-button>
                     <el-button size="small" type="primary" @click="pick({ questionId: b.item!.questionId ?? undefined }, b.item!.id)">＋ 入专项</el-button>
                     <el-button v-if="canEdit" size="small" @click="openEdit(b.item!)">✎ 改题</el-button>
                     <el-button v-if="b.item!.questionId" size="small" text @click="viewInBank(b.item!)">原题</el-button>
@@ -1030,6 +1102,12 @@ onBeforeUnmount(() => io?.disconnect())
 .crumb-pick {
   flex: none;
 }
+.crumb-ops {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 
 /* ── 文档纸张：窄栏居中，向原书排版靠齐 ── */
 .doc {
@@ -1148,6 +1226,24 @@ onBeforeUnmount(() => io?.disconnect())
   background: var(--bk-teal);
   color: #fff;
   border-color: var(--bk-teal);
+}
+/* 入试题栏：与入专项同形，绿色区分去向（栏=暂存挑题 / 专项=成册） */
+.h-basket {
+  font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--el-color-success);
+  background: var(--el-color-success-light-9);
+  border: 1px solid var(--el-color-success-light-7);
+  border-radius: 7px;
+  padding: 2px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.h-basket:hover {
+  background: var(--el-color-success);
+  color: #fff;
+  border-color: var(--el-color-success);
 }
 
 /* 讲解正文：书体散文 */

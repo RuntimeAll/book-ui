@@ -8,10 +8,12 @@
  *
  *   - 单个浮球，单击展开 / 收起一个 hub 面板。
  *   - hub 头部「＋录入新题」入口（跳 /ingest/frame 框选录题页）。
- *   - 三 tab：进行中(n) / 试题栏(n) / 试卷篮(n)。
+ *   - tab：进行中(n) / 试题栏(n) / 试卷篮(n) / 备课栏(n) / 历史。
  *       · 试题栏 tab  = 复用 useQuestionBasket 的列表内容（移除 / 拖拽重排 / 组卷）。
  *       · 试卷篮 tab  = 复用 usePaperBasket 的列表内容（移除 / 去组卷工作台）。
- *       · 进行中 tab  = 录题作业进度列表（轮询 GET /teacher/ingest/jobs + 去审核）。
+ *       · 进行中 tab  = 未归档录题作业进度列表（轮询 GET /teacher/ingest/jobs?scope=active
+ *                       + 去审核；终态作业可「处理完成」归档 / 「删除」硬删 —— PRD-011）。
+ *       · 历史 tab    = 已归档作业（scope=handled，切入即刷不轮询 —— PRD-011）。
  *   - 收起态（FP7）：球内进度环 + 球心文字，按优先级只显最高优先态：
  *       P1 处理中(进度环+"62%/拆题中") ＞ 完成(✓) ＞ P3 试题栏有货 ＞ P4 试卷篮有货 ＞ idle。
  *       （P2「组卷中」本期无独立态来源，留位不实现。）
@@ -34,9 +36,16 @@ import { useSpecialStore } from '@/store/special'
 import { useSpecialExportStore } from '@/store/specialExport'
 import { getQuestionDetail, type QuestionItem } from '@/api/question/index'
 import { useDictStore, DICT_QUESTION_TYPE } from '@/store/dict'
-import { listIngestJobs, type IngestJobRow, type IngestJobStatus } from '@/api/ingest/index'
+import {
+  listIngestJobs, markJobHandled, deleteJob,
+  type IngestJobRow, type IngestJobStatus,
+} from '@/api/ingest/index'
 import QuestionCard from '@/components/business/QuestionCard/index.vue'
 import QuestionContent from '@/components/business/QuestionContent/index.vue'
+// 🔴 PRD-011 bug轮：试题栏条目题面走 blockJson 网格（图/选项/公式与题库·工作台四端一致），
+//   老题回落 QuestionContent。终审反馈=「看图列式」的图在 blockJson 里，扁平渲染丢图。
+import QuestionBlockRender from '@/components/business/QuestionBlockRender/index.vue'
+import { parseBlockDoc, type QuestionBlockDoc } from '@/utils/blockSchema'
 
 const router = useRouter()
 const qBasket = useQuestionBasket()
@@ -45,11 +54,13 @@ const dict = useDictStore()
 dict.load(DICT_QUESTION_TYPE)
 
 // ── hub 展开 / 当前 tab ────────────────────────────────────────
-type TabKey = 'prog' | 'bskt' | 'paper' | 'prep'
+//   PRD-011 新增第 5 tab「历史」= 已归档作业（不轮询，切入才拉）。
+type TabKey = 'prog' | 'bskt' | 'paper' | 'prep' | 'hist'
 const open = ref(false)
 const activeTab = ref<TabKey>('prog')
 
 // ── 进行中（拆题作业）：轮询，逻辑搬自原 IngestFab ──────────────
+//   🔴 PRD-011：只装未归档作业（scope='active'），DONE/FAILED 点「处理完成」后即退场。
 const jobs = ref<IngestJobRow[]>([])
 const ACTIVE_STATUS = new Set<IngestJobStatus>(['PENDING', 'EXTRACT_ING', 'SPLIT_ING', 'SOLVING'])
 const activeJobCount = computed(() => jobs.value.filter((j) => ACTIVE_STATUS.has(j.status)).length)
@@ -58,10 +69,19 @@ const doneJobCount = computed(() => jobs.value.filter((j) => j.status === 'DONE'
 let timer: ReturnType<typeof setTimeout> | null = null
 let stopped = false
 
+// 🔴 PRD-011 verifier #4 闪回竞态双闸：
+//   ① 请求代次——归档/删除等本地变更让飞行中的旧 GET 响应作废（代次不符直接丢弃）；
+//   ② 已摘集合——即便同代响应仍含刚归档/删除的 id（BE 写后读的极小窗口），赋值时过滤兜底。
+let jobsGeneration = 0
+const locallyRemoved = new Set<string>()
+
 async function refreshJobs() {
+  const gen = jobsGeneration
   try {
-    const rows = await listIngestJobs()
-    jobs.value = Array.isArray(rows) ? rows : []
+    const rows = await listIngestJobs('active')
+    if (gen !== jobsGeneration) return // 期间发生过本地摘条，旧响应作废
+    const list = Array.isArray(rows) ? rows : []
+    jobs.value = list.filter((j) => !locallyRemoved.has(String(j.id)))
   } catch (e) {
     console.warn('[mf-fab] listIngestJobs failed', e)
   }
@@ -135,6 +155,63 @@ function goReview(job: IngestJobRow) {
   router.push('/ingest/review/' + job.id)
 }
 
+// ── PRD-011 作业退场：处理完成（归档）/ 删除（硬删）+ 历史 tab ────
+//   终态（DONE/FAILED）作业才给这两个动作；归档后转「历史」，删除不可恢复。
+const histJobs = ref<IngestJobRow[]>([])
+const histLoading = ref(false)
+const TERMINAL_STATUS = new Set<IngestJobStatus>(['DONE', 'FAILED'])
+function isTerminal(s: IngestJobStatus): boolean { return TERMINAL_STATUS.has(s) }
+
+/** 从两个列表里就地摘掉某条（归档 / 删除后本地同步，免整表重拉）。
+ *  🔴 同时推代次 + 记已摘集合：飞行中的旧轮询响应作废、后续响应过滤该 id，防「闪回」。
+ *  注：归档的 id 留在 locallyRemoved 里只影响「进行中」（它本就该退场），历史 tab 是独立
+ *  接口（scope=handled）不经此过滤，可正常显示。 */
+function dropJobLocally(jobId: string | number) {
+  const key = String(jobId)
+  jobsGeneration++
+  locallyRemoved.add(key)
+  jobs.value = jobs.value.filter((j) => String(j.id) !== key)
+  histJobs.value = histJobs.value.filter((j) => String(j.id) !== key)
+}
+
+async function handleMarkHandled(job: IngestJobRow) {
+  try {
+    await markJobHandled(job.id)
+    dropJobLocally(job.id)
+    ElMessage.success('已标记处理完成，可在「历史」里回看')
+  } catch { /* 拦截器已弹错 */ }
+}
+
+async function handleDeleteJob(job: IngestJobRow) {
+  try {
+    await ElMessageBox.confirm(
+      '删除作业记录，已入库的题不受影响，不可恢复。确认删除？',
+      '删除拆题作业',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+    )
+  } catch {
+    return // 取消
+  }
+  try {
+    await deleteJob(job.id)
+    dropJobLocally(job.id)
+    ElMessage.success('作业记录已删除')
+  } catch { /* 拦截器已弹错 */ }
+}
+
+/** 历史 tab 懒加载（每次切入刷新，不轮询） */
+async function refreshHistJobs() {
+  histLoading.value = true
+  try {
+    const rows = await listIngestJobs('handled')
+    histJobs.value = Array.isArray(rows) ? rows : []
+  } catch (e) {
+    console.warn('[mf-fab] listIngestJobs(handled) failed', e)
+  } finally {
+    histLoading.value = false
+  }
+}
+
 // ── 球内优先级状态（FP7）──────────────────────────────────────
 //   P1 处理中 ＞ 完成 ＞ P3 试题栏有货 ＞ P4 试卷篮有货 ＞ idle
 type BallMode = 'processing' | 'done' | 'question' | 'paper' | 'idle'
@@ -177,7 +254,12 @@ function openHub() {
   else if (m === 'paper') activeTab.value = 'paper'
   // idle 保持上次 tab
   void refreshJobs()
-  if (activeTab.value === 'bskt') void nextTick(initBasketSortable)
+  if (activeTab.value === 'bskt') {
+    void nextTick(initBasketSortable)
+    void qBasket.hydrateMissingBlockJson() // PRD-011：老缓存缺 blockJson 的项补水（图丢自愈）
+  }
+  // idle 保持上次 tab 时若停在「历史」，重开也刷一次（历史不轮询）
+  if (activeTab.value === 'hist') void refreshHistJobs()
 }
 
 function onBallClick() {
@@ -188,8 +270,12 @@ function onBallClick() {
 
 function switchTab(t: TabKey) {
   activeTab.value = t
-  if (t === 'bskt') void nextTick(initBasketSortable)
+  if (t === 'bskt') {
+    void nextTick(initBasketSortable)
+    void qBasket.hydrateMissingBlockJson() // PRD-011：老缓存缺 blockJson 的项补水（图丢自愈）
+  }
   if (t === 'prep') void specialStore.refresh()
+  if (t === 'hist') void refreshHistJobs()
 }
 
 function goIngest() {
@@ -200,6 +286,16 @@ function goIngest() {
 // ── 试题栏 tab：复用 QuestionBasket 的列表 + 拖拽重排 + 解析展开 ──
 const listEl = ref<HTMLElement | null>(null)
 let sortable: Sortable | null = null
+
+// 题面 blockJson 解析缓存（列表逐条渲染避免重复 JSON.parse；key=id+blockJson 长度防改题后陈旧）
+const _blockDocCache = new Map<string, QuestionBlockDoc | null>()
+function blockDocOf(item: { id: string; blockJson?: string | null }): QuestionBlockDoc | null {
+  const key = `${item.id}:${item.blockJson?.length ?? 0}`
+  if (!_blockDocCache.has(key)) {
+    _blockDocCache.set(key, parseBlockDoc(item.blockJson))
+  }
+  return _blockDocCache.get(key) ?? null
+}
 
 function onBasketDrop() {
   const root = listEl.value
@@ -450,7 +546,7 @@ onBeforeUnmount(() => {
           <span class="mf-hub-min" title="收起" @click="open = false">⌄</span>
         </div>
 
-        <!-- 三 tab -->
+        <!-- 五 tab（PRD-011 补「历史」）-->
         <div class="mf-hub-tabs">
           <button :class="{ on: activeTab === 'prog' }" @click="switchTab('prog')">
             进行中<span v-if="jobs.length" class="mf-tab-b">{{ activeJobCount || jobs.length }}</span>
@@ -463,6 +559,9 @@ onBeforeUnmount(() => {
           </button>
           <button :class="{ on: activeTab === 'prep' }" @click="switchTab('prep')">
             备课栏<span v-if="specials.length" class="mf-tab-b">{{ specials.length }}</span>
+          </button>
+          <button :class="{ on: activeTab === 'hist' }" @click="switchTab('hist')">
+            历史
           </button>
         </div>
 
@@ -516,6 +615,15 @@ onBeforeUnmount(() => {
                   <el-button size="small" type="primary" link @click="goReview(job)">
                     去审核<el-icon><Right /></el-icon>
                   </el-button>
+                  <!-- PRD-011：终态作业才能退场（归档 / 硬删）-->
+                  <template v-if="isTerminal(job.status)">
+                    <el-button size="small" link @click="handleMarkHandled(job)">
+                      <el-icon><CircleCheck /></el-icon>处理完成
+                    </el-button>
+                    <el-button size="small" link type="danger" @click="handleDeleteJob(job)">
+                      <el-icon><Delete /></el-icon>删除
+                    </el-button>
+                  </template>
                 </div>
               </div>
             </el-scrollbar>
@@ -561,7 +669,13 @@ onBeforeUnmount(() => {
                       </div>
                     </div>
                     <div class="basket-item-stem" style="cursor: zoom-in;" @click="openPreview(item)">
+                      <!-- 结构化题(blockJson)走网格：图/选项/公式与题库·工作台一致；老题回落扁平 -->
+                      <QuestionBlockRender
+                        v-if="blockDocOf(item)"
+                        :doc="blockDocOf(item)!"
+                      />
                       <QuestionContent
+                        v-else
                         :text="item.stemText"
                         :img-url="item.stemImg"
                         alt="题干（点击放大）"
@@ -663,6 +777,38 @@ onBeforeUnmount(() => {
               </div>
             </div>
             <div class="mf-newsp" @click="newSpecial">＋ 新建专项（空白 / 从书的某一节起步）</div>
+          </div>
+
+          <!-- ⑤ 历史（PRD-011：已归档拆题作业，切入即刷、不轮询）-->
+          <div v-show="activeTab === 'hist'" class="mf-pane">
+            <el-skeleton v-if="histLoading && histJobs.length === 0" :rows="3" animated />
+            <el-empty
+              v-else-if="histJobs.length === 0"
+              :image-size="60"
+              description="暂无历史记录"
+            />
+            <el-scrollbar v-else max-height="360px">
+              <div v-for="job in histJobs" :key="job.id" class="mf-job mf-job--hist">
+                <div class="mf-job-head">
+                  <el-icon class="mf-job-icon mf-job-icon--info"><Tickets /></el-icon>
+                  <span class="mf-job-name" :title="job.sourceFileName || ''">
+                    {{ job.sourceFileName || '未命名文件' }}
+                  </span>
+                </div>
+                <div class="mf-job-meta">
+                  已拆 {{ job.questionCount ?? 0 }} 题 · 已入库 {{ job.committedCount ?? 0 }}
+                  <span v-if="job.handledTime"> · 归档于 {{ job.handledTime }}</span>
+                </div>
+                <div class="mf-job-foot">
+                  <el-button size="small" type="primary" link @click="goReview(job)">
+                    去审核<el-icon><Right /></el-icon>
+                  </el-button>
+                  <el-button size="small" link type="danger" @click="handleDeleteJob(job)">
+                    <el-icon><Delete /></el-icon>删除
+                  </el-button>
+                </div>
+              </div>
+            </el-scrollbar>
           </div>
         </div>
       </div>
@@ -1079,7 +1225,15 @@ onBeforeUnmount(() => {
 .mf-job-foot {
   margin-top: 6px;
   display: flex;
+  align-items: center;
   justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+/* 历史条目：灰底精简卡（无进度条 / 无状态色）*/
+.mf-job--hist {
+  background: #fbfcfc;
+  border-color: #eef1f0;
 }
 
 /* ── 试题栏列表（复刻 QuestionBasket 样式，缩窄）── */

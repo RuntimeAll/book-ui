@@ -101,7 +101,16 @@ async function onLogin() {
     userStore.setAuth(result)
     // 整页刷（时序契约见文件头）：带 redirect 刷到目标，否则原地刷新当前页
     const target = afterLoginPath.value
-    if (target) window.location.hash = `#${target}`
+    if (target) {
+      window.location.hash = `#${target}`
+    } else {
+      // PRD-011 D6/AC11 — 无显式 redirect 且人还停在首页 → 落备课台总览（与路由守卫同口径；
+      // 这里先改 hash 再 reload，省掉「先闪一下 /home 再被守卫改道」的中间态）。
+      const cur = window.location.hash.replace(/^#/, '').split('?')[0]
+      if (cur === '' || cur === '/' || cur === '/home') {
+        window.location.hash = '#/desk/overview'
+      }
+    }
     window.location.reload()
   } catch {
     // 拦截器已 ElMessage.error；失败刷新验证码（多为验证码/密码错，旧码已失效）

@@ -108,14 +108,31 @@ const allMenuItems: MenuItem[] = [
 
 // PRD-A-005 T2 — 菜单按 userStore.roles 过滤显隐（单一事实源 = store roles）。
 // 无 roles 声明的项始终显示；声明了则需与当前用户 roles 有交集。
-const menuItems = computed<MenuItem[]>(() =>
-  allMenuItems.filter(
+// 🔴 PRD-011 终审拍板 — 登录后「备课台就叫首页」：登录态去掉游客首页(/home)项、
+//   把 /desk 项改名「首页」置首（老师的首页=备课台，路由守卫已把 /home 改道 /desk/overview 双保险）；
+//   未登录保持原样（游客门面 /home）。
+const menuItems = computed<MenuItem[]>(() => {
+  const visible = allMenuItems.filter(
     (item) =>
       !item.roles
       || item.roles.length === 0
       || item.roles.some((r) => userStore.roles.includes(r)),
-  ),
-)
+  )
+  if (!userStore.isLoggedIn) {
+    // 游客顶栏不出「备课台」（点了也会被守卫拦去登录，占位无意义——2026-07-28 用户拍板去掉）
+    return visible.filter((item) => item.path !== '/desk')
+  }
+  const merged = visible
+    .filter((item) => item.path !== '/home')
+    .map((item) => (item.path === '/desk' ? { ...item, label: '首页', icon: 'home' as LineIconName } : item))
+  // 「首页」(=/desk) 挪到第一位，其余保持原序
+  const idx = merged.findIndex((item) => item.path === '/desk')
+  if (idx > 0) {
+    const [home] = merged.splice(idx, 1)
+    merged.unshift(home)
+  }
+  return merged
+})
 
 function isActive(path: string): boolean {
   if (route.path === path) return true
@@ -142,8 +159,10 @@ const showMultiFunctionFab = computed(() => {
     return false
   }
   // PRD-C-212 D3 — 工作台/我的题库/举一反三已收进备课台，白名单同步 /desk/* 新路径
+  // 书架（/bookshelf/*）：书内浏览时逐题/整节挑题进试题栏，球是挑题成果的唯一可见处，必须显形
   return route.path.startsWith('/question/')
     || route.path.startsWith('/papers/')
+    || route.path.startsWith('/bookshelf')
     || route.path === '/desk/workspace'
     || route.path === '/desk/my-question'
     || route.path === '/desk/ai-variant'

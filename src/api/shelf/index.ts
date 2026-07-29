@@ -14,16 +14,17 @@ import request from '@/http/request'
 // 一、类型
 // ---------------------------------------------------------------------------
 
-/**
- * 书类型：lecture 讲义 / workbook 练习册 / textbook 电子课本 / special 专项
- *        / daily_punch 每日打卡（PRD-013 D1：打卡内容 = 一本有结构的书，天=节点）
- */
-export type BookType = 'lecture' | 'workbook' | 'textbook' | 'special' | 'daily_punch'
+/** 书类型：lecture 讲义 / workbook 练习册 / textbook 电子课本 / special 专项 */
+// 书类型 = 开放注册制（BE 不校验，MCP 可传任意新 slug）：新增类型只需在此补一行 label，
+// 书架过滤段随 BOOK_TYPE_LABEL 自动生成；注册规矩见 认知/服务与能力总目录.md「书类型注册表」
+// daily_punch 每日打卡（PRD-013 D1：打卡内容 = 一本有结构的书，天=节点）
+export type BookType = 'lecture' | 'workbook' | 'textbook' | 'special' | 'variant_special' | 'daily_punch'
 export const BOOK_TYPE_LABEL: Record<BookType, string> = {
   lecture: '讲义',
   workbook: '练习册',
   textbook: '电子课本',
   special: '专项',
+  variant_special: '举一反三专项',
   daily_punch: '每日打卡',
 }
 

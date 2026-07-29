@@ -39,14 +39,14 @@ const keyword = ref('')
 const GRADE_NUM: Record<number, string> = { 1: '一', 2: '二', 3: '三', 4: '四', 5: '五', 6: '六', 7: '七', 8: '八', 9: '九', 10: '高一', 11: '高二', 12: '高三' }
 const STAGE_GRADES: Record<number, number[]> = { 1: [1, 2, 3, 4, 5, 6], 2: [7, 8, 9], 3: [10, 11, 12] }
 
-// 类型段：书架不含专项（BE 已剔除 special），仅 讲义/练习册/电子课本/每日打卡
+// 类型段：随 BOOK_TYPE_LABEL 注册表自动生成（新增书类型只改 api/shelf 的 label 表一处）；
+// special=备课栏工作集被 BE 剔出书架列表，过滤段排除
 // 🔴 PRD-013 — daily_punch 打卡书也是书架书（天=节点的有结构书），入口即本页卡片
 const typeSegs: { key: '' | BookType; label: string }[] = [
   { key: '', label: '全部' },
-  { key: 'lecture', label: '讲义' },
-  { key: 'workbook', label: '练习册' },
-  { key: 'textbook', label: '电子课本' },
-  { key: 'daily_punch', label: '每日打卡' },
+  ...(Object.entries(BOOK_TYPE_LABEL) as [BookType, string][])
+    .filter(([k]) => k !== 'special')
+    .map(([k, l]) => ({ key: k, label: l })),
 ]
 
 const loading = ref(false)
@@ -177,13 +177,13 @@ const shownBooks = computed<ShelfBookVO[]>(() => {
 
 function coverClass(t: string): string {
   if (t === 'lecture') return 'cover c1'
-  if (t === 'special') return 'cover c3'
+  if (t === 'special' || t === 'variant_special') return 'cover c3'
   if (t === 'daily_punch') return 'cover c4'
   return 'cover c2'
 }
 function tagClass(t: string): string {
   if (t === 'lecture') return 'tag lec'
-  if (t === 'special') return 'tag sp'
+  if (t === 'special' || t === 'variant_special') return 'tag sp'
   if (t === 'daily_punch') return 'tag punch'
   return 'tag wb'
 }
@@ -432,7 +432,7 @@ onMounted(() => {
           <el-radio-group v-model="form.bookType">
             <el-radio-button value="lecture">讲义</el-radio-button>
             <el-radio-button value="workbook">练习册</el-radio-button>
-            <el-radio-button value="special">专项</el-radio-button>
+            <el-radio-button value="variant_special">举一反三专项</el-radio-button>
           </el-radio-group>
         </el-form-item>
       </el-form>
