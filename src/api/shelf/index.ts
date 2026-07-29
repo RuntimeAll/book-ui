@@ -15,12 +15,13 @@ import request from '@/http/request'
 // ---------------------------------------------------------------------------
 
 /** 书类型：lecture 讲义 / workbook 练习册 / textbook 电子课本 / special 专项 */
-export type BookType = 'lecture' | 'workbook' | 'textbook' | 'special'
+export type BookType = 'lecture' | 'workbook' | 'textbook' | 'special' | 'variant_special'
 export const BOOK_TYPE_LABEL: Record<BookType, string> = {
   lecture: '讲义',
   workbook: '练习册',
   textbook: '电子课本',
   special: '专项',
+  variant_special: '举一反三专项',
 }
 
 /** 内容项类型：explain 讲解块 / question 题引用 */
