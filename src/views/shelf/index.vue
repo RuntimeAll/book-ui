@@ -39,13 +39,13 @@ const keyword = ref('')
 const GRADE_NUM: Record<number, string> = { 1: '一', 2: '二', 3: '三', 4: '四', 5: '五', 6: '六', 7: '七', 8: '八', 9: '九', 10: '高一', 11: '高二', 12: '高三' }
 const STAGE_GRADES: Record<number, number[]> = { 1: [1, 2, 3, 4, 5, 6], 2: [7, 8, 9], 3: [10, 11, 12] }
 
-// 类型段：书架不含备课挑题专项（BE 剔除 special=备课栏工作集）；举一反三专项（variant_special）是正经书架书
+// 类型段：随 BOOK_TYPE_LABEL 注册表自动生成（新增书类型只改 api/shelf 的 label 表一处）；
+// special=备课栏工作集被 BE 剔出书架列表，过滤段排除
 const typeSegs: { key: '' | BookType; label: string }[] = [
   { key: '', label: '全部' },
-  { key: 'lecture', label: '讲义' },
-  { key: 'workbook', label: '练习册' },
-  { key: 'textbook', label: '电子课本' },
-  { key: 'variant_special', label: '举一反三专项' },
+  ...(Object.entries(BOOK_TYPE_LABEL) as [BookType, string][])
+    .filter(([k]) => k !== 'special')
+    .map(([k, l]) => ({ key: k, label: l })),
 ]
 
 const loading = ref(false)
