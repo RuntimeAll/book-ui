@@ -64,7 +64,7 @@
 }
 
 /* ── 壳：顶栏 / 内容区 / 底部 tabbar ─────────────────────────── */
-.m-appbar {
+.m-app .m-appbar {
   position: sticky;
   top: 0;
   z-index: 20;
@@ -75,11 +75,11 @@
   align-items: center;
   gap: 10px;
 }
-.m-appbar .t {
+.m-app .m-appbar .t {
   font-size: 16px;
   font-weight: 600;
 }
-.m-envchip {
+.m-app .m-envchip {
   margin-left: auto;
   font-size: 11px;
   color: var(--m-brand);
@@ -89,12 +89,12 @@
   letter-spacing: 0.04em;
 }
 
-.m-main {
+.m-app .m-main {
   flex: 1;
   padding: 14px 14px 96px;
 }
 
-.m-tabbar {
+.m-app .m-tabbar {
   position: fixed;
   bottom: 0;
   left: 50%;
@@ -105,23 +105,23 @@
   border-top: 1px solid var(--m-line);
   display: flex;
 }
-.m-tabbar button {
+.m-app .m-tabbar button {
   flex: 1;
   padding: 9px 0 12px;
   font-size: 12px;
   color: var(--m-ink3);
   position: relative;
 }
-.m-tabbar button .ic {
+.m-app .m-tabbar button .ic {
   display: block;
   font-size: 19px;
   line-height: 1.2;
 }
-.m-tabbar button.on {
+.m-app .m-tabbar button.on {
   color: var(--m-brand);
   font-weight: 600;
 }
-.m-tabbar .badge {
+.m-app .m-tabbar .badge {
   position: absolute;
   top: 4px;
   left: calc(50% + 10px);
@@ -134,16 +134,16 @@
 }
 
 /* ── 通用块 ──────────────────────────────────────────────── */
-.m-sec {
+.m-app .m-sec {
   font-size: 12px;
   color: var(--m-ink3);
   letter-spacing: 0.08em;
   margin: 18px 4px 8px;
 }
-.m-sec:first-child {
+.m-app .m-sec:first-child {
   margin-top: 2px;
 }
-.m-card {
+.m-app .m-card {
   background: var(--m-card);
   border: 1px solid var(--m-line);
   border-radius: 12px;
@@ -151,7 +151,7 @@
   padding: 12px 14px;
   margin-bottom: 10px;
 }
-.m-hint {
+.m-app .m-hint {
   font-size: 13px;
   color: var(--m-ink2);
   background: var(--m-warn-soft);
@@ -159,22 +159,22 @@
   padding: 10px 12px;
   margin-bottom: 12px;
 }
-.m-hint b {
+.m-app .m-hint b {
   color: var(--m-warn);
 }
-.m-note {
+.m-app .m-note {
   font-size: 12px;
   color: var(--m-ink3);
   margin: 6px 4px 0;
 }
-.m-empty {
+.m-app .m-empty {
   font-size: 13px;
   color: var(--m-ink3);
   text-align: center;
   padding: 28px 0;
 }
 
-.m-chip {
+.m-app .m-chip {
   display: inline-block;
   font-size: 11px;
   padding: 1px 7px;
@@ -182,64 +182,64 @@
   vertical-align: 2px;
   white-space: nowrap;
 }
-.m-chip.subj,
-.m-chip.ok {
+.m-app .m-chip.subj,
+.m-app .m-chip.ok {
   background: var(--m-brand-soft);
   color: var(--m-brand);
 }
-.m-chip.rev {
+.m-app .m-chip.rev {
   background: var(--m-danger-soft);
   color: var(--m-danger);
 }
-.m-chip.shell,
-.m-chip.warn {
+.m-app .m-chip.shell,
+.m-app .m-chip.warn {
   background: var(--m-warn-soft);
   color: var(--m-warn);
 }
-.m-chip.plain {
+.m-app .m-chip.plain {
   background: var(--m-bg);
   color: var(--m-ink3);
   border: 1px solid var(--m-line);
 }
 
-.m-btn {
+.m-app .m-btn {
   border-radius: 10px;
   padding: 10px 16px;
   font-size: 15px;
   font-weight: 600;
   text-align: center;
 }
-.m-btn.pri {
+.m-app .m-btn.pri {
   background: var(--m-brand);
   color: var(--m-on-brand);
   flex: 1;
 }
-.m-btn.pri:disabled {
+.m-app .m-btn.pri:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
-.m-btn.ghost {
+.m-app .m-btn.ghost {
   border: 1px solid var(--m-line);
   background: var(--m-card);
   font-weight: 500;
   font-size: 13px;
   padding: 8px 12px;
 }
-.m-btn.ghost:disabled {
+.m-app .m-btn.ghost:disabled {
   color: var(--m-ink3);
   cursor: not-allowed;
 }
 
-.m-field {
+.m-app .m-field {
   margin-bottom: 10px;
 }
-.m-field label {
+.m-app .m-field label {
   display: block;
   font-size: 12px;
   color: var(--m-ink2);
   margin-bottom: 4px;
 }
-.m-field input {
+.m-app .m-field input {
   width: 100%;
   border: 1px solid var(--m-line);
   border-radius: 8px;
@@ -250,13 +250,13 @@
 }
 
 /* ── 弹层（mask + 底部 sheet）────────────────────────────── */
-.m-mask {
+.m-app .m-mask {
   position: fixed;
   inset: 0;
   background: rgba(15, 23, 21, 0.45);
   z-index: 30;
 }
-.m-sheet {
+.m-app .m-sheet {
   position: fixed;
   left: 50%;
   transform: translateX(-50%);
@@ -269,56 +269,56 @@
   max-height: 86dvh;
   overflow-y: auto;
 }
-.m-sheet h3 {
+.m-app .m-sheet h3 {
   font-size: 16px;
   margin-bottom: 4px;
 }
-.m-sheet .sub {
+.m-app .m-sheet .sub {
   font-size: 12px;
   color: var(--m-ink3);
   margin-bottom: 12px;
 }
-.m-sheet .acts {
+.m-app .m-sheet .acts {
   display: flex;
   gap: 10px;
   margin-top: 14px;
 }
 
-.m-seg {
+.m-app .m-seg {
   display: inline-flex;
   border: 1px solid var(--m-line);
   border-radius: 9px;
   overflow: hidden;
   margin-bottom: 12px;
 }
-.m-seg button {
+.m-app .m-seg button {
   padding: 6px 16px;
   font-size: 13px;
   background: var(--m-card);
 }
-.m-seg button.on {
+.m-app .m-seg button.on {
   background: var(--m-brand);
   color: var(--m-on-brand);
   font-weight: 600;
 }
 
 /* ── 课表：手机日历式（V20）────────────────────────────── */
-.m-calhead {
+.m-app .m-calhead {
   display: flex;
   align-items: center;
   gap: 6px;
   margin-bottom: 8px;
 }
-.m-calhead .m {
+.m-app .m-calhead .m {
   font-size: 17px;
   font-weight: 700;
 }
-.m-calhead button.nav {
+.m-app .m-calhead button.nav {
   font-size: 16px;
   color: var(--m-ink2);
   padding: 2px 10px;
 }
-.m-calhead .today-btn {
+.m-app .m-calhead .today-btn {
   margin-left: auto;
   font-size: 12px;
   color: var(--m-brand);
@@ -326,7 +326,7 @@
   border-radius: 99px;
   padding: 3px 10px;
 }
-.m-cal {
+.m-app .m-cal {
   background: var(--m-card);
   border: 1px solid var(--m-line);
   border-radius: 14px;
@@ -334,18 +334,18 @@
   padding: 10px 8px 12px;
   margin-bottom: 12px;
 }
-.m-calwk,
-.m-calrow {
+.m-app .m-calwk,
+.m-app .m-calrow {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
 }
-.m-calwk span {
+.m-app .m-calwk span {
   text-align: center;
   font-size: 11px;
   color: var(--m-ink3);
   padding: 2px 0 6px;
 }
-.m-day {
+.m-app .m-day {
   position: relative;
   text-align: center;
   padding: 5px 0 12px;
@@ -354,10 +354,10 @@
   font-variant-numeric: tabular-nums;
   cursor: pointer;
 }
-.m-day.blank {
+.m-app .m-day.blank {
   cursor: default;
 }
-.m-day .n {
+.m-app .m-day .n {
   display: inline-flex;
   width: 26px;
   height: 26px;
@@ -365,15 +365,15 @@
   justify-content: center;
   border-radius: 50%;
 }
-.m-day.today .n {
+.m-app .m-day.today .n {
   background: var(--m-brand);
   color: var(--m-on-brand);
   font-weight: 700;
 }
-.m-day.sel {
+.m-app .m-day.sel {
   background: var(--m-brand-soft);
 }
-.m-day .dots {
+.m-app .m-day .dots {
   position: absolute;
   left: 0;
   right: 0;
@@ -382,27 +382,27 @@
   gap: 3px;
   justify-content: center;
 }
-.m-day .dots i {
+.m-app .m-day .dots i {
   width: 4px;
   height: 4px;
   border-radius: 50%;
   display: block;
 }
-.m-daylist .dhead {
+.m-app .m-daylist .dhead {
   display: flex;
   align-items: baseline;
   gap: 8px;
   margin: 4px 4px 8px;
 }
-.m-daylist .dhead .d {
+.m-app .m-daylist .dhead .d {
   font-size: 14px;
   font-weight: 600;
 }
-.m-daylist .dhead .c {
+.m-app .m-daylist .dhead .c {
   font-size: 12px;
   color: var(--m-ink3);
 }
-.m-slot {
+.m-app .m-slot {
   display: flex;
   gap: 10px;
   align-items: center;
@@ -410,30 +410,30 @@
   border-top: 1px dashed var(--m-line);
   font-variant-numeric: tabular-nums;
 }
-.m-slot:first-of-type {
+.m-app .m-slot:first-of-type {
   border-top: 0;
 }
-.m-slot .clr {
+.m-app .m-slot .clr {
   width: 4px;
   align-self: stretch;
   border-radius: 2px;
   flex: none;
 }
-.m-slot .tm {
+.m-app .m-slot .tm {
   font-size: 13px;
   color: var(--m-ink2);
   width: 92px;
   flex: none;
 }
-.m-slot .body {
+.m-app .m-slot .body {
   min-width: 0;
   flex: 1;
 }
-.m-slot .nm {
+.m-app .m-slot .nm {
   font-size: 14px;
   font-weight: 600;
 }
-.m-slot .ls {
+.m-app .m-slot .ls {
   font-size: 12px;
   color: var(--m-ink3);
   display: block;
@@ -441,63 +441,63 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.m-slot .st {
+.m-app .m-slot .st {
   margin-left: auto;
   flex: none;
 }
 
 /* ── 待结算（V21）────────────────────────────────────── */
-.m-sess {
+.m-app .m-sess {
   display: flex;
   gap: 10px;
   align-items: flex-start;
 }
-.m-sess input[type='checkbox'] {
+.m-app .m-sess input[type='checkbox'] {
   width: 18px;
   height: 18px;
   margin-top: 4px;
   accent-color: var(--m-brand);
   flex: none;
 }
-.m-sess .body {
+.m-app .m-sess .body {
   min-width: 0;
 }
-.m-sess .who {
+.m-app .m-sess .who {
   font-size: 15px;
   font-weight: 600;
 }
-.m-sess .meta {
+.m-app .m-sess .meta {
   font-size: 13px;
   color: var(--m-ink2);
 }
-.m-sess .fee {
+.m-app .m-sess .fee {
   margin-left: auto;
   text-align: right;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   flex: none;
 }
-.m-sess .fee .n {
+.m-app .m-sess .fee .n {
   font-size: 15px;
   font-weight: 600;
 }
-.m-sess .fee .u {
+.m-app .m-sess .fee .u {
   font-size: 12px;
   color: var(--m-ink3);
 }
-.m-rowact {
+.m-app .m-rowact {
   display: flex;
   gap: 14px;
   margin-top: 8px;
 }
-.m-rowact button {
+.m-app .m-rowact button {
   font-size: 13px;
   color: var(--m-brand);
 }
-.m-rowact button.neg {
+.m-app .m-rowact button.neg {
   color: var(--m-danger);
 }
-.m-settlebar {
+.m-app .m-settlebar {
   position: fixed;
   bottom: 64px;
   left: 50%;
@@ -510,36 +510,36 @@
   z-index: 15;
 }
 
-.m-strow {
+.m-app .m-strow {
   border: 1px solid var(--m-line);
   border-radius: 10px;
   padding: 10px;
   margin-bottom: 8px;
   background: var(--m-bg);
 }
-.m-strow .top {
+.m-app .m-strow .top {
   display: flex;
   align-items: center;
   gap: 8px;
 }
-.m-strow .top .fee {
+.m-app .m-strow .top .fee {
   margin-left: auto;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.m-strow .ctl {
+.m-app .m-strow .ctl {
   display: flex;
   gap: 8px;
   margin-top: 8px;
   align-items: center;
 }
-.m-strow .ctl label {
+.m-app .m-strow .ctl label {
   font-size: 12px;
   color: var(--m-ink2);
   flex: none;
 }
-.m-strow .ctl input.hrs {
+.m-app .m-strow .ctl input.hrs {
   width: 76px;
   flex: none;
   border: 1px solid var(--m-line);
@@ -550,7 +550,7 @@
   color: var(--m-ink);
   font-variant-numeric: tabular-nums;
 }
-.m-strow .ctl input.tmn {
+.m-app .m-strow .ctl input.tmn {
   flex: 1;
   min-width: 0;
   border: 1px solid var(--m-line);
@@ -563,12 +563,12 @@
 }
 
 /* ── 账户 + 课时消耗台账（V22）───────────────────────── */
-.m-stu .name {
+.m-app .m-stu .name {
   font-size: 15px;
   font-weight: 600;
   margin-bottom: 6px;
 }
-.m-acct {
+.m-app .m-acct {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -576,43 +576,43 @@
   border-top: 1px dashed var(--m-line);
   font-variant-numeric: tabular-nums;
 }
-.m-acct .price {
+.m-app .m-acct .price {
   font-size: 12px;
   color: var(--m-ink3);
 }
-.m-acct .nums {
+.m-app .m-acct .nums {
   margin-left: auto;
   text-align: right;
   line-height: 1.35;
   cursor: pointer;
 }
-.m-acct .h {
+.m-app .m-acct .h {
   font-size: 15px;
   font-weight: 600;
 }
-.m-acct .h em {
+.m-app .m-acct .h em {
   font-style: normal;
   font-size: 11px;
   font-weight: 400;
   color: var(--m-ink3);
   margin-left: 2px;
 }
-.m-acct .mm {
+.m-app .m-acct .mm {
   font-size: 12px;
   color: var(--m-ink2);
 }
-.m-acct.owe .h,
-.m-acct.owe .mm {
+.m-app .m-acct.owe .h,
+.m-app .m-acct.owe .mm {
   color: var(--m-danger);
 }
-.m-acct .mini {
+.m-app .m-acct .mini {
   font-size: 12px;
   color: var(--m-brand);
   padding: 4px 2px 4px 10px;
   flex: none;
 }
 
-.m-lrow {
+.m-app .m-lrow {
   display: flex;
   gap: 10px;
   align-items: center;
@@ -620,100 +620,100 @@
   border-top: 1px dashed var(--m-line);
   font-variant-numeric: tabular-nums;
 }
-.m-lrow:first-child {
+.m-app .m-lrow:first-child {
   border-top: 0;
 }
-.m-lrow .ld {
+.m-app .m-lrow .ld {
   width: 88px;
   flex: none;
   line-height: 1.3;
 }
-.m-lrow .ld .dd {
+.m-app .m-lrow .ld .dd {
   font-size: 13px;
   font-weight: 600;
 }
-.m-lrow .ld .tt {
+.m-app .m-lrow .ld .tt {
   font-size: 11px;
   color: var(--m-ink3);
 }
-.m-lrow .lc {
+.m-app .m-lrow .lc {
   flex: 1;
   min-width: 0;
   font-size: 13px;
   color: var(--m-ink2);
   overflow-wrap: anywhere;
 }
-.m-lrow .ln {
+.m-app .m-lrow .ln {
   text-align: right;
   line-height: 1.3;
   white-space: nowrap;
   flex: none;
 }
-.m-lrow .ln .delta {
+.m-app .m-lrow .ln .delta {
   font-size: 13px;
   font-weight: 600;
 }
-.m-lrow .ln .after {
+.m-app .m-lrow .ln .after {
   font-size: 11px;
   color: var(--m-ink3);
 }
-.m-lrow.recharge {
+.m-app .m-lrow.recharge {
   background: var(--m-brand-soft);
   border-radius: 10px;
   border-top: 0;
   margin-top: 6px;
 }
-.m-lrow.recharge .delta,
-.m-lrow.recharge .lc {
+.m-app .m-lrow.recharge .delta,
+.m-app .m-lrow.recharge .lc {
   color: var(--m-brand);
   font-weight: 600;
 }
-.m-lrow.reverse {
+.m-app .m-lrow.reverse {
   background: var(--m-danger-soft);
   border-radius: 10px;
   border-top: 0;
   margin-top: 6px;
 }
-.m-lrow.reverse .delta,
-.m-lrow.reverse .lc {
+.m-app .m-lrow.reverse .delta,
+.m-app .m-lrow.reverse .lc {
   color: var(--m-danger);
 }
 
 /* ── 反馈（V23）─────────────────────────────────────── */
-.m-chips {
+.m-app .m-chips {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
   margin-bottom: 12px;
 }
-.m-chips .lab {
+.m-app .m-chips .lab {
   font-size: 12px;
   color: var(--m-ink3);
   align-self: center;
 }
-.m-stuchip {
+.m-app .m-stuchip {
   font-size: 13px;
   padding: 6px 14px;
   border-radius: 99px;
   border: 1px solid var(--m-line);
   background: var(--m-card);
 }
-.m-stuchip.today {
+.m-app .m-stuchip.today {
   border-color: var(--m-brand);
   color: var(--m-brand);
 }
-.m-stuchip.on {
+.m-app .m-stuchip.on {
   background: var(--m-brand);
   border-color: var(--m-brand);
   color: var(--m-on-brand);
   font-weight: 600;
 }
-.m-fb .ttl {
+.m-app .m-fb .ttl {
   display: flex;
   align-items: center;
   gap: 8px;
 }
-.m-seqbadge {
+.m-app .m-seqbadge {
   width: 26px;
   height: 26px;
   border-radius: 8px;
@@ -726,21 +726,21 @@
   font-size: 14px;
   flex: none;
 }
-.m-fb.shellcard .m-seqbadge {
+.m-app .m-fb.shellcard .m-seqbadge {
   background: var(--m-warn);
 }
-.m-fb .ttl .t {
+.m-app .m-fb .ttl .t {
   font-size: 14px;
   font-weight: 600;
 }
-.m-fb .ttl .d {
+.m-app .m-fb .ttl .d {
   font-size: 12px;
   color: var(--m-ink3);
   margin-left: auto;
   font-variant-numeric: tabular-nums;
   flex: none;
 }
-.m-fb .pre {
+.m-app .m-fb .pre {
   font-size: 12px;
   color: var(--m-ink2);
   margin: 6px 0 0 34px;
@@ -750,26 +750,26 @@
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
-.m-fbrow {
+.m-app .m-fbrow {
   border: 1px solid var(--m-line);
   border-radius: 10px;
   padding: 10px;
   margin-bottom: 8px;
   background: var(--m-bg);
 }
-.m-fbrow .no {
+.m-app .m-fbrow .no {
   font-size: 11px;
   color: var(--m-ink3);
   margin-bottom: 4px;
   display: flex;
   align-items: center;
 }
-.m-fbrow .no button {
+.m-app .m-fbrow .no button {
   margin-left: auto;
   color: var(--m-danger);
   font-size: 11px;
 }
-.m-fbrow input {
+.m-app .m-fbrow input {
   width: 100%;
   border: 0;
   border-bottom: 1px dashed var(--m-line);
@@ -781,7 +781,7 @@
 }
 
 /* ── 导出预览（PNG 出图面，恒浅色）───────────────────── */
-.m-png {
+.m-app .m-png {
   background: #fff;
   border: 1px solid var(--m-line);
   border-radius: 8px;
@@ -789,19 +789,19 @@
   margin-bottom: 10px;
   text-align: center;
 }
-.m-png img {
+.m-app .m-png img {
   max-width: 100%;
   display: block;
   margin: 0 auto;
 }
-.m-png .loading {
+.m-app .m-png .loading {
   padding: 28px;
   font-size: 13px;
   color: var(--m-ink3);
 }
 
 /* ── 登录门（V25）───────────────────────────────────── */
-.m-login {
+.m-app .m-login {
   min-height: 100dvh;
   background: var(--m-bg);
   display: flex;
@@ -809,7 +809,7 @@
   justify-content: center;
   padding: 20px;
 }
-.m-login .box {
+.m-app .m-login .box {
   width: min(360px, 100%);
   background: var(--m-card);
   border: 1px solid var(--m-line);
@@ -817,16 +817,16 @@
   box-shadow: var(--m-shadow);
   padding: 26px 22px;
 }
-.m-login h2 {
+.m-app .m-login h2 {
   font-size: 18px;
   margin-bottom: 2px;
 }
-.m-login .sub2 {
+.m-app .m-login .sub2 {
   font-size: 12px;
   color: var(--m-ink3);
   margin-bottom: 16px;
 }
-.m-login .or {
+.m-app .m-login .or {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -834,14 +834,14 @@
   font-size: 11px;
   margin: 14px 0;
 }
-.m-login .or::before,
-.m-login .or::after {
+.m-app .m-login .or::before,
+.m-app .m-login .or::after {
   content: '';
   flex: 1;
   height: 1px;
   background: var(--m-line);
 }
-.m-login .tip {
+.m-app .m-login .tip {
   font-size: 11px;
   color: var(--m-ink3);
   margin-top: 6px;
