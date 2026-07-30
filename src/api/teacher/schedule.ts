@@ -1,4 +1,6 @@
 import request from '@/http/request'
+// PRD-015：卡片墙内联返回每科课时账户（additive），类型复用账户契约正本，不另立一套
+import type { TuitionAccountVO } from './account'
 
 // ===========================================================================
 // PRD-C-213 教学安排与备课闭环 —— API 客户端（批0 契约冻结正本，脚手架冻结件）。
@@ -247,6 +249,23 @@ export interface TargetDetailVO {
   updateTime?: string
 }
 
+/**
+ * PRD-015 学科线 · 卡片上的「一科一条计划绑定」（additive）。
+ * 一个学生可同时上数学 + 科学 → 两条计划各自进度，读侧不再串科。
+ */
+export interface PlanBindingVO {
+  /** 学科字典码（计划 subject → 场次 subject → 对象主科 逐级兜底） */
+  subject?: string | null
+  /** 学科中文标签（BE 推导） */
+  subjectLabel?: string | null
+  planId: string
+  planName?: string | null
+  /** 该计划已上课次数 */
+  progressDone: number
+  /** 该计划课次总数 */
+  progressTotal: number
+}
+
 /** 对象卡片（GET target/page，含实时聚合） */
 export interface TargetCardVO {
   id: string
@@ -274,6 +293,18 @@ export interface TargetCardVO {
   progressDone?: number
   /** 进度 total（计划课次总数） */
   progressTotal?: number
+  /**
+   * PRD-015 additive：按学科分组的全部计划绑定（一生多科多计划）。
+   * 🔴 上面 planId/planName/progressDone/progressTotal 四个旧字段保留 = 主科（或第一条）绑定，
+   *    老渲染不动；新渲染优先吃 planBindings，为空时回退旧字段。
+   */
+  planBindings?: PlanBindingVO[]
+  /**
+   * PRD-015 additive：该生每科课时账户快照（学生卡专有；班级恒空）。
+   * 结构 = account.ts 的 TuitionAccountVO，卡片只用 subject/subjectLabel/hoursRemain；
+   * 卡片墙直接吃这里，免逐卡再打一次 /teacher/schedule/account/list。
+   */
+  accounts?: TuitionAccountVO[]
   /** 下一课 */
   nextSession?: {
     sessionId: string
@@ -347,6 +378,10 @@ export interface PlanVO {
   targetId?: string | null
   /** 字典：暑假·上学期·寒假·下学期 */
   termTag: string
+  /** PRD-015：计划学科（字典码 biz_edu_subject；BE 一直回传，本批补进类型） */
+  subject?: string | null
+  /** 学科中文标签（BE 推导） */
+  subjectLabel?: string | null
   year: number
   materialNote?: string
   /** @deprecated PRD-B-101：段模型退役，页面不再消费 */
@@ -370,6 +405,12 @@ export interface PlanBo {
   /** S1 计划归属对象 id（新建必传，BE 强校验对象存在且归我） */
   targetId?: string
   termTag: string
+  /**
+   * PRD-015 学科线：计划学科（字典码）。
+   * 🔴 学生对象建/改计划时 BE 校验该生已开通该学科账户（D3 开户即绑定），未开户返 400
+   *    「先为学生开通X账户」；班级跳过校验。
+   */
+  subject?: string
   year: number
   materialNote?: string
   /** @deprecated PRD-B-101：段模型退役，页面不再写 */

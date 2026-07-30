@@ -44,6 +44,8 @@ export interface TuitionAccountVO {
   studentId: string
   /** 学科字典码（biz_edu_subject：1数学/2科学/3语文/4英语） */
   subject: string
+  /** 学科中文标签（BE 推导，additive；缺省时页面回退显示 subject 码） */
+  subjectLabel?: string | null
   /** 课时单价（元/课时） */
   lessonPrice: number
   /** 剩余课时 */
