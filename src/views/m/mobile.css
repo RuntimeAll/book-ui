@@ -173,6 +173,26 @@
   text-align: center;
   padding: 28px 0;
 }
+/* 加载失败条（PRD-015 BUG-1）：故障必须现形，不许伪装成「没有数据」的空态 */
+.m-app .m-failbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--m-danger);
+  background: var(--m-danger-soft);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+.m-app .m-failbar span {
+  flex: 1;
+}
+.m-app .m-failbar .m-btn {
+  flex: none;
+  padding: 5px 14px;
+  font-size: 12.5px;
+}
 
 .m-app .m-chip {
   display: inline-block;

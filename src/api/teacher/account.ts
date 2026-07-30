@@ -125,6 +125,11 @@ export interface FileUrlVO {
 
 // ---------------------------------------------------------------------------
 // 三、API 客户端
+//
+// 🔴 路径体检（PRD-015 bug 批 BUG-1，2026-07-31 逐行核对 TuitionAccountController）：
+//    以下 5 条路径与 BE @RequestMapping("/teacher/schedule/account") 下的
+//    /list · (根 POST) · /{id}/flow · /{id}/ledger · /{id}/export-ledger-png 一一对上，
+//    分隔符全部是正斜杠 `/`，无反斜杠、无拼接漏斜杠。改这里必须同步核对 Controller。
 // ---------------------------------------------------------------------------
 
 /** 某学生的全部学科账户：GET account/list?studentId= */

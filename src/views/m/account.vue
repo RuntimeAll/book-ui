@@ -37,34 +37,49 @@ interface StudentAccounts {
 
 const groups = ref<StudentAccounts[]>([])
 const loading = ref(false)
+/** 学生清单本身拉不到 → 整页失败（一个学生都渲染不出来） */
 const loadFailed = ref(false)
+/** 逐生账户请求失败的学生数 —— 🔴 与「该生没开户」严格分开计数（BUG-1） */
+const failedCount = ref(0)
 
 async function load() {
   loading.value = true
   loadFailed.value = false
+  failedCount.value = 0
   try {
     const res = await pageTargets({ targetType: '0', pageSize: 500 })
     const students: TargetCardVO[] = res?.rows ?? []
+    let failed = 0
     const packs = await Promise.all(
       students.map(async (s) => {
         try {
           const list = await listAccounts(s.id)
           return { id: s.id, name: s.name, accounts: Array.isArray(list) ? list : [] }
-        } catch {
-          // 账户端点未就绪 / 该生未开户 → 空账户，不阻塞其他学生
+        } catch (e) {
+          // 🔴 BUG-1 教训：请求异常 ≠ 该生没开户。原来这里逐生吞错返空账户，
+          //    结果接口一坏，整页就演成「还没有开户的学生」，把故障说成了正常业务态，
+          //    足足瞒过一整轮回归。现在照实计数 → 页面出「加载失败·重试」条。
+          failed += 1
+          console.warn('[m/account] 该生账户拉取失败 studentId=', s.id, e)
           return { id: s.id, name: s.name, accounts: [] as TuitionAccountVO[] }
         }
       }),
     )
+    failedCount.value = failed
     groups.value = packs.filter((p) => p.accounts.length > 0)
   } catch (e) {
-    console.warn('[m/account] 账户列表拉取失败', e)
+    console.warn('[m/account] 学生清单拉取失败', e)
     groups.value = []
     loadFailed.value = true
   } finally {
     loading.value = false
   }
 }
+
+/** 只有「全部请求都成功、确实一个账户都没有」才敢说没开户 */
+const trulyEmpty = computed(
+  () => !loading.value && !loadFailed.value && !failedCount.value && !groups.value.length,
+)
 
 function subjectLabel(code: string): string {
   return dict.label(DICT_EDU_SUBJECT, code) || code
@@ -229,8 +244,19 @@ onMounted(load)
     <div class="m-sec">学生 × 学科 账户 · 点「记录」看消耗台账</div>
 
     <div v-if="loading" class="m-empty">加载中…</div>
-    <div v-else-if="loadFailed" class="m-empty">账户暂时取不到，稍后重试</div>
-    <div v-else-if="!groups.length" class="m-empty">还没有开户的学生（开户在电脑端学生详情里做）</div>
+
+    <!-- 🔴 BUG-1：加载失败必须现形，绝不伪装成「没开户」 -->
+    <div v-else-if="loadFailed" class="m-failbar">
+      <span>账户加载失败——这是接口/网络问题，不代表没有开户。</span>
+      <button class="m-btn ghost" @click="load">重试</button>
+    </div>
+    <template v-else>
+      <div v-if="failedCount" class="m-failbar">
+        <span>{{ failedCount }} 名学生的账户加载失败，下面的清单不完整。</span>
+        <button class="m-btn ghost" @click="load">重试</button>
+      </div>
+      <div v-if="trulyEmpty" class="m-empty">还没有开户的学生（开户在电脑端学生详情里做）</div>
+    </template>
 
     <div v-for="g in groups" :key="g.id" class="m-card m-stu">
       <div class="name">{{ g.name }}</div>
