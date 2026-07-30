@@ -259,7 +259,8 @@
   color: var(--m-ink2);
   margin-bottom: 4px;
 }
-.m-app .m-field input {
+.m-app .m-field input,
+.m-app .m-field select {
   width: 100%;
   border: 1px solid var(--m-line);
   border-radius: 8px;
@@ -267,6 +268,21 @@
   font: inherit;
   background: var(--m-bg);
   color: var(--m-ink);
+}
+/* 原生 select：iOS/安卓都用系统选择器，比自造下拉在手机上更好点（不抢 sheet 的滚动） */
+.m-app .m-field select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, var(--m-ink3) 50%),
+    linear-gradient(135deg, var(--m-ink3) 50%, transparent 50%);
+  background-position:
+    calc(100% - 16px) 16px,
+    calc(100% - 11px) 16px;
+  background-size:
+    5px 5px,
+    5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 30px;
 }
 
 /* ── 弹层（mask + 底部 sheet）────────────────────────────── */
@@ -612,10 +628,54 @@
 }
 
 /* ── 账户 + 课时消耗台账（V22）───────────────────────── */
+/* 页头「＋ 开户」（BUG-3/B：/m/ 放开写操作，空态不再指路电脑端） */
+.m-app .m-sechead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.m-app .m-sechead .m-sec {
+  flex: 1;
+  min-width: 0;
+}
+.m-app .m-sechead .m-btn {
+  flex: none;
+  color: var(--m-brand);
+  border-color: var(--m-brand);
+}
+.m-app .m-stu .stuhead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
 .m-app .m-stu .name {
   font-size: 15px;
   font-weight: 600;
-  margin-bottom: 6px;
+  flex: 1;
+  min-width: 0;
+}
+.m-app .m-stu .stuhead .mini {
+  font-size: 12px;
+  color: var(--m-brand);
+  flex: none;
+}
+/* 停用账户行：降饱和 + 单价/余额仍可读（余额还在，只是这科不参与建计划与结算） */
+.m-app .m-acct.off .m-chip.subj,
+.m-app .m-acct.off .price,
+.m-app .m-acct.off .h,
+.m-app .m-acct.off .mm {
+  opacity: 0.62;
+}
+/* 次要写操作行（调整 / 改单价 / 停用启用）：一行塞不下六个按钮，下沉一行 */
+.m-app .m-rowact.acctmore {
+  margin: 0 0 2px;
+  padding-left: 2px;
+  gap: 16px;
+}
+.m-app .m-rowact button:disabled {
+  color: var(--m-ink3);
+  cursor: not-allowed;
 }
 .m-app .m-acct {
   display: flex;
