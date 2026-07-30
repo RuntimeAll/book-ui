@@ -2,14 +2,24 @@
 /**
  * PRD-C-213 FP9 批量排课向导（3 步 dialog）+ FP11 冲突检测交互。
  *
- * ① 选对象（target/page，归档不出现）+ 选计划（plan/page，可空=散课）
+ * ① 选对象（target/page，归档不出现）+ 选计划（plan/page，可空=散课）+ 科目（PRD-015 D10/V6）
  * ② 节奏行（多条 周几+起止时段）+ 日期范围 + 排除日期
  * ③ 前端按节奏生成日期序列预览（autoBind 语义=按 lesson_seq 顺绑，预览显示第N次·课次标题），
  *    逐条可删可微调 → 提交前先 conflictCheck，有冲突弹警告列明细，
  *    允许「仍然保存」= force 重发 sessionBatch。
+ *
+ * 🔴 PRD-015 批1 排除日期 bug 四连修复（根因正本=prd/PRD-015/artifacts/排除日期bug根因.md）：
+ *  S1 排除日期 picker 加 :default-value（锁开月=范围起始月）+ :disabled-date（范围外禁选）
+ *     + 未选日期范围前禁用 —— 从源头堵死「错月录入 → excl.has 永不命中 → 静默失效」。
+ *     实证：element-plus 2.14.0 panel-date-pick `watch(defaultValue,{immediate:true})→innerDate`
+ *     对 type="dates" 同样生效（isMultipleType 早退只在 parsedValue 那个 watch 里，且注册在后）。
+ *  S3 mode 切换用 v-if（非 v-show）+ 切模式清空 excludeDates，杜绝「指定日期」模式残留。
+ *  S4 节奏行去重 + 预览/提交两处按「日期+起止」去重，防批内自撞重复落库。
+ *  S5 回上一步再生成前，若第③步有手工增删改则先 confirm，防静默丢微调。
+ *  校验提示：生成时统计「已排除 N 天 / 命中 M 场」+ 范围外、未命中的排除日期明确告警（不静默吞）。
  */
-import { computed, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { computed, nextTick, ref, watch } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   pageTargets,
   pagePlans,
@@ -27,6 +37,7 @@ import type {
   SessionBatchItem,
   ConflictItem,
 } from '@/api/teacher/schedule'
+import { DICT_EDU_SUBJECT, useDictStore } from '@/store/dict'
 
 const props = defineProps<{ visible: boolean }>()
 const emit = defineEmits<{
@@ -50,6 +61,30 @@ const selectedTargetId = ref('')
 const planList = ref<PlanVO[]>([])
 const planLoading = ref(false)
 const selectedPlanId = ref('') // '' = 散课
+
+// ── PRD-015 V6：科目（一场课一科）───────────────────────────────
+// 学科选项走共享字典（口径同 schedule/index.vue 单天快捷排课）。
+const dict = useDictStore()
+void dict.load(DICT_EDU_SUBJECT)
+const SUBJECT_OPTIONS = computed(() => dict.list(DICT_EDU_SUBJECT))
+const selectedSubject = ref('')
+const selectedSubjectLabel = computed(() =>
+  selectedSubject.value ? dict.label(DICT_EDU_SUBJECT, selectedSubject.value) : '',
+)
+
+/** 计划行可能带学科（BE 逐步补齐，契约未定稿前防御性读），无则回落对象主学科。 */
+function resolveDefaultSubject(): string {
+  const plan = planList.value.find((p) => p.id === selectedPlanId.value) as
+    | (PlanVO & { subject?: string })
+    | undefined
+  if (plan?.subject) return plan.subject
+  return targetList.value.find((t) => t.id === selectedTargetId.value)?.subject || ''
+}
+
+// 选完对象/计划自动带出默认科目（可改）
+watch([selectedTargetId, selectedPlanId], () => {
+  selectedSubject.value = resolveDefaultSubject()
+})
 
 async function fetchTargets() {
   targetLoading.value = true
@@ -130,6 +165,25 @@ function removeRhythm(i: number) {
   rhythms.value.splice(i, 1)
 }
 
+// S3：切排课方式清空排除日期（「指定日期」模式不吃排除，残留=静默失效来源）
+watch(mode, () => {
+  excludeDates.value = []
+})
+
+// ── S1：排除日期 picker 锁月 + 锁范围 ───────────────────────────
+/** 面板开月锚点 = 日期范围起始日（element-plus 用它初始化 innerDate）。 */
+const rangeStartDate = computed<Date | undefined>(() => {
+  const s = dateRange.value?.[0]
+  return s ? new Date(`${s}T00:00:00`) : undefined
+})
+/** 范围外日期禁选：从源头杜绝「排 8 月课却在 7 月面板上点日子」。 */
+function isOutOfRange(d: Date): boolean {
+  const r = dateRange.value
+  if (!r || !r[0] || !r[1]) return true // 未选范围时整个面板不可点（picker 也已 disabled）
+  const ds = fmtDate(d)
+  return ds < r[0] || ds > r[1]
+}
+
 // ── 步骤三：预览 ────────────────────────────────────────────────
 interface PreviewItem {
   key: string
@@ -142,6 +196,16 @@ interface PreviewItem {
 const preview = ref<PreviewItem[]>([])
 const planLessons = ref<PlanLessonVO[]>([])
 
+/** 生成期诊断（排除命中/失效、批内去重），第③步常驻展示，绝不静默吞。 */
+interface GenDiag {
+  exclHitDays: number
+  exclHitSessions: number
+  exclOutOfRange: string[]
+  exclNoHit: string[]
+  deduped: number
+}
+const diag = ref<GenDiag | null>(null)
+
 function fmtDate(d: Date): string {
   const y = d.getFullYear()
   const m = String(d.getMonth() + 1).padStart(2, '0')
@@ -149,8 +213,13 @@ function fmtDate(d: Date): string {
   return `${y}-${m}-${day}`
 }
 
+function emptyDiag(): GenDiag {
+  return { exclHitDays: 0, exclHitSessions: 0, exclOutOfRange: [], exclNoHit: [], deduped: 0 }
+}
+
 async function generatePreview() {
   preview.value = []
+  const d = emptyDiag()
   if (mode.value === 'dates') {
     const groups = dateGroups.value.filter((g) => g.dates.length)
     if (!groups.length) {
@@ -163,8 +232,10 @@ async function generatePreview() {
         return false
       }
     }
+    await loadPlanLessons()
     return finishPreview(
-      groups.flatMap((g) => g.dates.map((d) => ({ date: d, start: g.start, end: g.end }))),
+      groups.flatMap((g) => g.dates.map((x) => ({ date: x, start: g.start, end: g.end }))),
+      d,
     )
   }
   if (!dateRange.value || !dateRange.value[0] || !dateRange.value[1]) {
@@ -175,39 +246,84 @@ async function generatePreview() {
     ElMessage.warning('请至少添加一条节奏')
     return false
   }
-  // 拉计划课次（如选了计划，用于 autoBind 预览标题）
-  planLessons.value = []
-  if (selectedPlanId.value) {
-    try {
-      const plan = await getPlan(selectedPlanId.value)
-      planLessons.value = (plan?.lessons || []).slice().sort((a, b) => a.lessonSeq - b.lessonSeq)
-    } catch (e) {
-      console.warn('[wizard] getPlan 失败', e)
-    }
+  await loadPlanLessons()
+
+  const [rangeFrom, rangeTo] = dateRange.value
+  // S4：节奏行先按「周几+起止」去重（两条一模一样的节奏不该各生成一场）
+  const seenRhythm = new Set<string>()
+  const uniqRhythms = rhythms.value.filter((r) => {
+    const k = `${r.weekday}|${r.start}|${r.end}`
+    if (seenRhythm.has(k)) return false
+    seenRhythm.add(k)
+    return true
+  })
+  if (uniqRhythms.length < rhythms.value.length) {
+    ElMessage.info(`已合并 ${rhythms.value.length - uniqRhythms.length} 条重复节奏`)
   }
 
-  const start = new Date(dateRange.value[0] + 'T00:00:00')
-  const end = new Date(dateRange.value[1] + 'T00:00:00')
   const excl = new Set(excludeDates.value)
+  const exclHit = new Set<string>()
   const items: { date: string; start: string; end: string }[] = []
-  const cur = new Date(start)
+  const cur = new Date(`${rangeFrom}T00:00:00`)
+  const end = new Date(`${rangeTo}T00:00:00`)
   while (cur.getTime() <= end.getTime()) {
     const ds = fmtDate(cur)
-    if (!excl.has(ds)) {
-      const wd = cur.getDay()
-      for (const r of rhythms.value) {
-        if (r.weekday === wd) items.push({ date: ds, start: r.start, end: r.end })
+    const matched = uniqRhythms.filter((r) => r.weekday === cur.getDay())
+    if (matched.length) {
+      if (excl.has(ds)) {
+        exclHit.add(ds)
+        d.exclHitSessions += matched.length
+      } else {
+        for (const r of matched) items.push({ date: ds, start: r.start, end: r.end })
       }
     }
     cur.setDate(cur.getDate() + 1)
   }
-  return finishPreview(items)
+  d.exclHitDays = exclHit.size
+  // 排除日期的两类失效：范围外（永远不可能命中）/ 范围内但不在节奏上（选错日子）——都必须说出来
+  for (const ds of excludeDates.value) {
+    if (ds < rangeFrom || ds > rangeTo) d.exclOutOfRange.push(ds)
+    else if (!exclHit.has(ds)) d.exclNoHit.push(ds)
+  }
+  if (d.exclOutOfRange.length) {
+    ElMessage.warning(`排除日期不在所选日期范围内，未生效：${d.exclOutOfRange.join('、')}`)
+  }
+  if (d.exclNoHit.length) {
+    ElMessage.warning(`该排除日期未命中任何场次：${d.exclNoHit.join('、')}`)
+  }
+  return finishPreview(items, d)
 }
 
-/** 生成收尾（两种模式共用）：排序 + 编号 + 课次标题顺绑。 */
-function finishPreview(items: { date: string; start: string; end: string }[]): boolean {
-  items.sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start))
-  preview.value = items.map((it, i) => ({
+/** 拉计划课次（选了计划时用于 autoBind 预览标题）。 */
+async function loadPlanLessons() {
+  planLessons.value = []
+  if (!selectedPlanId.value) return
+  try {
+    const plan = await getPlan(selectedPlanId.value)
+    planLessons.value = (plan?.lessons || []).slice().sort((a, b) => a.lessonSeq - b.lessonSeq)
+  } catch (e) {
+    console.warn('[wizard] getPlan 失败', e)
+  }
+}
+
+/** 生成收尾（两种模式共用）：S4 批内去重 → 排序 → 编号 → 课次标题顺绑。 */
+function finishPreview(
+  items: { date: string; start: string; end: string }[],
+  d: GenDiag = emptyDiag(),
+): boolean {
+  // S4：同日同起止时段只保留一份（多组日期重叠 / 重复节奏行都会自撞）
+  const seen = new Set<string>()
+  const uniq = items.filter((it) => {
+    const k = `${it.date}|${it.start}|${it.end}`
+    if (seen.has(k)) {
+      d.deduped += 1
+      return false
+    }
+    seen.add(k)
+    return true
+  })
+  uniq.sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start))
+  preview.value = uniq.map((it, i) => ({
     key: `${it.date}-${it.start}-${i}`,
     date: it.date,
     start: it.start,
@@ -215,7 +331,58 @@ function finishPreview(items: { date: string; start: string; end: string }[]): b
     seq: i + 1,
     title: selectedPlanId.value ? planLessons.value[i]?.title : undefined,
   }))
+  if (d.deduped) ElMessage.info(`已自动去重 ${d.deduped} 场重复安排`)
+  diag.value = d
+  armPreviewDirty()
   return preview.value.length > 0
+}
+
+/** 重排序号 + 重绑标题（autoBind 顺绑随增删滚动）。 */
+function renumberPreview() {
+  preview.value.forEach((p, idx) => {
+    p.seq = idx + 1
+    p.title = selectedPlanId.value ? planLessons.value[idx]?.title : undefined
+  })
+}
+
+/** 提交前兜底去重（第③步手工加行也可能撞）。返回被去掉的场次数。 */
+function dedupePreview(): number {
+  const seen = new Set<string>()
+  const kept: PreviewItem[] = []
+  let dropped = 0
+  for (const p of preview.value) {
+    const k = `${p.date}|${p.start}|${p.end}`
+    if (p.date && seen.has(k)) {
+      dropped += 1
+      continue
+    }
+    if (p.date) seen.add(k)
+    kept.push(p)
+  }
+  if (dropped) {
+    preview.value = kept
+    renumberPreview()
+  }
+  return dropped
+}
+
+// ── S5：第③步手工微调脏标记（重生成会整体覆盖，覆盖前必须先问）──
+const previewDirty = ref(false)
+let dirtyArmed = false
+watch(
+  preview,
+  () => {
+    if (dirtyArmed) previewDirty.value = true
+  },
+  { deep: true },
+)
+/** 每次重新生成后复位脏标记（下一 tick 再布防，跳过赋值本身触发的那次 watch）。 */
+function armPreviewDirty() {
+  dirtyArmed = false
+  previewDirty.value = false
+  void nextTick(() => {
+    dirtyArmed = true
+  })
 }
 
 /** 预览页手动补一场（生成后发现漏了某天，不用回上一步重生成）。 */
@@ -233,11 +400,7 @@ function addPreviewRow() {
 
 function removePreview(i: number) {
   preview.value.splice(i, 1)
-  // 重排序号 + 重绑标题（autoBind 顺绑随删除滚动）
-  preview.value.forEach((p, idx) => {
-    p.seq = idx + 1
-    p.title = selectedPlanId.value ? planLessons.value[idx]?.title : undefined
-  })
+  renumberPreview()
 }
 
 // ── 步骤切换 ────────────────────────────────────────────────────
@@ -249,6 +412,19 @@ async function next() {
     }
     step.value = 1
   } else if (step.value === 1) {
+    // S5：第③步动过手就先确认，别让重生成静默吃掉微调
+    if (previewDirty.value && preview.value.length) {
+      try {
+        await ElMessageBox.confirm(
+          '第 3 步的手工调整（增删/改日期时段）会被重新生成覆盖，确定重新生成吗？',
+          '重新生成预览',
+          { type: 'warning', confirmButtonText: '重新生成', cancelButtonText: '保留调整' },
+        )
+      } catch {
+        step.value = 2 // 用户选保留 → 直接回第③步，不重生成
+        return
+      }
+    }
     const ok = await generatePreview()
     if (ok) step.value = 2
     else if (preview.value.length === 0 && dateRange.value)
@@ -269,6 +445,8 @@ function buildBo(force: boolean): SessionBatchBo {
     date: p.date,
     start: p.start,
     end: p.end,
+    // PRD-015 V6：一场课一科；留空则由 BE 兜底（计划→对象主学科）
+    subject: selectedSubject.value || undefined,
     sessionType: selectedPlanId.value ? undefined : '1',
   }))
   return {
@@ -291,6 +469,9 @@ async function submit() {
     ElMessage.warning(`第 ${bad.seq} 次的日期/时间未填好（结束需晚于开始）`)
     return
   }
+  // S4：提交前兜底去重（手工加行也可能与生成结果自撞，BE detectConflicts 只比 DB 不比批内）
+  const dropped = dedupePreview()
+  if (dropped) ElMessage.info(`提交前已去重 ${dropped} 场重复安排`)
   submitting.value = true
   try {
     const bo = buildBo(false)
@@ -341,12 +522,15 @@ function reset() {
   targetType.value = '0'
   selectedTargetId.value = ''
   selectedPlanId.value = ''
+  selectedSubject.value = ''
   rhythms.value = [{ weekday: 1, start: '18:00', end: '19:30' }]
   dateRange.value = null
   excludeDates.value = []
   mode.value = 'rhythm'
   dateGroups.value = [{ dates: [], start: '18:30', end: '20:30' }]
   preview.value = []
+  diag.value = null
+  armPreviewDirty()
   conflicts.value = []
   conflictVisible.value = false
 }
@@ -425,6 +609,24 @@ watch(
           </el-option>
         </el-select>
       </div>
+      <!-- PRD-015 V6：科目（选完对象才出现，默认=计划学科 / 对象主学科，可改） -->
+      <div v-if="selectedTargetId" class="bw-field">
+        <label class="bw-label">科目</label>
+        <el-select
+          v-model="selectedSubject"
+          placeholder="默认该计划 / 对象主学科"
+          clearable
+          style="width: 100%"
+        >
+          <el-option
+            v-for="o in SUBJECT_OPTIONS"
+            :key="o.dictValue"
+            :value="o.dictValue"
+            :label="o.dictLabel"
+          />
+        </el-select>
+        <p class="bw-hint-soft">本批场次统一记这个科目；留空由系统按计划 / 对象主学科兜底。</p>
+      </div>
     </div>
 
     <!-- 步骤二 -->
@@ -439,7 +641,7 @@ watch(
           {{ mode === 'rhythm' ? '规则排期：每周固定周几上课，按日期范围批量生成' : '不规则排期：直接点选具体日子，同组日期共用一个时段，可加多组' }}
         </p>
       </div>
-      <div v-show="mode === 'dates'" class="bw-field">
+      <div v-if="mode === 'dates'" class="bw-field">
         <label class="bw-label">日期组（点选日子 + 起止时段，可多组）<span class="bw-req">*</span></label>
         <div v-for="(g, i) in dateGroups" :key="i" class="bw-dgroup">
           <el-date-picker
@@ -470,7 +672,7 @@ watch(
         </div>
         <el-button link type="primary" @click="addDateGroup">+ 加一组（不同时段）</el-button>
       </div>
-      <div v-show="mode === 'rhythm'" class="bw-field">
+      <div v-if="mode === 'rhythm'" class="bw-field">
         <label class="bw-label">默认节奏（周几 + 起止时段，可多条）</label>
         <div v-for="(r, i) in rhythms" :key="i" class="bw-rhythm">
           <el-select v-model="r.weekday" style="width: 100px">
@@ -507,7 +709,7 @@ watch(
         </div>
         <el-button link type="primary" @click="addRhythm">+ 加一条节奏</el-button>
       </div>
-      <div v-show="mode === 'rhythm'" class="bw-field">
+      <div v-if="mode === 'rhythm'" class="bw-field">
         <label class="bw-label">日期范围<span class="bw-req">*</span></label>
         <el-date-picker
           v-model="dateRange"
@@ -519,15 +721,23 @@ watch(
           style="width: 100%"
         />
       </div>
-      <div v-show="mode === 'rhythm'" class="bw-field">
+      <!-- S1：面板锁到日期范围起始月 + 范围外禁选；未选范围前不可点（错月录入是静默失效的根） -->
+      <div v-if="mode === 'rhythm'" class="bw-field">
         <label class="bw-label">排除日期（节假日等，可空）</label>
         <el-date-picker
+          :key="dateRange?.[0] || 'no-range'"
           v-model="excludeDates"
           type="dates"
           value-format="YYYY-MM-DD"
-          placeholder="点选要排除的日期"
+          :default-value="rangeStartDate"
+          :disabled-date="isOutOfRange"
+          :disabled="!rangeStartDate"
+          :placeholder="rangeStartDate ? '点选要排除的日期（只能选范围内）' : '请先选择上面的日期范围'"
           style="width: 100%"
         />
+        <p v-if="excludeDates.length" class="bw-hint-soft">
+          已选 {{ excludeDates.length }} 个排除日期：{{ excludeDates.join('、') }}
+        </p>
       </div>
     </div>
 
@@ -537,7 +747,21 @@ watch(
         共生成 <b>{{ preview.length }}</b> 场
         <span v-if="selectedPlanId">· 按课次顺序自动绑定</span>
         <span v-else>· 散课（不绑课次）</span>
+        <span v-if="selectedSubjectLabel">· {{ selectedSubjectLabel }}</span>
       </p>
+      <!-- 排除/去重账单：命中多少、哪些没生效，全摊开说，不静默 -->
+      <div v-if="diag" class="bw-diag">
+        <p v-if="diag.exclHitDays" class="bw-diag-ok">
+          已排除 {{ diag.exclHitDays }} 天，命中 {{ diag.exclHitSessions }} 场
+        </p>
+        <p v-if="diag.deduped" class="bw-diag-ok">已自动去重 {{ diag.deduped }} 场重复安排</p>
+        <p v-if="diag.exclOutOfRange.length" class="bw-diag-warn">
+          ⚠ 排除日期不在所选日期范围内，未生效：{{ diag.exclOutOfRange.join('、') }}
+        </p>
+        <p v-if="diag.exclNoHit.length" class="bw-diag-warn">
+          ⚠ 该排除日期未命中任何场次（范围内但不在排课节奏上）：{{ diag.exclNoHit.join('、') }}
+        </p>
+      </div>
       <div v-if="preview.length" class="bw-preview-list">
         <div v-for="(p, i) in preview" :key="p.key" class="bw-prow">
           <span class="bw-seq">第 {{ p.seq }} 次</span>
@@ -660,6 +884,32 @@ watch(
   font-size: 12px;
   color: #b45309;
   margin: 0;
+}
+.bw-hint-soft {
+  font-size: 12px;
+  color: #8ba09a;
+  margin: 0;
+  line-height: 1.5;
+}
+.bw-diag {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: -6px 0 12px;
+}
+.bw-diag-ok {
+  font-size: 12.5px;
+  color: var(--bk-teal-deep);
+  margin: 0;
+}
+.bw-diag-warn {
+  font-size: 12.5px;
+  color: #b45309;
+  background: #fdf6ec;
+  border-radius: 6px;
+  padding: 5px 8px;
+  margin: 0;
+  line-height: 1.5;
 }
 .bw-rhythm {
   display: flex;
