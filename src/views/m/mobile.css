@@ -505,6 +505,23 @@
   font-size: 12px;
   color: var(--m-ink3);
 }
+/* 未开户行（PRD-015 BUG-2，口径同桌面 SettleDialog tr.off）：置灰 + 不可勾 + 金额「—」 */
+.m-app .m-sess.off {
+  background: #fafcfb;
+}
+.m-app .m-sess.off .who,
+.m-app .m-sess.off .meta {
+  color: var(--m-ink3);
+}
+.m-app .m-sess .warnline {
+  font-size: 12px;
+  color: var(--m-warn);
+  margin-top: 2px;
+}
+.m-app .m-sess .fee .n.dash {
+  color: var(--m-ink3);
+  font-weight: 600;
+}
 .m-app .m-rowact {
   display: flex;
   gap: 14px;
@@ -580,6 +597,18 @@
   font-size: 12px;
   background: var(--m-card);
   color: var(--m-ink);
+}
+/* 上课时间直接改（PRD-015 BUG-5/D）：复用 el-time-picker，两枚并排塞进 390px 视口。
+   🔴 不用 .m-field 包，避免 `.m-app .m-field input` 把 el-input 的内建样式盖掉。 */
+.m-app .m-strow .ctl.tm {
+  flex-wrap: wrap;
+}
+.m-app .m-strow .ctl.tm .tp {
+  width: 108px;
+  flex: none;
+}
+.m-app .m-strow .ctl.tm .dash {
+  color: var(--m-ink3);
 }
 
 /* ── 账户 + 课时消耗台账（V22）───────────────────────── */

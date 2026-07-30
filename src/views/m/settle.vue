@@ -3,8 +3,12 @@
  * PRD-015 批5 · /m/settle 待结算（V21）。
  *
  * D4 只提醒不自动扣：过点场次进清单，老师勾选 →「一键结算」弹层逐场可改**实扣课时**
- * （默认 1，两位小数，D5）+ 实际上课时间备注，金额 = 实扣课时 × 单价实时重算，
- * 可勾「同时生成本课反馈壳」（D12 默认勾选）→ settleSessions。
+ * （默认 1，两位小数，D5）+ **直接改上课起止时间**（BUG-5/D：默认=排课时间，改了即在结算前
+ * 走既有 updateSession 改期链更新场次，未改则一个字节都不动，也不写冗余备注），
+ * 金额 = 实扣课时 × 单价实时重算，可勾「同时生成本课反馈壳」（D12 默认勾选）→ settleSessions。
+ *
+ * 🔴 未开户（price=null）口径照搬桌面 SettleDialog（BUG-2）：标「未开户」、金额列「—」、
+ *    默认不可勾选——单价未知绝不画成 ¥0，那等于告诉老师这节课免费。
  * 已结场次展示 + 「改请假」= 走既有 leave 链，BE 在同事务内冲正返还（D5/AC6），前端只做二次确认提示。
  *
  * 🔴 已处理清单没有独立端点：按 D1「场次=一条线的交点」，直接从 getCalendar 近 14 天里
@@ -17,7 +21,9 @@ import {
   getCalendar,
   sessionLeave,
   settleSessions,
+  updateSession,
   type CalendarSessionVO,
+  type PendingSettlementVO,
   type SettleItemBo,
 } from '@/api/teacher/schedule'
 import { DICT_EDU_SUBJECT, useDictStore } from '@/store/dict'
@@ -27,6 +33,16 @@ import { dayLabel, fmtDate, hhmm, money, todayStr, usePending } from './shared'
 const dict = useDictStore()
 const { pendingList, pendingLoading, refreshPending } = usePending()
 
+// ── 未开户口径（BUG-2，照搬桌面 SettleDialog.settleable）────────────────
+// 🔴 price === null = 该生该科**未开户**（BE pendingRow 明写「无账户 = null 不是 0」）。
+//    单价未知 ≠ 免费：不能算成 ¥0，否则整屏「课费全是零」；行内标「未开户」、金额列「—」、
+//    默认不可勾选（BE settleOne 也会 skipped 兜底，前端先拦住少走一趟）。
+function settleable(p: PendingSettlementVO): boolean {
+  return p.price !== null && p.price !== undefined
+}
+
+const blockedCount = computed(() => pendingList.value.filter((p) => !settleable(p)).length)
+
 // ── 勾选态（默认全不选：钱线动作必须显式点选，防误触批量结算——补回归挂账②）──
 const checked = ref<Set<string>>(new Set())
 
@@ -35,6 +51,8 @@ function syncChecked() {
 }
 
 function toggle(id: string) {
+  const hit = pendingList.value.find((p) => p.sessionId === id)
+  if (hit && !settleable(hit)) return // 未开户不可勾
   const s = new Set(checked.value)
   if (s.has(id)) s.delete(id)
   else s.add(id)
@@ -77,7 +95,14 @@ interface SettleRow {
   price: number
   /** 实扣课时（input 绑字符串，提交时转 number；默认 1） */
   hours: string
-  timeNote: string
+  /** 该场排课日期（改期需整条 date+start+end 一起传） */
+  date: string
+  /** 排课起止（BUG-5/D：默认值，用户直接在这改；改了 = 改场次时间） */
+  start: string
+  end: string
+  /** 打开弹层那一刻的排课起止快照，用来判「改没改」 */
+  start0: string
+  end0: string
 }
 
 const sheetOpen = ref(false)
@@ -90,8 +115,14 @@ function rowFee(r: SettleRow): number {
   return h * (r.price || 0)
 }
 
+/** 该行的上课时间被改过？（BUG-5/D：改了才走改期，没改一个字节都不动） */
+function timeChanged(r: SettleRow): boolean {
+  return !!r.start && !!r.end && (r.start !== r.start0 || r.end !== r.end0)
+}
+
 function openSettleSheet() {
-  const picked = pendingList.value.filter((p) => checked.value.has(p.sessionId))
+  // 🔴 未开户的即使被旧勾选态带进来也剔掉（BUG-2：单价未知不可结算）
+  const picked = pendingList.value.filter((p) => checked.value.has(p.sessionId) && settleable(p))
   if (!picked.length) {
     ElMessage.warning('先勾选要结算的场次')
     return
@@ -105,7 +136,11 @@ function openSettleSheet() {
       subjectLabel: dict.label(DICT_EDU_SUBJECT, p.subject) || '',
       price: p.price || 0,
       hours: '1',
-      timeNote: '',
+      date: p.date,
+      start: hhmm(p.start),
+      end: hhmm(p.end),
+      start0: hhmm(p.start),
+      end0: hhmm(p.end),
     })),
   )
   genFeedback.value = true
@@ -113,14 +148,31 @@ function openSettleSheet() {
 }
 
 async function confirmSettle() {
+  // BUG-5/D：先把改过时间的场次走既有改期链（PUT session/{id}，同日改起止，不触发顺延），
+  // 再结算——顺序不能反：先扣费后改期会让流水与场次时间对不上。
+  const retimed = rows.filter(timeChanged)
+  const bad = retimed.find((r) => r.start >= r.end)
+  if (bad) {
+    ElMessage.warning(`「${bad.name}」的结束时间要晚于开始时间`)
+    return
+  }
   submitting.value = true
   try {
+    for (const r of retimed) {
+      await updateSession(r.sessionId, { date: r.date, start: r.start, end: r.end })
+    }
+    if (retimed.length) {
+      for (const r of retimed) {
+        r.start0 = r.start
+        r.end0 = r.end
+      }
+      ElMessage.success(`已更新 ${retimed.length} 场的上课时间`)
+    }
     const items: SettleItemBo[] = rows.map((r) => {
       const h = Math.max(0, parseFloat(r.hours) || 0)
       return {
         sessionId: r.sessionId,
         hours: Math.round(h * 100) / 100,
-        ...(r.timeNote.trim() ? { timeNote: r.timeNote.trim() } : {}),
       }
     })
     const res = await settleSessions({ items, genFeedback: genFeedback.value })
@@ -182,6 +234,9 @@ onMounted(reloadAll)
     <div class="m-hint">
       <template v-if="pendingList.length">
         有 <b>{{ pendingList.length }} 场</b>已过点未结算——勾选后一键结算：扣课时课费 + 标已上 + 生成反馈壳。
+        <template v-if="blockedCount">
+          其中 <b>{{ blockedCount }} 场</b>该科还没开户，先去电脑端学生卡开户才能结算。
+        </template>
       </template>
       <template v-else-if="pendingLoading">正在查过点未结算的场次…</template>
       <template v-else>当前没有待结算场次 ✓</template>
@@ -191,10 +246,16 @@ onMounted(reloadAll)
     <div v-if="pendingLoading" class="m-empty">加载中…</div>
     <div v-else-if="!pendingList.length" class="m-empty">干净！</div>
     <template v-else>
-      <div v-for="p in pendingList" :key="p.sessionId" class="m-card m-sess">
+      <div
+        v-for="p in pendingList"
+        :key="p.sessionId"
+        class="m-card m-sess"
+        :class="{ off: !settleable(p) }"
+      >
         <input
           type="checkbox"
           :checked="checked.has(p.sessionId)"
+          :disabled="!settleable(p)"
           :aria-label="`选中 ${p.targetName}`"
           @change="toggle(p.sessionId)"
         />
@@ -202,15 +263,24 @@ onMounted(reloadAll)
           <div class="who">
             {{ p.targetName }}
             <span v-if="p.subject" class="m-chip subj">{{ dict.label(DICT_EDU_SUBJECT, p.subject) }}</span>
+            <span v-if="!settleable(p)" class="m-chip warn">未开户</span>
           </div>
           <div class="meta">
             {{ dayLabel(p.date) }} {{ hhmm(p.start) }}–{{ hhmm(p.end) }}
             <template v-if="p.planLessonTitle"> · {{ p.planLessonTitle }}</template>
           </div>
+          <div v-if="!settleable(p)" class="warnline">未开通该科账户，先去学生卡开户</div>
         </div>
         <div class="fee">
-          <div class="n">{{ money(p.price) }}</div>
-          <div class="u">默认 1 课时</div>
+          <!-- 🔴 BUG-2：单价未知画成「—」，绝不打成 ¥0（那等于告诉老师这节课免费） -->
+          <template v-if="settleable(p)">
+            <div class="n">{{ money(p.price) }}</div>
+            <div class="u">默认 1 课时</div>
+          </template>
+          <template v-else>
+            <div class="n dash">—</div>
+            <div class="u">单价未知</div>
+          </template>
         </div>
       </div>
     </template>
@@ -249,7 +319,7 @@ onMounted(reloadAll)
     <MSheet
       v-model="sheetOpen"
       title="确认结算"
-      sub="默认 1 课时/场；实扣课时可改（0.5、0.67、1.5…），金额=实扣课时×单价；全部可冲正"
+      sub="默认 1 课时/场；实扣课时可改（0.5、0.67、1.5…），金额=实扣课时×单价。上课时间默认=排课时间，改了即更新场次时间"
     >
       <div v-for="r in rows" :key="r.sessionId" class="m-strow">
         <div class="top">
@@ -269,11 +339,29 @@ onMounted(reloadAll)
             step="0.01"
             inputmode="decimal"
           />
-          <input
-            v-model="r.timeNote"
-            class="tmn"
-            placeholder="实际上课时间备注，如 16:00–17:10（可空）"
+        </div>
+        <!-- BUG-5/D：上课时间直接改（复用排课/改期同款 el-time-picker，HH:mm），
+             改了即在结算前走既有改期链更新场次，不再手填备注 -->
+        <div class="ctl tm">
+          <label>上课时间</label>
+          <el-time-picker
+            v-model="r.start"
+            format="HH:mm"
+            value-format="HH:mm"
+            placeholder="开始"
+            size="small"
+            class="tp"
           />
+          <span class="dash">–</span>
+          <el-time-picker
+            v-model="r.end"
+            format="HH:mm"
+            value-format="HH:mm"
+            placeholder="结束"
+            size="small"
+            class="tp"
+          />
+          <span v-if="timeChanged(r)" class="m-chip warn">将改期</span>
         </div>
       </div>
 
