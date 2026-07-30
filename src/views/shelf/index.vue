@@ -39,8 +39,10 @@ const keyword = ref('')
 const GRADE_NUM: Record<number, string> = { 1: '一', 2: '二', 3: '三', 4: '四', 5: '五', 6: '六', 7: '七', 8: '八', 9: '九', 10: '高一', 11: '高二', 12: '高三' }
 const STAGE_GRADES: Record<number, number[]> = { 1: [1, 2, 3, 4, 5, 6], 2: [7, 8, 9], 3: [10, 11, 12] }
 
-// 类型段：随 BOOK_TYPE_LABEL 注册表自动生成（新增书类型只改 api/shelf 的 label 表一处）；
-// special=备课栏工作集被 BE 剔出书架列表，过滤段排除
+// 类型选项：随 BOOK_TYPE_LABEL 注册表自动生成（新增书类型只改 api/shelf 的 label 表一处）；
+// special=备课栏工作集被 BE 剔出书架列表，过滤段排除。
+// 🔴 类型 / 年级两维已改下拉（el-select）——维度多了按钮行会换行挤爆，下拉更紧凑；
+//    选项与原按钮 1:1（含「全部」缺省项），无书的类型仍保留但 disabled。
 // 🔴 PRD-013 — daily_punch 打卡书也是书架书（天=节点的有结构书），入口即本页卡片
 const typeSegs: { key: '' | BookType; label: string }[] = [
   { key: '', label: '全部' },
@@ -129,8 +131,16 @@ const gradeCells = computed<number[]>(() => {
 const subjectList = computed(() => dict.list(DICT_EDU_SUBJECT))
 const stageList = computed(() => dict.list(DICT_EDU_STAGE))
 
-// —— 交互 ——
-function pickType(k: '' | BookType) { typeFilter.value = k }
+/** 年级下拉文案：优先字典中文名，字典未到货回落 GRADE_NUM（一年级…高三）。 */
+function gradeLabel(g: number): string {
+  const l = dict.label(DICT_EDU_GRADE, g)
+  if (l && l !== String(g)) return l
+  const n = GRADE_NUM[g]
+  if (!n) return String(g)
+  return g >= 10 ? n : `${n}年级`
+}
+
+// —— 交互（类型 / 年级走 el-select 直接 v-model，其余维度按钮组保持 toggle）——
 function pickSubject(v: NumOrAll) { subjectFilter.value = subjectFilter.value === v ? '' : v }
 function pickStage(v: NumOrAll) {
   stageFilter.value = stageFilter.value === v ? '' : v
@@ -138,10 +148,6 @@ function pickStage(v: NumOrAll) {
   if (stageFilter.value !== '' && gradeFilter.value !== '' && !(STAGE_GRADES[stageFilter.value as number] ?? []).includes(gradeFilter.value as number)) {
     gradeFilter.value = ''
   }
-}
-function pickGrade(g: number) {
-  if (!gradesAvail.value.has(g)) return
-  gradeFilter.value = gradeFilter.value === g ? '' : g
 }
 function pickVolume(v: NumOrAll) { volumeFilter.value = volumeFilter.value === v ? '' : v }
 
@@ -303,18 +309,18 @@ onMounted(() => {
     <!-- ══ 筛选面板（对齐卷库：类型 / 学科 / 学段 / 年级 / 册 + 书名）══ -->
     <div class="filter-panel">
       <div class="frow">
-        <!-- 类型 -->
+        <!-- 类型（下拉；无书类型保留但置灰）-->
         <div class="grp">
           <div class="grp-lab">类型</div>
-          <div class="seg">
-            <button
+          <el-select v-model="typeFilter" class="sel-type" placeholder="全部">
+            <el-option
               v-for="t in typeSegs"
               :key="t.key || 'all'"
-              :class="{ on: typeFilter === t.key }"
+              :label="t.label"
+              :value="t.key"
               :disabled="!!t.key && !typesAvail.has(t.key)"
-              @click="pickType(t.key)"
-            >{{ t.label }}</button>
-          </div>
+            />
+          </el-select>
         </div>
         <!-- 学科 -->
         <div class="grp">
@@ -344,6 +350,20 @@ onMounted(() => {
             >{{ st.dictLabel }}</button>
           </div>
         </div>
+        <!-- 年级（下拉；受学科/学段收窄，无书年级置灰）-->
+        <div v-if="gradeCells.length" class="grp">
+          <div class="grp-lab">年级</div>
+          <el-select v-model="gradeFilter" class="sel-grade" placeholder="全部">
+            <el-option label="全部" :value="''" />
+            <el-option
+              v-for="g in gradeCells"
+              :key="g"
+              :label="gradeLabel(g)"
+              :value="g"
+              :disabled="!gradesAvail.has(g)"
+            />
+          </el-select>
+        </div>
         <!-- 册 -->
         <div class="grp">
           <div class="grp-lab">册</div>
@@ -351,27 +371,6 @@ onMounted(() => {
             <button :class="{ on: volumeFilter === '' }" @click="pickVolume('')">全部</button>
             <button :class="{ on: volumeFilter === 1 }" :disabled="!volumesAvail.has(1)" @click="pickVolume(1)">上册</button>
             <button :class="{ on: volumeFilter === 2 }" :disabled="!volumesAvail.has(2)" @click="pickVolume(2)">下册</button>
-          </div>
-        </div>
-      </div>
-      <!-- 年级卡（点选即定位；无书年级置灰）-->
-      <div v-if="gradeCells.length" class="frow grade-row">
-        <div class="grp grade-grp">
-          <div class="grp-lab">年级</div>
-          <div class="grades">
-            <div class="grade all" :class="{ on: gradeFilter === '' }" @click="gradeFilter = ''">
-              <div class="num">全</div><div class="cn">全部</div>
-            </div>
-            <div
-              v-for="g in gradeCells"
-              :key="g"
-              class="grade"
-              :class="{ on: gradeFilter === g, dim: !gradesAvail.has(g) }"
-              @click="pickGrade(g)"
-            >
-              <div class="num">{{ GRADE_NUM[g] }}</div>
-              <div class="cn">{{ dict.label(DICT_EDU_GRADE, g) }}</div>
-            </div>
           </div>
         </div>
       </div>
@@ -490,11 +489,6 @@ onMounted(() => {
   gap: 18px 22px;
   align-items: flex-end;
 }
-.grade-row {
-  margin-top: 14px;
-  padding-top: 12px;
-  border-top: 1px dashed #eef2f2;
-}
 .foot-row {
   margin-top: 14px;
   padding-top: 12px;
@@ -541,59 +535,12 @@ onMounted(() => {
   cursor: not-allowed;
   opacity: 0.55;
 }
-.grade-grp {
-  flex: 1;
+/* 类型 / 年级下拉：宽度紧凑，与旁边 seg 按钮组同行底对齐 */
+.sel-type {
+  width: 140px;
 }
-.grades {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.grade {
-  border: 1px solid #e3e9e9;
-  border-radius: 9px;
-  background: #fff;
-  cursor: pointer;
-  padding: 6px 12px 5px;
-  text-align: center;
-  transition: 0.15s;
-  position: relative;
-  overflow: hidden;
-  min-width: 46px;
-}
-.grade .num {
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--bk-ink);
-  line-height: 1.1;
-}
-.grade .cn {
-  font-size: 10px;
-  color: #7c8a90;
-  margin-top: 2px;
-  font-weight: 600;
-}
-.grade:hover {
-  border-color: #14958a;
-}
-.grade.on {
-  border-color: var(--bk-teal);
-  background: linear-gradient(180deg, #f0faf9, #fff);
-}
-.grade.on .num {
-  color: var(--bk-teal);
-}
-.grade.on::before {
-  content: '';
-  position: absolute;
-  inset: 0 0 auto 0;
-  height: 3px;
-  background: var(--bk-teal);
-}
-.grade.dim {
-  opacity: 0.32;
-  pointer-events: none;
-  filter: grayscale(0.4);
+.sel-grade {
+  width: 120px;
 }
 .search {
   width: 240px;

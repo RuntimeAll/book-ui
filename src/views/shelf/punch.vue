@@ -5,6 +5,8 @@
  * 打卡内容 = 一本有结构的书（book_type=daily_punch，天=节点，模块=item）。本页 = 审核壳包纸：
  *   左  目录：第 N 天 + 审核角标（✓通过 / ⚠N个问题 / ○未审）+ 题量（FP2）
  *   顶  书名 + 每日打卡 tag + 「已审 N/M 天」进度 + 问题清单 + 导出本书（FP1/FP3/FP9/FP10）
+ *       —— 导出本书 = 一次 POST /teacher/punch/exportBook（BE 整书合并端点），每种卷出
+ *          **一份全册 PDF**；逐天串行出 N×2 个散链接的老做法已下线（「导出本天」仍在）。
  *   条  第 N 天 + 状态 chip + 题目卷⇄解析卷 + 通过本天 / 记问题 / 修改本天 / 导出本天（FP6′/FP8）
  *   中  纸面 = iframe srcdoc 吃 BE /teacher/punch/preview 的 HTML（punch-v1 主题，与导出 PDF
  *       同 theme 同 data）——🔴 FE 零渲染器：所见即所得（D3/G9），没有第二套渲染。
@@ -26,11 +28,13 @@ import {
   getPunchDay,
   previewPunchDay,
   exportPunchDay,
+  exportPunchBook,
   upsertPunchDay,
   submitPunchReview,
   stripModuleItemIds,
   punchModuleLabel,
   PUNCH_ISSUE_KINDS,
+  type PunchBookExportResult,
   type PunchDayBrief,
   type PunchDayDetail,
   type PunchIssue,
@@ -480,14 +484,9 @@ const exporting = ref(false)
 const exportDialogVisible = ref(false)
 const exportRunning = ref(false)
 const exportPapers = ref<PunchPaper[]>(['question', 'answer'])
-interface ExportRow {
-  day: number
-  status: 'wait' | 'doing' | 'ok' | 'fail'
-  questionUrl?: string
-  answerUrl?: string
-  err?: string
-}
-const exportRows = ref<ExportRow[]>([])
+/** 整书导出结果：每种卷一份全册合并 PDF（无结果 = 还没跑 / 已重置）。 */
+const exportResult = ref<PunchBookExportResult | null>(null)
+const exportErr = ref('')
 
 async function onExportDay() {
   if (!curDay.value) return
@@ -514,13 +513,15 @@ function openExportBook() {
     return
   }
   exportPapers.value = ['question', 'answer']
-  exportRows.value = days.value.map((d) => ({ day: d.day, status: 'wait' as const }))
+  exportResult.value = null
+  exportErr.value = ''
   exportDialogVisible.value = true
 }
 
 /**
- * 整书导出 = 逐天调 exportDay 串行跑（BE 暂无整书端点；Chrome 渲染是同步长任务，
- * 串行避免打爆渲染进程）。每天出完即出链接，中途失败不阻断后续天。
+ * 整书导出 = 一次 POST exportBook（BE 整书合并端点）→ 每种卷一份**全册合并** PDF。
+ * 🔴 同步长任务（BE 逐天渲染后合并，实测 40-80s，api 层已放宽 timeout 至 5 分钟）；
+ *    不再由 FE 逐天串行调 exportDay 出 N×2 个散链接。
  */
 async function runExportBook() {
   if (!exportPapers.value.length) {
@@ -528,24 +529,31 @@ async function runExportBook() {
     return
   }
   exportRunning.value = true
+  exportErr.value = ''
+  exportResult.value = null
   try {
-    for (const row of exportRows.value) {
-      row.status = 'doing'
-      try {
-        const res = await exportPunchDay(bookId, row.day, exportPapers.value)
-        row.questionUrl = res?.questionUrl
-        row.answerUrl = res?.answerUrl
-        row.status = 'ok'
-      } catch (e: unknown) {
-        row.status = 'fail'
-        row.err = (e as { message?: string })?.message || '导出失败'
-      }
+    const res = await exportPunchBook(bookId, exportPapers.value)
+    const n = [res?.questionUrl, res?.answerUrl].filter(Boolean).length
+    if (!n) {
+      // 无链接不算成功：留在错误分支，别给个空的「已合并」假绿
+      exportErr.value = '导出未返回文件地址'
+      ElMessage.warning('导出未返回文件地址')
+      return
     }
-    const ok = exportRows.value.filter((r) => r.status === 'ok').length
-    ElMessage.success(`整书导出完成：${ok}/${exportRows.value.length} 天`)
+    exportResult.value = res
+    ElMessage.success(`整书已导出（${res?.days ?? days.value.length} 天合并 · ${n} 份 PDF）`)
+  } catch (e: unknown) {
+    // http 拦截器已弹错；这里再在弹窗里留一行原因，方便重试前判断
+    exportErr.value = (e as { message?: string })?.message || '整书导出失败'
   } finally {
     exportRunning.value = false
   }
+}
+
+/** 打开导出好的全册 PDF（新页签，本页不丢审核位置）。 */
+function openExportFile(url: string | undefined) {
+  if (!url) return
+  window.open(url, '_blank')
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -821,30 +829,47 @@ onBeforeUnmount(() => {
       </template>
     </el-drawer>
 
-    <!-- ══ 导出本书（FP10）══ -->
-    <el-dialog v-model="exportDialogVisible" title="导出本书" width="560px" :close-on-click-modal="false">
+    <!-- ══ 导出本书（FP10 整书合并：每种卷一份全册 PDF）══ -->
+    <el-dialog v-model="exportDialogVisible" title="导出本书" width="520px" :close-on-click-modal="false">
       <div class="exp-head">
         <span>卷种</span>
-        <el-checkbox-group v-model="exportPapers">
+        <el-checkbox-group v-model="exportPapers" :disabled="exportRunning">
           <el-checkbox value="question">题目卷</el-checkbox>
           <el-checkbox value="answer">解析卷</el-checkbox>
         </el-checkbox-group>
-        <span class="hint">逐天串行渲染，10 天约需数分钟，请勿关闭本窗口</span>
       </div>
-      <div class="exp-list">
-        <div v-for="r in exportRows" :key="r.day" class="exp-row">
-          <span class="d">第 {{ r.day }} 天</span>
-          <span class="s" :class="r.status">
-            {{ r.status === 'wait' ? '等待' : r.status === 'doing' ? '渲染中…' : r.status === 'ok' ? '完成' : '失败' }}
-          </span>
-          <a v-if="r.questionUrl" :href="r.questionUrl" target="_blank" rel="noopener">题目卷</a>
-          <a v-if="r.answerUrl" :href="r.answerUrl" target="_blank" rel="noopener">解析卷</a>
-          <span v-if="r.err" class="err">{{ r.err }}</span>
+      <div class="exp-body">
+        <!-- 跑中：整书合并是同步长任务，明说等多久，别让人以为卡死 -->
+        <div v-if="exportRunning" class="exp-wait">
+          全册 {{ days.length }} 天正在合并渲染，约需 1 分钟，请勿关闭本窗口…
+        </div>
+        <!-- 出结果：每种卷一份全册合并 PDF -->
+        <template v-else-if="exportResult">
+          <div class="exp-done">✓ 全册已合并（{{ exportResult.days ?? days.length }} 天）</div>
+          <div class="exp-files">
+            <el-button
+              v-if="exportResult.questionUrl"
+              type="primary"
+              plain
+              @click="openExportFile(exportResult.questionUrl)"
+            >题目全册 PDF ↗</el-button>
+            <el-button
+              v-if="exportResult.answerUrl"
+              plain
+              @click="openExportFile(exportResult.answerUrl)"
+            >解析全册 PDF ↗</el-button>
+          </div>
+        </template>
+        <div v-else-if="exportErr" class="exp-err">{{ exportErr }}</div>
+        <div v-else class="hint exp-tip">
+          选好卷种后点「开始导出」：全书各天合并成一份 PDF（每种卷一份），整书合并渲染约 1 分钟。
         </div>
       </div>
       <template #footer>
         <el-button :disabled="exportRunning" @click="exportDialogVisible = false">关闭</el-button>
-        <el-button type="primary" :loading="exportRunning" @click="runExportBook">开始导出</el-button>
+        <el-button type="primary" :loading="exportRunning" @click="runExportBook">
+          {{ exportResult ? '重新导出' : '开始导出' }}
+        </el-button>
       </template>
     </el-dialog>
   </div>
@@ -1316,7 +1341,7 @@ onBeforeUnmount(() => {
   margin-left: auto;
 }
 
-/* ── 导出本书弹窗 ── */
+/* ── 导出本书弹窗（整书合并：每种卷一份全册 PDF）── */
 .exp-head {
   display: flex;
   align-items: center;
@@ -1326,42 +1351,36 @@ onBeforeUnmount(() => {
   border-bottom: 1px dashed var(--bk-line);
   font-size: 13px;
 }
-.exp-list {
-  max-height: 320px;
-  overflow: auto;
-  padding-top: 8px;
+.exp-body {
+  min-height: 92px;
+  padding-top: 12px;
 }
-.exp-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+.exp-tip {
+  margin-left: 0;
+  line-height: 1.7;
+}
+.exp-wait {
   font-size: 13px;
-  padding: 5px 0;
-  border-bottom: 1px dashed #f0f2f1;
-}
-.exp-row .d {
-  width: 70px;
-  font-weight: 600;
-}
-.exp-row .s {
-  font-size: 12px;
   color: #6b7280;
+  text-align: center;
+  padding: 30px 10px 22px;
+  line-height: 1.7;
 }
-.exp-row .s.ok {
+.exp-done {
+  font-size: 13px;
+  font-weight: 700;
   color: #059669;
+  margin-bottom: 12px;
 }
-.exp-row .s.fail {
+.exp-files {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.exp-err {
   color: var(--el-color-danger);
-}
-.exp-row .s.doing {
-  color: #d97706;
-}
-.exp-row a {
-  color: var(--bk-teal);
-  font-size: 12.5px;
-}
-.exp-row .err {
-  color: var(--el-color-danger);
-  font-size: 12px;
+  font-size: 13px;
+  line-height: 1.7;
+  padding: 8px 0;
 }
 </style>

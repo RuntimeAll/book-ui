@@ -136,6 +136,15 @@ export interface PunchExportResult {
   answerUrl?: string
 }
 
+/** 整书导出结果：每种卷一份**全册合并** PDF（days = 合并进去的天数）。 */
+export interface PunchBookExportResult {
+  bookId: string
+  /** 合并的天数 */
+  days?: number
+  questionUrl?: string
+  answerUrl?: string
+}
+
 // ---------------------------------------------------------------------------
 // 二、API
 // ---------------------------------------------------------------------------
@@ -165,6 +174,19 @@ export const exportPunchDay = (bookId: string, day: number, papers?: PunchPaper[
     `${BASE}/exportDay`,
     { bookId, day, ...(papers && papers.length ? { papers } : {}) },
     // 🔴 Chrome 渲 PDF 同步长任务（BE 单卷 60s 守卫），默认 15s 必超时
+    { timeout: 300_000 },
+  )
+
+/**
+ * 导出整书合并 PDF → OSS：POST exportBook {bookId,papers?} → {days,questionUrl,answerUrl}。
+ * 每种卷出**一份全册合并** PDF（BE 逐天渲染后合并，不再由 FE 逐天串行调 exportDay）。
+ * 🔴 同步长任务（全册 Chrome 渲染 + 合并，实测 40-80s）——超时放宽 5 分钟，对齐
+ *    api/shelf 的 exportBook（默认 15s 必超时）。
+ */
+export const exportPunchBook = (bookId: string, papers?: PunchPaper[]) =>
+  request.post<PunchBookExportResult, PunchBookExportResult>(
+    `${BASE}/exportBook`,
+    { bookId, ...(papers && papers.length ? { papers } : {}) },
     { timeout: 300_000 },
   )
 
