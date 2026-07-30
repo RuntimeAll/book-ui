@@ -4,6 +4,8 @@
  * 新建（plan=null）走 createPlan，编辑走 updatePlan。保存成功 emit saved 让父页刷新。
  * 契约：批0 §三 课程计划 POST plan / PUT plan/{id}；termTag 字典 = 暑假·上学期·寒假·下学期。
  * 🔴 R1a·S1：计划有归属——新建必选归属对象（targetType+targetId，BE 强校验）；编辑不可改归属。
+ * 🔴 PRD-015 学科线（V10）：学生对象的学科下拉 = <b>该生已开户学科</b>（开户即绑定，D3）——
+ *    没开户的学科不给选，硬选也会被 BE 挡回 400「先为学生开通X账户」；班级对象保持原样（无账户模型）。
  */
 import { ref, reactive, watch, computed } from 'vue'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
@@ -17,6 +19,7 @@ import {
   type TargetType,
   type TargetCardVO,
 } from '@/api/teacher/schedule'
+import { listAccounts, type TuitionAccountVO } from '@/api/teacher/account'
 import { useDictStore } from '@/store/dict'
 // PRD-003 D7：默认卷位编辑器（PaperSlotsEditor）随 paper_slots 编辑链整套退役，
 // 计划不再配默认卷位模板；课次材料统一走专项材料位（P6）。
@@ -57,6 +60,8 @@ interface FormState {
   targetType: TargetType
   /** R1a·S1 归属对象 id（新建必选） */
   targetId: string
+  /** PRD-015 学科（学生=已开户学科之一） */
+  subject: string
   termTag: string
   year: number
   materialNote: string
@@ -66,6 +71,7 @@ const form = reactive<FormState>({
   name: '',
   targetType: '0',
   targetId: '',
+  subject: '',
   termTag: '暑假',
   year: currentYear,
   materialNote: '',
@@ -99,7 +105,44 @@ watch(
   (tt) => {
     if (isEdit.value) return
     form.targetId = ''
+    form.subject = ''
+    subjectOptions.value = []
     void loadTargetOptions(tt)
+  },
+)
+
+// ── PRD-015·V10 学科选项 = 该归属学生已开户学科（班级无账户模型 → 不限制、不展示下拉）──
+const subjectOptions = ref<TuitionAccountVO[]>([])
+const subjectLoading = ref(false)
+const isClassPlan = computed(() => form.targetType === '1')
+
+async function loadSubjectOptions(studentId: string) {
+  if (!studentId) {
+    subjectOptions.value = []
+    return
+  }
+  subjectLoading.value = true
+  try {
+    subjectOptions.value = (await listAccounts(studentId)) ?? []
+  } catch {
+    subjectOptions.value = []
+  } finally {
+    subjectLoading.value = false
+  }
+}
+
+// 切归属对象 → 重新拉该生开户学科；已选学科不在新列表里就清空（防串人）
+watch(
+  () => form.targetId,
+  async (tid) => {
+    if (isClassPlan.value) {
+      subjectOptions.value = []
+      return
+    }
+    await loadSubjectOptions(tid)
+    if (form.subject && !subjectOptions.value.some((a) => a.subject === form.subject)) {
+      form.subject = ''
+    }
   },
 )
 
@@ -113,6 +156,7 @@ watch(
       form.name = props.plan.name
       form.targetType = props.plan.targetType
       form.targetId = props.plan.targetId ?? ''
+      form.subject = props.plan.subject ?? ''
       form.termTag = props.plan.termTag || '暑假'
       form.year = props.plan.year || currentYear
       form.materialNote = props.plan.materialNote || ''
@@ -121,6 +165,8 @@ watch(
       form.name = ''
       form.targetType = '0'
       form.targetId = ''
+      form.subject = ''
+      subjectOptions.value = []
       void loadTargetOptions('0')
       form.termTag = '暑假'
       form.year = currentYear
@@ -137,6 +183,8 @@ async function submit() {
     targetType: form.targetType,
     // R1a·S1：新建必传归属；编辑带上原值（BE 归属不可改语义以服务端为准）
     targetId: form.targetId || undefined,
+    // PRD-015：学生计划的学科必须是已开户学科（BE 同校验，未开户 400）
+    subject: form.subject || undefined,
     termTag: form.termTag,
     year: form.year,
     materialNote: form.materialNote.trim() || undefined,
@@ -192,6 +240,33 @@ async function submit() {
           />
         </el-select>
         <span v-if="isEdit" class="form-hint">归属不可改（换绑走对象卡片「换绑计划」）</span>
+      </el-form-item>
+      <!-- PRD-015·V10：学科下拉只列该生已开户学科；没开户先去学生详情「课时账户」开通 -->
+      <el-form-item v-if="!isClassPlan" label="学科" prop="subject">
+        <el-select
+          v-model="form.subject"
+          :loading="subjectLoading"
+          :disabled="!form.targetId"
+          clearable
+          placeholder="选择学科"
+          style="width: 220px"
+        >
+          <el-option
+            v-for="a in subjectOptions"
+            :key="a.id"
+            :value="a.subject"
+            :label="a.subjectLabel || a.subject"
+          />
+        </el-select>
+        <span class="form-hint">
+          {{
+            !form.targetId
+              ? '先选归属对象'
+              : subjectOptions.length
+                ? '只列该学生已开通的学科'
+                : '该学生还没开通学科账户 —— 去学生详情「课时账户」开通'
+          }}
+        </span>
       </el-form-item>
       <el-form-item label="学期 / 年份" prop="termTag">
         <div class="term-row">

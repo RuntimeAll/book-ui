@@ -4,6 +4,10 @@
  * 展示：姓名 + 对象色 · 年级学科 · 已排/已上/请假计数（班级=学员数）· 进度条 ·
  *      下一课行（日期时间 + 课次 + prep pill）· 绑定计划(FP13) · 家长电话掩码。
  * 归档卡置灰。点击 → 选中进详情。
+ *
+ * 🔴 PRD-015 学科线（V9）：一个学生可同时上多科 —— 顶部多科 chips 带「剩余课时」角标
+ *   （负数=欠费红显），计划进度按 planBindings 每科一行，互不覆盖；
+ *   两个字段都是 additive，缺省时回退到旧的单学科 / 单计划渲染，老数据不炸。
  */
 import { computed } from 'vue'
 import { TARGET_TYPE_LABEL, type TargetCardVO } from '@/api/teacher/schedule'
@@ -39,6 +43,30 @@ const pct = computed(() => {
 })
 
 const next = computed(() => props.card.nextSession || null)
+
+// —— PRD-015 多科 chips（学生卡；账户 = 学生×学科绑定的物理载体）——
+const accounts = computed(() => props.card.accounts ?? [])
+function hoursText(v: number | null | undefined) {
+  if (v === null || v === undefined) return '—'
+  return String(Number(v))
+}
+
+// —— PRD-015 多计划进度（按学科分行；无 planBindings 回退旧单计划字段）——
+const bindings = computed(() => {
+  const bs = props.card.planBindings ?? []
+  if (bs.length) return bs
+  if (!props.card.planName && !props.card.planId) return []
+  return [
+    {
+      subject: props.card.subject,
+      subjectLabel: props.card.subjectLabel,
+      planId: props.card.planId || '',
+      planName: props.card.planName,
+      progressDone: props.card.progressDone ?? 0,
+      progressTotal: props.card.progressTotal ?? 0,
+    },
+  ]
+})
 </script>
 
 <template>
@@ -71,14 +99,27 @@ const next = computed(() => props.card.nextSession || null)
       <span v-else>请假 <b>{{ card.leaveCount ?? 0 }}</b></span>
     </div>
 
+    <!-- PRD-015 V9：多科 chips + 每科剩余课时角标（欠费红） -->
+    <div v-if="accounts.length" class="subj-chips">
+      <span
+        v-for="a in accounts"
+        :key="a.id"
+        class="subj-chip"
+        :class="{ owe: (a.hoursRemain ?? 0) < 0 }"
+        :title="`剩余 ${hoursText(a.hoursRemain)} 课时 · ${hoursText(a.amountRemain)} 元`"
+      >
+        {{ a.subjectLabel || a.subject }}
+        <b>{{ hoursText(a.hoursRemain) }}</b>
+      </span>
+    </div>
+
     <div class="prog"><i :style="{ width: pct + '%', background: color }" /></div>
 
-    <!-- FP13 绑定计划 -->
-    <div v-if="card.planName" class="plan-line">
-      <span class="plan-name">{{ card.planName }}</span>
-      <span v-if="card.progressTotal" class="plan-prog"
-        >{{ card.progressDone ?? 0 }} / {{ card.progressTotal }}</span
-      >
+    <!-- FP13 绑定计划（PRD-015：一科一行，多科不再互相覆盖） -->
+    <div v-for="b in bindings" :key="b.planId || b.planName || ''" class="plan-line">
+      <span v-if="b.subjectLabel" class="plan-subj">{{ b.subjectLabel }}</span>
+      <span class="plan-name">{{ b.planName || '未命名计划' }}</span>
+      <span v-if="b.progressTotal" class="plan-prog">{{ b.progressDone ?? 0 }} / {{ b.progressTotal }}</span>
     </div>
 
     <!-- 下一课 -->
@@ -194,12 +235,38 @@ const next = computed(() => props.card.nextSession || null)
   height: 100%;
   border-radius: 3px;
 }
+.subj-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.subj-chip {
+  font-size: 11px;
+  color: var(--bk-teal-deep);
+  background: #e8f2f0;
+  border-radius: 99px;
+  padding: 1px 8px;
+  line-height: 17px;
+}
+.subj-chip b {
+  font-variant-numeric: tabular-nums;
+  margin-left: 3px;
+}
+.subj-chip.owe {
+  color: #be123c;
+  background: #fdeef1;
+}
 .plan-line {
   display: flex;
   align-items: center;
   gap: 6px;
   margin-bottom: 6px;
   font-size: 11.5px;
+}
+.plan-subj {
+  color: #8ba09a;
+  flex: none;
 }
 .plan-name {
   color: var(--bk-teal-deep);
