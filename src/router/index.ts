@@ -305,6 +305,27 @@ const router = createRouter({
         },
       ],
     },
+    // 🔴 PRD-015 批5 — 飞书教务速办 H5（D14）：book-ui 内移动端路由组，非独立项目。
+    //   无桌面导航壳（不挂 AppLayout，走自己的 MobileLayout：顶栏 + 底部四项 tabbar，430px 版式），
+    //   页面复用 api/teacher/** 同一套契约，与桌面端同仓同部署同数据源。
+    //   飞书自建应用「网页应用」主页指向 /#/m/schedule；免登（PRD-007 openid 链）归上线段接线。
+    {
+      path: '/m',
+      component: () => import('@/views/m/MobileLayout.vue'),
+      redirect: '/m/schedule',
+      children: [
+        { path: 'schedule', name: 'MSchedule', component: () => import('@/views/m/schedule.vue') },
+        { path: 'settle', name: 'MSettle', component: () => import('@/views/m/settle.vue') },
+        { path: 'account', name: 'MAccount', component: () => import('@/views/m/account.vue') },
+        { path: 'feedback', name: 'MFeedback', component: () => import('@/views/m/feedback.vue') },
+      ],
+    },
+    // PRD-015 D15 — 简单登录门（独立页，无 tabbar 壳）；守卫拦 /m/** 未登录跳这里
+    {
+      path: '/m/login',
+      name: 'MLogin',
+      component: () => import('@/views/m/login.vue'),
+    },
     // 登录/注册页均已下线（PRD-C-212 增量：登录注册=页内双模式弹窗，见 components/LoginDialog）；
     // 旧 /#/login、/#/register 书签由守卫兼容：归一到 /home 并自动弹对应模式弹窗。
     // PRD-C-110 B1 — geo-engine 引擎自检页（无 layout，免登录；懒加载，prod 不打进首屏 chunk）
@@ -333,6 +354,22 @@ const router = createRouter({
 // 直接 `useUserStore()` 安全。
 // ---------------------------------------------------------------------------
 router.beforeEach(async (to) => {
+  // 🔴 PRD-015 D15/V25 — 飞书教务速办 H5（/m/**）登录门（简单版，最先判、独立分支）：
+  //   未登录访问任意 /m/** → /m/login 带 redirect；登录成功回原目标页。
+  //   已登录再进 /m/login → 归位到 redirect（或 /m/schedule），不停在登录页。
+  //   🔴 只做登录态判定，不做任何角色/权限矩阵（D15）；也不走桌面端的登录弹窗分支
+  //   （手机上弹桌面 el-dialog 没意义），故在这里整体短路返回。
+  if (to.path === '/m' || to.path.startsWith('/m/')) {
+    const logged = useUserStore().isLoggedIn
+    const redirect = typeof to.query.redirect === 'string' ? to.query.redirect : ''
+    if (to.path === '/m/login') {
+      if (!logged) return true
+      return redirect.startsWith('/m/') && redirect !== '/m/login' ? redirect : '/m/schedule'
+    }
+    if (!logged) return { path: '/m/login', query: { redirect: to.fullPath } }
+    return true
+  }
+
   // PRD-C-212 增量 — 旧 /#/login、/#/register 链接兼容：归一到首页并自动弹对应模式弹窗
   if (to.path === '/login' || to.path === '/register') {
     useLoginDialog().open({
