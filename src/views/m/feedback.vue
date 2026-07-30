@@ -35,6 +35,8 @@ const loading = ref(false)
 
 const sheets = ref<FeedbackSheetBrief[]>([])
 const sheetsLoading = ref(false)
+/** sheetId → 已填内容条数（懒探针缓存，见 probeShells 注释） */
+const rowCounts = ref<Record<string, number>>({})
 
 const selStudent = computed(() => students.value.find((s) => s.id === selId.value) || null)
 const todayChips = computed(() => students.value.filter((s) => todayIds.value.has(s.id)))
@@ -84,6 +86,7 @@ async function loadSheets() {
           (b.lessonSeq ?? 0) - (a.lessonSeq ?? 0) ||
           (b.lessonDate || '').localeCompare(a.lessonDate || ''),
       )
+    void probeShells(sheets.value)
   } catch (e) {
     console.warn('[m/feedback] 反馈列表拉取失败', e)
     sheets.value = []
@@ -92,15 +95,49 @@ async function loadSheets() {
   }
 }
 
+/**
+ * 「待补内容」探针（sheetId → 内容条数）。
+ * 🔴 为什么要探：D7 规定壳的 title 存 NULL、导出时动态拼，所以**填完内容 title 依然是空**——
+ *    只看 title 会把已填的单一直标成壳。列表契约 FeedbackSheetBrief 不带条数字段（批0 已冻结，
+ *    加 rowCount 属 BE 契约变更，不在本批范围），故对「title 为空」的少数行懒查一次详情定性，
+ *    结果按 sheet id 缓存不重复查；探针没回来/失败时回落 title 启发式，不阻塞列表渲染。
+ */
+async function probeShells(list: FeedbackSheetBrief[]) {
+  const todo = list.filter((f) => !f.title && rowCounts.value[f.id] === undefined).slice(0, 20)
+  if (!todo.length) return
+  const got = await Promise.all(
+    todo.map(async (f) => {
+      try {
+        const d = await getSheet(f.id)
+        return [f.id, (d.rows || []).length] as const
+      } catch {
+        return [f.id, -1] as const // 探针失败 = 未知，保持 title 兜底
+      }
+    }),
+  )
+  const next = { ...rowCounts.value }
+  for (const [id, n] of got) if (n >= 0) next[id] = n
+  rowCounts.value = next
+}
+
 function selectStudent(id: string) {
   if (selId.value === id) return
   selId.value = id
   void loadSheets()
 }
 
-/** 结算自动建的壳：标题空 = 还没填内容（D7 壳标题存 NULL，导出时动态拼） */
+/** 结算自动建的壳 = 一条内容都没填（探针已定性用条数，未定性时回落 title 启发式） */
 function isShell(row: FeedbackSheetBrief): boolean {
-  return !row.title
+  const n = rowCounts.value[row.id]
+  return n === undefined ? !row.title : n === 0
+}
+
+/** 列表副标题：有标题出标题，没标题但已填内容出条数，纯壳出引导语 */
+function previewOf(row: FeedbackSheetBrief): string {
+  if (isShell(row)) return '结算自动生成的占位壳——点开补内容'
+  if (row.title) return row.title
+  const n = rowCounts.value[row.id]
+  return n ? `已填 ${n} 条内容` : '已填内容'
 }
 
 function rowTitle(row: FeedbackSheetBrief): string {
@@ -129,6 +166,7 @@ async function openEdit(row: FeedbackSheetBrief) {
   try {
     const d = await getSheet(row.id)
     editDetail.value = d
+    rowCounts.value = { ...rowCounts.value, [d.id]: (d.rows || []).length }
     editRows.value = (d.rows && d.rows.length ? d.rows : [emptyRow()]).map((r) => ({
       module: r.module || '',
       content: r.content || '',
@@ -179,6 +217,8 @@ async function saveEdit() {
       ...(d.sessionId ? { sessionId: d.sessionId } : {}),
       ...(d.planId ? { planId: d.planId } : {}),
     })
+    // 本地即刻定性（保存后徽标从「待补内容」翻篇，不等下一次探针）
+    rowCounts.value = { ...rowCounts.value, [d.id]: rows.length }
     editOpen.value = false
     ElMessage.success('已保存')
     await loadSheets()
@@ -318,9 +358,7 @@ onMounted(async () => {
             <span v-if="isShell(f)" class="m-chip shell">待补内容</span>
             <span class="d">{{ f.targetName || '' }}</span>
           </div>
-          <div class="pre">
-            {{ isShell(f) ? '结算自动生成的占位壳——点开补内容' : f.title }}
-          </div>
+          <div class="pre">{{ previewOf(f) }}</div>
         </div>
       </template>
 
