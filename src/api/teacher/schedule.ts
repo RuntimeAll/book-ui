@@ -473,6 +473,8 @@ export interface SessionVO {
   updateTime?: string
   // PRD-015 教务域：场次结算态（'0' 未结 / '1' 已结 / '2' 已冲正；旧数据/未开账户可空）
   settleStatus?: string
+  /** PRD-015：已结场次的实扣快照（未结为 null），冲正确认文案用 */
+  settled?: SettledSnapshotVO | null
 }
 
 /** 冲突明细项（老师撞场=create_by 同人时间重叠；学生撞场=同 target 重叠） */
@@ -519,6 +521,8 @@ export interface CalendarSessionVO {
   subjectLabel?: string
   // PRD-015 教务域：场次结算态（'0' 未结 / '1' 已结 / '2' 已冲正；日历角标用）
   settleStatus?: string
+  /** PRD-015：已结场次的实扣快照（未结为 null），抽屉冲正确认文案用 */
+  settled?: SettledSnapshotVO | null
 }
 
 /** 月历查询入参 */
@@ -548,6 +552,16 @@ export interface SessionUpdateBo {
 export interface DeferResult {
   deferred: { sessionId: string; newLessonId: string }[]
   overflow: string[]
+  /**
+   * PRD-015 AC6：该场已结算时的自动冲正明细（未结算为 null）。
+   * hours/amount = 按该场<b>实扣数</b>返还；deletedShells=删掉的空反馈壳数，keptShells=有内容保留数。
+   */
+  reversal?: {
+    hours: number
+    amount: number
+    deletedShells: number
+    keptShells: number
+  } | null
 }
 
 // —— PRD-015 场次结算（教务域：已上未结场次 → 批量扣课时/扣款）——
@@ -565,10 +579,15 @@ export interface PendingSettlementVO {
   targetName: string
   /** 学科字典码（biz_edu_subject） */
   subject: string
+  /** 学科中文标签（BE 推导，additive） */
+  subjectLabel?: string | null
   /** 绑定计划课次标题（未绑课次为 null） */
   planLessonTitle: string | null
-  /** 结算时点账户单价（元/课时） */
-  price: number
+  /**
+   * 结算时点账户单价（元/课时）。
+   * 🔴 null = 该生该科<b>未开户</b>——照常列出但不能结算，FE 提示先开户（BE 会 skipped）。
+   */
+  price: number | null
 }
 
 // PRD-015 结算单项（hours 缺省 = 1 课时；timeNote = 实际上课时间备注，覆盖排课起止）
@@ -586,6 +605,17 @@ export interface SettleResultVO {
   settled?: number
   /** genFeedback=true 时联动生成的反馈单 id（雪花 string） */
   feedbackSheetIds?: string[]
+  /**
+   * 逐场独立事务下被跳过的场次（批3 BE 落地补）：未开户 / 已结算（uk 幂等）/ 已冲正 / 班课 / 外部占位。
+   * 🔴 跳过 ≠ 报错：其余场次照常落账，FE 把 reason 原样提示给老师。
+   */
+  skipped?: { sessionId: string; reason: string }[]
+}
+
+/** PRD-015 结算快照（已结场次的实扣数，冲正确认文案「将返还 X 课时 / ¥Y」用） */
+export interface SettledSnapshotVO {
+  hours: number
+  amount: number
 }
 
 // —— 备课包 ——
