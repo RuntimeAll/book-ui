@@ -25,6 +25,9 @@ export interface FeedbackSheetBo {
   title?: string
   lessonDate?: string | null
   rows: FeedbackRow[]
+  // PRD-015 教务域：反馈单绑场次 / 绑课程计划（结算链自动建单时由 BE 回填）
+  sessionId?: string
+  planId?: string
 }
 
 /** 列表行（不含 rows）。 */
@@ -36,6 +39,11 @@ export interface FeedbackSheetBrief {
   lessonDate: string | null
   createTime?: string
   updateTime?: string
+  // PRD-015 教务域：绑定的场次 / 课程计划（旧单为空）
+  sessionId?: string
+  planId?: string
+  // PRD-015 计划内课次序号（按 planId 聚合出计划长图时排序用；未绑计划为空）
+  lessonSeq?: number
 }
 
 /** 详情（含 rows）。 */
@@ -66,7 +74,7 @@ export const updateSheet = (id: string, bo: FeedbackSheetBo) =>
   request.put<void, void>(`${BASE}/sheet/${id}`, bo)
 
 /** 列表（owner，可选 targetId / keyword）。 */
-export const pageSheets = (params: { targetId?: string; keyword?: string } = {}) =>
+export const pageSheets = (params: { targetId?: string; keyword?: string; planId?: string } = {}) =>
   request.get<PageResult<FeedbackSheetBrief>, PageResult<FeedbackSheetBrief>>(`${BASE}/sheet/page`, { params })
 
 /** 详情（含 rows）。 */
@@ -80,6 +88,11 @@ export const deleteSheet = (id: string) =>
 /** 导出家长版 PNG → {file,url}。 */
 export const exportPng = (id: string) =>
   request.post<FileUrlVO, FileUrlVO>(`${BASE}/sheet/${id}/export-png`)
+
+// PRD-015 按课程计划导出反馈长图 → {file,url}
+// mode='single' 每单一张 / 'long' 计划下全部反馈单拼一张长图（按 lessonSeq 排序）
+export const exportPlanPng = (planId: string, mode: 'single' | 'long') =>
+  request.post<FileUrlVO, FileUrlVO>(`${BASE}/export-plan-png`, { planId, mode })
 
 /**
  * 下载 PNG 产物（带鉴权头 axios，responseType=blob；request 拦截器对 blob 短路跳过 envelope）。

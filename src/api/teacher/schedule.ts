@@ -430,6 +430,8 @@ export interface SessionVO {
   note?: string
   createTime?: string
   updateTime?: string
+  // PRD-015 教务域：场次结算态（'0' 未结 / '1' 已结 / '2' 已冲正；旧数据/未开账户可空）
+  settleStatus?: string
 }
 
 /** 冲突明细项（老师撞场=create_by 同人时间重叠；学生撞场=同 target 重叠） */
@@ -474,6 +476,8 @@ export interface CalendarSessionVO {
   /** 学科码（兜底链 场次→计划→对象，BE 已解好） */
   subject?: string
   subjectLabel?: string
+  // PRD-015 教务域：场次结算态（'0' 未结 / '1' 已结 / '2' 已冲正；日历角标用）
+  settleStatus?: string
 }
 
 /** 月历查询入参 */
@@ -503,6 +507,44 @@ export interface SessionUpdateBo {
 export interface DeferResult {
   deferred: { sessionId: string; newLessonId: string }[]
   overflow: string[]
+}
+
+// —— PRD-015 场次结算（教务域：已上未结场次 → 批量扣课时/扣款）——
+
+// PRD-015 待结算场次一行（GET settle/pending；已上课但 settleStatus 未结）
+export interface PendingSettlementVO {
+  sessionId: string
+  /** YYYY-MM-DD */
+  date: string
+  /** 排课起 HH:mm */
+  start: string
+  /** 排课止 HH:mm */
+  end: string
+  /** 学生/班级名 */
+  targetName: string
+  /** 学科字典码（biz_edu_subject） */
+  subject: string
+  /** 绑定计划课次标题（未绑课次为 null） */
+  planLessonTitle: string | null
+  /** 结算时点账户单价（元/课时） */
+  price: number
+}
+
+// PRD-015 结算单项（hours 缺省 = 1 课时；timeNote = 实际上课时间备注，覆盖排课起止）
+export interface SettleItemBo {
+  sessionId: string
+  /** 实扣课时，缺省 1 */
+  hours?: number
+  /** 实际上课时间备注（如 09:05-10:40） */
+  timeNote?: string
+}
+
+// PRD-015 结算返回（字段全可选，随 BE 同批落地对齐；调用方按需取）
+export interface SettleResultVO {
+  /** 实际结算成功的场次数 */
+  settled?: number
+  /** genFeedback=true 时联动生成的反馈单 id（雪花 string） */
+  feedbackSheetIds?: string[]
 }
 
 // —— 备课包 ——
@@ -732,6 +774,16 @@ export const sessionLock = (id: string) =>
 /** 解锁内容：POST session/{id}/unlock */
 export const sessionUnlock = (id: string) =>
   request.post<void, void>(`${BASE}/session/${id}/unlock`)
+
+// —— PRD-015 场次结算 ——
+
+// PRD-015 待结算清单：GET settle/pending（已上未结场次，按日期升序）
+export const getPendingSettlements = () =>
+  request.get<PendingSettlementVO[], PendingSettlementVO[]>(`${BASE}/settle/pending`)
+
+// PRD-015 批量结算：POST settle（扣课时/扣款 + 写场次结算态；genFeedback=true 顺带建反馈单）
+export const settleSessions = (bo: { items: SettleItemBo[]; genFeedback: boolean }) =>
+  request.post<SettleResultVO, SettleResultVO>(`${BASE}/settle`, bo)
 
 // —— 备课包 ——
 
