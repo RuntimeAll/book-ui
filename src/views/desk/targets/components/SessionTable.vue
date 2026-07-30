@@ -3,11 +3,16 @@
  * PRD-C-213 FP14 · 场次表 + 行操作。
  * 场次列：# / 日期 / 时间 / 绑定课次 / 状态 pill / 备课态 pill / 操作。
  * 行操作：改期(sessionUpdate date/start/end) · 请假(sessionLeave) · 取消(sessionCancel) ·
- *         标记已上(sessionMarkDone) · 锁定/解锁内容(sessionLock/Unlock) · 改绑课次(sessionUpdate planLessonId)。
+ *         结算这节课(SettleDialog 单场版) · 锁定/解锁内容(sessionLock/Unlock) · 改绑课次(sessionUpdate planLessonId)。
  * 请假/取消返回 {deferred,overflow} → message 提示顺延明细。
  *
  * 🔴 PRD-015 D9/AC11：回收线（逐题判对错→肖像）已下线——本表不再有「回收/已回收」按钮，
  *    也不再引用 ReviewDialog；组件文件与既有回收数据保留（物理清理另立小卡）。
+ * 🔴 PRD-015 修复批（钱线漏口）：原「标记已上」直调 sessionMarkDone = 绕过结算的旁路——
+ *    场次被标已上后 settle_status 仍 '0'，却因 pending 清单口径（session_status='0'）从待结算
+ *    清单消失，钱永远扣不上。现改为与详情抽屉同语义的<b>单场结算确认</b>（SettleDialog 单行版）：
+ *    实扣课时可改 + 实际上课时间备注 + 生成反馈壳，一次完成 扣费 + 标已上 + 建壳。
+ *    存量/漏网场次（已上但未结）在下拉里出「补结算」，是本表与抽屉共用的唯一补救路径。
  */
 import { ref, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -15,14 +20,16 @@ import {
   LESSON_TYPE_LABEL,
   sessionLeave,
   sessionCancel,
-  sessionMarkDone,
   sessionLock,
   sessionUnlock,
   updateSession,
+  getPendingSettlements,
   type SessionVO,
   type PlanLessonVO,
   type DeferResult,
 } from '@/api/teacher/schedule'
+import SettleDialog from '@/views/desk/schedule/components/SettleDialog.vue'
+import type { SettleRow } from '@/views/desk/schedule/components/SettleDialog.vue'
 import {
   shortDate,
   weekdayCn,
@@ -36,6 +43,9 @@ const props = defineProps<{
   sessions: SessionVO[]
   planLessons: PlanLessonVO[]
   loading?: boolean
+  /** 结算弹窗展示用（本表在学生详情内，对象名/学科由父页给） */
+  targetName?: string
+  subjectLabel?: string
 }>()
 
 const emit = defineEmits<{
@@ -151,15 +161,58 @@ async function onCancel(s: SessionVO) {
   }
 }
 
-async function onMarkDone(s: SessionVO) {
+// —— 单场结算（PRD-015 修复批：替代原「标记已上」旁路） ——
+const settleVisible = ref(false)
+const settleRows = ref<SettleRow[]>([])
+
+/**
+ * 结算动作可用性：
+ * - 外部占位（sessionType='3'）/ 已结（'1'）/ 已冲正（'2'）→ 不出。
+ * - 已排（sessionStatus 空或 '0'）→「结算这节课」（正路：扣费 + 标已上 + 建壳）。
+ * - 已上但未结（sessionStatus='1' && settleStatus 非 1/2）→「补结算」（存量/漏网场次的唯一补救路径；
+ *   BE settleOne 只卡 settle_status 不卡 session_status，补结算可落账）。
+ * - 请假 / 取消（'2'/'3'）→ 不出（要结先改回已排）。
+ */
+function settleLabel(s: SessionVO): string {
+  if (s.sessionType === '3') return ''
+  if (s.settleStatus === '1' || s.settleStatus === '2') return ''
+  if (!s.sessionStatus || s.sessionStatus === '0') return '结算这节课'
+  if (s.sessionStatus === '1') return '补结算'
+  return ''
+}
+
+/** 结算弹窗单行：优先取待结算清单里的真行（带账户单价），取不到就按本表信息造一行交 BE 判单价 */
+function fallbackRow(s: SessionVO): SettleRow {
+  const bound = s.sessionType !== '3' && s.planLessonId ? lessonLabel(s) : s.externalTitle || null
+  return {
+    sessionId: s.id,
+    date: s.sessionDate,
+    start: (s.startTime || '').slice(0, 5),
+    end: (s.endTime || '').slice(0, 5),
+    targetName: props.targetName || '',
+    subject: '',
+    subjectLabel: props.subjectLabel || null,
+    planLessonTitle: bound,
+    // 单价此刻取不到：标 priceUnknown 让弹窗显示「按账户单价」而不是假的 ¥0，真实金额以 BE 扣为准
+    price: 0,
+    priceUnknown: true,
+  }
+}
+
+async function openSettle(s: SessionVO) {
+  const row = fallbackRow(s)
   busyId.value = s.id
   try {
-    await sessionMarkDone(s.id)
-    ElMessage.success('已标记为已上')
-    emit('refresh')
+    const list = await getPendingSettlements()
+    const hit = Array.isArray(list) ? list.find((p) => p.sessionId === s.id) : undefined
+    settleRows.value = [hit || row]
+  } catch (e) {
+    console.warn('[targets] 待结算清单拉取失败，单价交 BE 判定', e)
+    settleRows.value = [row]
   } finally {
     busyId.value = ''
   }
+  settleVisible.value = true
 }
 
 async function onToggleLock(s: SessionVO) {
@@ -183,7 +236,7 @@ function onCommand(cmd: string, s: SessionVO) {
   else if (cmd === 'rebind') openRebind(s)
   else if (cmd === 'leave') onLeave(s).catch(() => {})
   else if (cmd === 'cancel') onCancel(s).catch(() => {})
-  else if (cmd === 'markdone') onMarkDone(s)
+  else if (cmd === 'settle') openSettle(s)
   else if (cmd === 'lock') onToggleLock(s)
 }
 
@@ -331,12 +384,9 @@ async function saveRebind() {
                 <el-dropdown-menu>
                   <el-dropdown-item command="reschedule" :disabled="isVoided(s)">改期</el-dropdown-item>
                   <el-dropdown-item command="rebind">改绑课次</el-dropdown-item>
-                  <el-dropdown-item
-                    command="markdone"
-                    v-if="s.sessionStatus !== '1'"
-                    :disabled="isVoided(s)"
-                  >
-                    标记已上
+                  <!-- PRD-015 修复批：原「标记已上」（裸 markDone，绕过扣费）→ 单场结算确认 -->
+                  <el-dropdown-item v-if="settleLabel(s)" command="settle">
+                    {{ settleLabel(s) }}
                   </el-dropdown-item>
                   <el-dropdown-item command="lock" :disabled="isVoided(s)">
                     {{ s.lessonLocked === '1' ? '解锁内容' : '锁定内容' }}
@@ -412,6 +462,9 @@ async function saveRebind() {
         <el-button type="primary" :loading="rbSaving" @click="saveRebind">保存</el-button>
       </template>
     </el-dialog>
+
+    <!-- PRD-015 修复批：单场结算确认（与排课页/详情抽屉同一弹窗、同一契约，扣费只此一个触发点） -->
+    <SettleDialog v-model:visible="settleVisible" :rows="settleRows" @settled="emit('refresh')" />
 
     <!-- PRD-015 D9/AC11：回收线（逐题判对错）已下线，此处原「课后回收弹窗（B4）」入口移除。
          组件文件 ReviewDialog.vue 与既有回收数据/读接口保留（下线≠坏档），物理清理另立小卡。 -->

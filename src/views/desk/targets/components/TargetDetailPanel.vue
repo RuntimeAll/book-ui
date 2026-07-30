@@ -267,6 +267,8 @@ async function toggleArchive() {
         :sessions="sessions"
         :plan-lessons="planLessons"
         :loading="sessLoading"
+        :target-name="detail?.name || card.name"
+        :subject-label="detail?.subjectLabel || detail?.subject || ''"
         @refresh="onSessionsChanged"
         @open-prep="(id) => emit('open-prep', id)"
       />

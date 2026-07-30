@@ -141,13 +141,23 @@ const disableReason = computed(() => {
 /** 请假/取消可用性：未上（disableReason 空）或已结算（改主意 → 冲正返还） */
 const voidDisableReason = computed(() => (isSettled.value ? '' : disableReason.value))
 
-/** 「结算」按钮：未结 + 非请假/取消态才出（已结的场次改用冲正路径） */
+/**
+ * 「结算」按钮：未结 + 非请假/取消态才出（已结的场次改用冲正路径）。
+ * 🔴 PRD-015 修复批：放行「已上（sessionStatus='1'）但未结（settleStatus='0'）」——存量场次
+ *    与历史裸「标记已上」留下的漏网场次，因待结算清单口径（session_status='0'）永远进不了清单，
+ *    抽屉是它们唯一的补结算入口；BE settleOne 只卡 settle_status，补结算能正常落账。
+ */
 const canSettle = computed(() => {
   const s = props.session
   if (!s || s.sessionType === '3') return false
   if (s.settleStatus === '1' || s.settleStatus === '2') return false
-  return !s.sessionStatus || s.sessionStatus === '0'
+  return !s.sessionStatus || s.sessionStatus === '0' || s.sessionStatus === '1'
 })
+
+/** 结算按钮文案：正路=结算这节课；已上未结的漏网/存量场次=补结算 */
+const settleBtnLabel = computed(() =>
+  props.session?.sessionStatus === '1' ? '补结算' : '结算这节课',
+)
 
 function reportDefer(r: DeferResult | undefined, okMsg: string) {
   const parts: string[] = []
@@ -403,7 +413,7 @@ async function submitReschedule() {
           :disabled="busy"
           @click="doSettle"
         >
-          结算这节课
+          {{ settleBtnLabel }}
         </el-button>
         <!--
         <el-button v-if="session.planLessonId" :disabled="busy || !!disableReason" @click="toggleLock">
