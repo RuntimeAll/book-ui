@@ -229,10 +229,15 @@ function statLine(b: ShelfBookVO): string {
   // 打卡书：天=节点、计算题在 content_json 不计入 questionCount——按天数口径显示，
   // 防「10 节 · 20 题」误导（实际 31 题/天，verifier S12）
   if (isPunchBook(b)) return b.nodeCount != null ? `${b.nodeCount} 天 · 每天一练` : '空书'
-  // 待解析书：没有节点/题，厚度口径 = PDF 页数
+  // 待解析书：没有节点/题，厚度口径 = PDF 页数；年级册+章节（styleMeta.unit）挂前面
   if (isPdfPendingBook(b)) {
+    const parts: string[] = []
+    if (b.grade) parts.push(String(b.grade))
+    const unit = (b.styleMeta as Record<string, unknown> | undefined)?.unit
+    if (typeof unit === 'string' && unit) parts.push(unit)
     const pages = readBookPdfMeta(b).pdfPages
-    return pages > 0 ? `${pages} 页 · 待解析` : '待解析'
+    parts.push(pages > 0 ? `${pages} 页 · 待解析` : '待解析')
+    return parts.join(' · ')
   }
   const parts: string[] = []
   if (b.nodeCount != null) parts.push(`${b.nodeCount} 节`)
