@@ -26,6 +26,7 @@ import { avatarChar, maskPhone, progressPct, FALLBACK_COLOR } from '../helpers'
 import PortraitPanel from './PortraitPanel.vue'
 import SessionTable from './SessionTable.vue'
 import MiniCalendar from './MiniCalendar.vue'
+import AccountPanel from './AccountPanel.vue'
 
 const props = defineProps<{
   card: TargetCardVO
@@ -242,6 +243,14 @@ async function toggleArchive() {
         </div>
       </div>
     </div>
+
+    <!-- PRD-015 课时账户（学生专有；班级无账户，班课收费模型未拍） -->
+    <AccountPanel
+      v-if="!isClass"
+      :student-id="card.id"
+      :student-name="detail?.name || card.name"
+      @changed="emit('refresh-cards')"
+    />
 
     <!-- FP20 肖像 -->
     <PortraitPanel
