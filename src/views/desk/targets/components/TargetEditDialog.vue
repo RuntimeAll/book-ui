@@ -6,6 +6,13 @@
  * 班级隐藏 教材版本 / parentPhone；color 可选（留空则服务端色板轮转）。
  * 🔴 R1a 建模：年级=gradeNo 数字码 + gradeYear（隐藏缺省当年）；学科/教材版本=字典码；
  *    显示层用 BE 推导串（VO grade/textbook/subjectLabel），本弹窗只管写原始码。
+ *
+ * PRD-015 bug 批 BUG-4/C「建档一体」：新建学生时可<b>顺手</b>录课时账户（学科+单价+初始课时/金额，
+ * 可多科），保存链 = 建档成功 → 逐科 upsertAccount → 有初始数就 addAccountFlow('1' 充值)。
+ * 🔴 可跳过（拍板 C）：试听生先建档、回头再开户；学科留空的行直接忽略。
+ * 🔴 只复用既有 api，不造新端点；建档已成功而开户失败 <b>不回滚建档</b>——只报哪几科没开成，
+ *    让老师去学生详情补，绝不把一个已经建好的学生悄悄删掉。
+ * 🔴 编辑态不重复做账户管理：只列已有账户 +「去详情管理」跳转（正本 = 学生详情 AccountPanel）。
  */
 import { ref, reactive, watch, computed } from 'vue'
 import { ElMessage } from 'element-plus'
@@ -19,6 +26,7 @@ import {
   type TargetCreateBo,
   type TargetUpdateBo,
 } from '@/api/teacher/schedule'
+import { listAccounts, upsertAccount, addAccountFlow, type TuitionAccountVO } from '@/api/teacher/account'
 import { useDictStore, DICT_EDU_GRADE, DICT_EDU_SUBJECT, DICT_EDU_EDITION } from '@/store/dict'
 
 const props = defineProps<{
@@ -34,6 +42,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'update:modelValue', v: boolean): void
   (e: 'saved', id: string): void
+  /** 编辑态「去详情管理」：父级选中该对象展开详情面板（账户管理正本在那儿） */
+  (e: 'go-detail', id: string): void
 }>()
 
 const PALETTE = ['#0f766e', '#b45309', '#5455b8', '#8a6d3b', '#0e7490', '#9d174d', '#4d7c0f']
@@ -72,7 +82,103 @@ const GRADE_OPTIONS = computed(() => dict.list(DICT_EDU_GRADE))
 const SUBJECT_OPTIONS = computed(() => dict.list(DICT_EDU_SUBJECT))
 const EDITION_OPTIONS = computed(() => dict.list(DICT_EDU_EDITION))
 
+// ── PRD-015 BUG-4/C 课时账户段 ───────────────────────────────────────────
+/** 建档时顺手开的账户行（学科留空=这行不开，整段可跳过） */
+interface AcctDraft {
+  subject: string
+  lessonPrice: number
+  hours: number
+  amount: number
+}
+
+const acctRows = ref<AcctDraft[]>([])
+/** 编辑态：该生已有账户（只读简行 +「去详情管理」，本弹窗不做完整管理） */
+const existAccounts = ref<TuitionAccountVO[]>([])
+const acctLoading = ref(false)
+
+/** 学生才有账户段（班课收费模型未拍，PRD-015 §9） */
+const showAcct = computed(() => !isClass.value)
+
+function newAcctRow(): AcctDraft {
+  return { subject: '', lessonPrice: 0, hours: 0, amount: 0 }
+}
+
+function addAcctRow() {
+  acctRows.value.push(newAcctRow())
+}
+
+function removeAcctRow(i: number) {
+  acctRows.value.splice(i, 1)
+}
+
+/** 某行的可选学科 = 全字典 − 其它行已选（同一学科只能一个账户，uk_student_subject） */
+function subjectOptionsFor(i: number) {
+  const taken = new Set(acctRows.value.filter((_, j) => j !== i).map((r) => r.subject).filter(Boolean))
+  return SUBJECT_OPTIONS.value.filter((d) => !taken.has(d.dictValue))
+}
+
+// 上面选了主科 → 首个空账户行自动跟上（只填空行，不覆盖老师已选的）
+watch(
+  () => form.subject,
+  (s) => {
+    if (!s || props.mode !== 'create') return
+    const first = acctRows.value[0]
+    if (first && !first.subject) first.subject = s
+  },
+)
+
+async function loadExistAccounts(id: string) {
+  acctLoading.value = true
+  try {
+    existAccounts.value = (await listAccounts(id)) ?? []
+  } catch {
+    existAccounts.value = []
+  } finally {
+    acctLoading.value = false
+  }
+}
+
+/**
+ * 建档后逐科开户 + 首充。
+ * 🔴 建档已成功，这里失败绝不回滚建档——把没开成的学科报出来，让老师去详情补开。
+ * @return 未开成功的学科标签
+ */
+async function createAccounts(studentId: string): Promise<string[]> {
+  const failed: string[] = []
+  for (const r of acctRows.value) {
+    if (!r.subject) continue
+    try {
+      const res = await upsertAccount({
+        studentId,
+        subject: r.subject,
+        lessonPrice: Number(r.lessonPrice) || 0,
+      })
+      const hours = Number(r.hours) || 0
+      const amount = Number(r.amount) || 0
+      // 初始课时/金额 = 一笔充值流水（余额只能经流水产生，D1 铁律；不裸改余额列）
+      if (hours || amount) {
+        await addAccountFlow(res.id, {
+          flowType: '1',
+          hoursDelta: hours,
+          amountDelta: amount,
+          note: '建档初始',
+        })
+      }
+    } catch (e) {
+      console.warn('[target-edit] 开户失败 subject=', r.subject, e)
+      failed.push(dict.label(DICT_EDU_SUBJECT, r.subject) || r.subject)
+    }
+  }
+  return failed
+}
+
 function resetFrom() {
+  // 账户段：新建=一行空白（可跳过）；编辑=拉已有账户只读展示
+  existAccounts.value = []
+  acctRows.value = props.mode === 'create' && !isClass.value ? [newAcctRow()] : []
+  if (props.mode === 'edit' && props.detail && !isClass.value) {
+    void loadExistAccounts(props.detail.id)
+  }
   if (props.mode === 'edit' && props.detail) {
     const d = props.detail
     form.name = d.name ?? ''
@@ -109,6 +215,12 @@ function pickColor(c: string) {
 async function submit() {
   if (!form.name.trim()) {
     ElMessage.warning('请填写名称')
+    return
+  }
+  // 同一学科只能开一个账户（uk_student_subject）；两行同科会把第二行当改单价 + 重复充值
+  const picked = acctRows.value.map((r) => r.subject).filter(Boolean)
+  if (new Set(picked).size !== picked.length) {
+    ElMessage.warning('同一学科只能开一个账户，请合并重复的行')
     return
   }
   saving.value = true
@@ -148,12 +260,29 @@ async function submit() {
     if (isClass.value && id) {
       await setClassStudents(id, form.studentIds)
     }
-    ElMessage.success(props.mode === 'create' ? '已建档' : '已保存')
+    // PRD-015 BUG-4/C：建档一体——新建学生时顺手开户 + 首充（编辑态账户在详情面板改）
+    let acctFailed: string[] = []
+    if (props.mode === 'create' && !isClass.value && id) {
+      acctFailed = await createAccounts(id)
+    }
+    if (acctFailed.length) {
+      // 学生已经建好了，只是账户没开成 —— 说清楚是哪几科，别让人以为整单失败
+      ElMessage.warning(`已建档，但 ${acctFailed.join('、')} 账户没开成功，请到学生详情「课时账户」补开`)
+    } else {
+      ElMessage.success(props.mode === 'create' ? '已建档' : '已保存')
+    }
     emit('saved', id)
     emit('update:modelValue', false)
   } finally {
     saving.value = false
   }
+}
+
+function goDetail() {
+  const id = props.detail?.id
+  if (!id) return
+  emit('update:modelValue', false)
+  emit('go-detail', id)
 }
 </script>
 
@@ -217,6 +346,77 @@ async function submit() {
           />
         </el-select>
       </el-form-item>
+      <!-- PRD-015 BUG-4/C 课时账户（学生专有；可跳过） -->
+      <template v-if="showAcct">
+        <!-- 新建：顺手开户 + 首充，可加多科 -->
+        <el-form-item v-if="mode === 'create'" label="课时账户">
+          <div class="acct-block">
+            <div v-for="(r, i) in acctRows" :key="i" class="acct-line">
+              <el-select v-model="r.subject" clearable placeholder="学科" class="a-subj">
+                <el-option
+                  v-for="d in subjectOptionsFor(i)"
+                  :key="d.dictValue"
+                  :label="d.dictLabel"
+                  :value="d.dictValue"
+                />
+              </el-select>
+              <el-input-number
+                v-model="r.lessonPrice"
+                :min="0"
+                :precision="2"
+                :step="10"
+                :controls="false"
+                class="a-num"
+                placeholder="单价"
+              />
+              <span class="a-u">元/课时</span>
+              <el-input-number
+                v-model="r.hours"
+                :min="0"
+                :precision="2"
+                :step="1"
+                :controls="false"
+                class="a-num"
+                placeholder="课时"
+              />
+              <span class="a-u">课时</span>
+              <el-input-number
+                v-model="r.amount"
+                :min="0"
+                :precision="2"
+                :step="100"
+                :controls="false"
+                class="a-num"
+                placeholder="金额"
+              />
+              <span class="a-u">元</span>
+              <el-button v-if="acctRows.length > 1" size="small" text @click="removeAcctRow(i)">删</el-button>
+            </div>
+            <div class="acct-foot">
+              <el-button size="small" text bg @click="addAcctRow">＋ 再加一科</el-button>
+              <span class="a-hint">不填学科就跳过，回头在学生详情「课时账户」里开也一样</span>
+            </div>
+          </div>
+        </el-form-item>
+
+        <!-- 编辑：只列已有账户，管理去详情面板（不在这儿重复做一套） -->
+        <el-form-item v-else label="课时账户">
+          <div class="acct-block" v-loading="acctLoading">
+            <div v-if="existAccounts.length" class="acct-exist">
+              <span v-for="a in existAccounts" :key="a.id" class="a-tag" :class="{ off: a.status === '1' }">
+                {{ a.subjectLabel || a.subject }} · {{ a.lessonPrice }}元/课时 · 余 {{ a.hoursRemain }}课时
+                <i v-if="a.status === '1'">（已停用）</i>
+              </span>
+            </div>
+            <span v-else-if="!acctLoading" class="a-hint">还没有账户</span>
+            <div class="acct-foot">
+              <el-button size="small" text bg @click="goDetail">去详情管理</el-button>
+              <span class="a-hint">开户 / 充值 / 调整 / 改单价 / 停用都在学生详情的「课时账户」区块</span>
+            </div>
+          </div>
+        </el-form-item>
+      </template>
+
       <el-form-item label="对象色">
         <div class="color-row">
           <span
@@ -251,6 +451,64 @@ async function submit() {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+/* PRD-015 BUG-4/C 课时账户段 */
+.acct-block {
+  width: 100%;
+}
+.acct-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.acct-line .a-subj {
+  width: 96px;
+  flex: none;
+}
+.acct-line :deep(.a-num) {
+  width: 76px;
+  flex: none;
+}
+.acct-line :deep(.a-num .el-input__inner) {
+  text-align: left;
+}
+.a-u {
+  font-size: 12px;
+  color: #8ba09a;
+  flex: none;
+}
+.acct-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.a-hint {
+  font-size: 12px;
+  color: #8ba09a;
+  line-height: 1.5;
+}
+.acct-exist {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.a-tag {
+  font-size: 12px;
+  color: var(--bk-teal-deep);
+  background: #e8f2f0;
+  border-radius: 99px;
+  padding: 2px 10px;
+}
+.a-tag.off {
+  color: #7d8f8b;
+  background: #eef1f0;
+}
+.a-tag i {
+  font-style: normal;
+  color: #a96f14;
 }
 .swatch {
   width: 22px;

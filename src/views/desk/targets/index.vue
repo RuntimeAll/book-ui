@@ -129,6 +129,12 @@ async function onSaved(id: string) {
   if (selectedId.value === id) detailTick.value++
 }
 
+/** PRD-015 BUG-4/C：编辑弹窗「去详情管理」→ 选中该对象展开详情（账户管理正本在 AccountPanel） */
+function onGoDetail(id: string) {
+  selectedId.value = id
+  detailTick.value++
+}
+
 function onRefreshCards() {
   loadCards()
   detailTick.value++
@@ -222,6 +228,7 @@ onMounted(async () => {
       :detail="editDetail"
       :student-options="studentOptions"
       @saved="onSaved"
+      @go-detail="onGoDetail"
     />
   </div>
 </template>
