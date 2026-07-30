@@ -4,8 +4,13 @@
  * 新建态（无 id）：空白起。编辑态（带 id）：加载 getSheet 还原。
  * 五列表格行编辑（所属模块/学习内容/掌握情况/不足点），行增删 + 上下移排序；
  * 顶部学生/日期/标题；「保存」入库；「导出 PNG」先保存再出家长版长图预览。
+ *
+ * PRD-015 D6/D7（批4）：
+ * - 元信息行加「计划 → 场次」联动下拉（选学生拉计划，选计划拉场次；场次可空 = D11 弹性骨架）；
+ * - 序号只读展示（服务端自动 = 该计划下 max+1，FE 不回传）；
+ * - 🔴 AC8 时区修：默认上课日期改本地取法，东八区早 8 点前 toISOString() 会退到昨天。
  */
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
@@ -16,7 +21,15 @@ import {
   downloadArtifact,
   type FeedbackRow,
 } from '@/api/teacher/feedback'
-import { pageTargets, type TargetCardVO } from '@/api/teacher/schedule'
+import {
+  pageTargets,
+  pagePlans,
+  pageSessions,
+  SESSION_STATUS_LABEL,
+  type TargetCardVO,
+  type PlanVO,
+  type SessionVO,
+} from '@/api/teacher/schedule'
 
 const route = useRoute()
 const router = useRouter()
@@ -25,13 +38,97 @@ const id = ref<string>((route.params.id as string) || '')
 const isEdit = computed(() => !!id.value)
 
 const targetId = ref<string>('')
+const planId = ref<string>('')
+const sessionId = ref<string>('')
+const lessonSeq = ref<number | null>(null)
 const title = ref<string>('')
 const lessonDate = ref<string>('')
 const rows = ref<FeedbackRow[]>([])
 
 const students = ref<TargetCardVO[]>([])
+const plans = ref<PlanVO[]>([])
+const sessions = ref<SessionVO[]>([])
+const plansLoading = ref(false)
+const sessionsLoading = ref(false)
 const saving = ref(false)
 const exporting = ref(false)
+
+/**
+ * 🔴 AC8：本地日期 yyyy-MM-dd。new Date().toISOString() 走 UTC，东八区 08:00 前会退到昨天
+ * （用户凌晨/清早建单默认日期差一天）。一律用本地 getFullYear/Month/Date 拼。
+ */
+function todayLocal(): string {
+  const n = new Date()
+  return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`
+}
+
+/** 该计划下的场次（升序；BE session/page 只吃 targetId，planId 前端筛） */
+const planSessions = computed(() =>
+  sessions.value
+    .filter((s) => planId.value && String(s.planId || '') === String(planId.value))
+    .sort((a, b) => `${a.sessionDate}${a.startTime}`.localeCompare(`${b.sessionDate}${b.startTime}`)),
+)
+
+function sessionLabel(s: SessionVO): string {
+  const t = (s.startTime || '').slice(0, 5)
+  const st = SESSION_STATUS_LABEL[s.sessionStatus] || ''
+  return `${s.sessionDate}${t ? ' ' + t : ''}${st ? ' · ' + st : ''}`
+}
+
+async function loadPlans(tid: string) {
+  if (!tid) {
+    plans.value = []
+    return
+  }
+  plansLoading.value = true
+  try {
+    const res = await pagePlans({ targetId: tid, targetType: '0', pageSize: 200 })
+    plans.value = res?.rows ?? []
+  } catch {
+    plans.value = []
+  } finally {
+    plansLoading.value = false
+  }
+}
+
+async function loadSessions(tid: string) {
+  if (!tid) {
+    sessions.value = []
+    return
+  }
+  sessionsLoading.value = true
+  try {
+    const res = await pageSessions({ targetId: tid, pageSize: 500 })
+    sessions.value = res?.rows ?? []
+  } catch {
+    sessions.value = []
+  } finally {
+    sessionsLoading.value = false
+  }
+}
+
+/** 换学生 = 清计划/场次（旧绑定不可能跨学生成立） */
+async function onStudentChange(v: string) {
+  planId.value = ''
+  sessionId.value = ''
+  await Promise.all([loadPlans(v), loadSessions(v)])
+}
+
+/** 换计划 = 清场次（场次候选按新计划重筛） */
+function onPlanChange() {
+  sessionId.value = ''
+}
+
+/** 选了场次 → 上课日期跟场次走（D6：计划/课次/日期由场次自然带出） */
+function onSessionChange(v: string) {
+  const s = planSessions.value.find((x) => x.id === v)
+  if (s?.sessionDate) lessonDate.value = s.sessionDate
+}
+
+// 计划被清空时同步清场次，避免留下跨计划的脏绑定
+watch(planId, (v) => {
+  if (!v) sessionId.value = ''
+})
 
 // —— PNG 预览 ——
 const pngVisible = ref(false)
@@ -64,6 +161,9 @@ function moveDown(i: number) {
 function buildBo() {
   return {
     targetId: targetId.value || null,
+    // PRD-015 D6：绑场次（可空）+ 冗余计划；🔴 lessonSeq 不传 = 服务端自动 max+1（D7）
+    sessionId: sessionId.value || null,
+    planId: planId.value || null,
     title: title.value,
     lessonDate: lessonDate.value || null,
     rows: rows.value.map((r, idx) => ({
@@ -88,6 +188,8 @@ async function save(): Promise<boolean> {
       // 建单后地址换到编辑态，避免重复建
       router.replace(`/desk/feedback/edit/${res.id}`)
     }
+    // 序号由服务端定（D7），保存后回读一次让页面显示真实序号
+    await refreshSeq()
     ElMessage.success('已保存')
     return true
   } catch {
@@ -135,17 +237,36 @@ async function loadStudents() {
   }
 }
 
+/** 保存后回读服务端定的计划内序号（新建态尤其：seq 是 BE 现算的） */
+async function refreshSeq() {
+  if (!id.value) return
+  try {
+    const d = await getSheet(id.value)
+    lessonSeq.value = d.lessonSeq ?? null
+    planId.value = d.planId || planId.value
+  } catch {
+    /* 只是回显，失败不打断保存流程 */
+  }
+}
+
 async function loadSheet() {
   if (!id.value) {
     rows.value = [emptyRow()]
-    lessonDate.value = new Date().toISOString().slice(0, 10)
+    // 🔴 AC8：本地今天（旧 toISOString() 在东八区 08:00 前会退到昨天）
+    lessonDate.value = todayLocal()
     return
   }
   try {
     const d = await getSheet(id.value)
     targetId.value = d.targetId || ''
+    planId.value = d.planId || ''
+    sessionId.value = d.sessionId || ''
+    lessonSeq.value = d.lessonSeq ?? null
     title.value = d.title || ''
     lessonDate.value = d.lessonDate || ''
+    if (targetId.value) {
+      await Promise.all([loadPlans(targetId.value), loadSessions(targetId.value)])
+    }
     rows.value = (d.rows && d.rows.length ? d.rows : [emptyRow()]).map((r) => ({
       module: r.module || '',
       content: r.content || '',
@@ -174,9 +295,43 @@ onMounted(async () => {
     </div>
 
     <div class="fb-meta">
-      <el-select v-model="targetId" placeholder="选择学生" clearable filterable class="fb-student">
+      <el-select
+        v-model="targetId"
+        placeholder="选择学生"
+        clearable
+        filterable
+        class="fb-student"
+        @change="onStudentChange"
+      >
         <el-option v-for="s in students" :key="s.id" :label="s.name" :value="s.id" />
       </el-select>
+      <el-select
+        v-model="planId"
+        :loading="plansLoading"
+        :disabled="!targetId"
+        placeholder="课程计划（可空）"
+        clearable
+        filterable
+        class="fb-plan"
+        @change="onPlanChange"
+      >
+        <el-option v-for="p in plans" :key="p.id" :label="p.name" :value="p.id" />
+      </el-select>
+      <el-select
+        v-model="sessionId"
+        :loading="sessionsLoading"
+        :disabled="!planId"
+        placeholder="上课场次（可空）"
+        clearable
+        filterable
+        class="fb-session"
+        @change="onSessionChange"
+      >
+        <el-option v-for="s in planSessions" :key="s.id" :label="sessionLabel(s)" :value="s.id" />
+      </el-select>
+      <span class="fb-seq" :title="'该计划下的反馈序号，保存时由系统自动排'">
+        序号 <b>{{ lessonSeq ?? '自动' }}</b>
+      </span>
       <el-date-picker
         v-model="lessonDate"
         type="date"
@@ -184,7 +339,7 @@ onMounted(async () => {
         value-format="YYYY-MM-DD"
         class="fb-date"
       />
-      <el-input v-model="title" placeholder="标题（如：乐乐七上暑假数学第一节课上课内容）" class="fb-title-inp" />
+      <el-input v-model="title" placeholder="备注（可空，导出时跟在日期后）" class="fb-title-inp" />
     </div>
 
     <table class="fb-table">
@@ -238,8 +393,12 @@ onMounted(async () => {
 .fb-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
 .fb-title { font-size: 18px; font-weight: 800; color: #1c3330; margin: 0; }
 .fb-sp { flex: 1; }
-.fb-meta { display: flex; gap: 10px; margin-bottom: 14px; }
-.fb-student { width: 180px; }
+.fb-meta { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; align-items: center; }
+.fb-student { width: 150px; }
+.fb-plan { width: 190px; }
+.fb-session { width: 210px; }
+.fb-seq { font-size: 12.5px; color: #6b8580; white-space: nowrap; }
+.fb-seq b { color: #0e9285; font-size: 14px; }
 .fb-date { width: 160px; }
 .fb-title-inp { flex: 1; }
 .fb-table { border-collapse: collapse; width: 100%; font-size: 13px; background: #fff; }
