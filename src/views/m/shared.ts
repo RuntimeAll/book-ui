@@ -8,6 +8,20 @@
 import { ref } from 'vue'
 import { getPendingSettlements, type PendingSettlementVO } from '@/api/teacher/schedule'
 
+// ── Vant 主题（PRD-015 移动端 Vant 化，2026-07-31）──────────────────────
+/**
+ * 只染**主色**成品牌青绿，圆角 / 字号 / 间距一律吃 Vant 默认——
+ * 换框架的目的就是拿它调好的手感，乱改 token 等于把手搓 CSS 换个地方重犯。
+ * 🔴 用 ConfigProvider 的 theme-vars-scope="global" 写到 :root，Toast/Dialog 才跟着变色。
+ */
+export const M_THEME_VARS = {
+  primaryColor: '#0E8F72',
+  navBarBackground: '#0E8F72',
+  navBarTitleTextColor: '#ffffff',
+  navBarIconColor: '#ffffff',
+  navBarTextColor: '#ffffff',
+} as const
+
 // ── 日期 / 数字格式化（纯字符串拼装，绕开 toISOString 的时区差一天坑）──────
 
 /** Date → 'YYYY-MM-DD'（本地时区，不经 UTC） */
@@ -81,6 +95,17 @@ export function sessionChip(
   if (settleStatus === '1') return { text: '已上·已结', cls: 'ok' }
   if (sessionStatus === '1' || passed) return { text: '待结算', cls: 'warn' }
   return { text: '已排', cls: 'plain' }
+}
+
+/**
+ * 徽标语义 → van-tag 的 type（纯展示映射，口径本身不动）。
+ * 'plain' 走 default + plain，其余对上 Vant 的成功/警告/危险三色。
+ */
+export function chipTagType(cls: StatusChip['cls']): 'success' | 'warning' | 'danger' | 'default' {
+  if (cls === 'ok') return 'success'
+  if (cls === 'warn') return 'warning'
+  if (cls === 'rev') return 'danger'
+  return 'default'
 }
 
 /** 该场次是否算「过点未结」（日历上点它跳待结算页） */

@@ -4,7 +4,7 @@ import UnoCSS from 'unocss/vite'
 import { resolve } from 'path'
 import AutoImport from 'unplugin-auto-import/vite'
 import Components from 'unplugin-vue-components/vite'
-import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
+import { ElementPlusResolver, VantResolver } from 'unplugin-vue-components/resolvers'
 // PRD-C-211 系统管理移植：plus-ui 页面用 <svg-icon>/<icon-select>（本地 svg 雪碧图）
 import { createSvgIconsPlugin } from 'vite-plugin-svg-icons'
 
@@ -49,8 +49,13 @@ export default defineConfig({
       imports: ['vue', 'vue-router', 'pinia'],
       dts: 'src/types/auto-imports.d.ts',
     }),
+    // 🔴 PRD-015 移动端 Vant 化：VantResolver 与 ElementPlusResolver 并列，两者按**组件名前缀**分工
+    //    （El* → element-plus，Van* → vant），互不相干。
+    //    包体隔离说明：resolver 只对「模板里真的用到该组件」的文件注入 import + 按需样式，
+    //    桌面端页面一个 <van-*> 都没有 → 桌面 chunk 里不会出现任何 vant 代码/样式（build 后 grep 验证）。
+    //    绝不在 main.ts 全局 `import 'vant/lib/index.css'`，那会把 vant 样式塞进首屏入口。
     Components({
-      resolvers: [ElementPlusResolver()],
+      resolvers: [ElementPlusResolver(), VantResolver()],
       dts: 'src/types/components.d.ts',
     }),
     // PRD-C-211：svg 雪碧图（src/assets/icons/svg，来自 book-admin），menu 页图标选择器用

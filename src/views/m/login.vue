@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * PRD-015 批5 · 教务速办登录门（/m/login，D15 简单版 / V25）。
+ * PRD-015 · 教务速办登录门（/m/login，D15 简单版 / V25）—— **Vant 4 版**。
  *
  * 🔴 D15 只做最基础：复用项目既有 sa-token 登录链（api/auth 的 login + store/user 的 setAuth），
  *    不做任何角色 / 权限矩阵界面，数据归属沿 create_by 单老师语义。
@@ -8,10 +8,14 @@
  *    加开网页应用能力 + JSSDK 接线，归上线段（PRD §9 边界）。
  * 与桌面端 LoginDialog 的差异：桌面登录成功要整页 reload（游客态降级数据重拉），移动四页
  * 全在 onMounted 拉数据、token 由 http/request 请求时现取，直接 router.replace 即可，不刷页。
+ *
+ * 🔴 2026-07-31 Vant 化：ElMessage → showToast；裸 input → van-field（数字/密码键盘、清除按钮、
+ *    回车提交全是 Vant 内建）。登录**逻辑一字未动**（同一套 login/captcha/setAuth/redirect）。
  */
 import { computed, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { showToast } from 'vant'
+import 'vant/es/toast/style'
 import {
   DEFAULT_CLIENT_ID,
   DEFAULT_TENANT_ID,
@@ -20,6 +24,7 @@ import {
   login,
 } from '@/api/auth'
 import { useUserStore } from '@/store/user'
+import { M_THEME_VARS } from './shared'
 import './mobile.css'
 
 const route = useRoute()
@@ -53,7 +58,7 @@ async function refreshCaptcha() {
 
 async function onLogin() {
   if (!form.username.trim() || !form.password) {
-    ElMessage.warning('请输入账号和密码')
+    showToast('请输入账号和密码')
     return
   }
   loading.value = true
@@ -80,50 +85,54 @@ void refreshCaptcha()
 </script>
 
 <template>
-  <div class="m-app">
+  <van-config-provider :theme-vars="M_THEME_VARS" theme-vars-scope="global" class="m-app">
     <div class="m-login">
       <div class="box">
         <h2>备课帮 · 教务速办</h2>
         <p class="sub2">飞书内自动免登（上线段接线）；飞书外用系统账号登录。</p>
 
-        <button class="m-btn pri" style="width: 100%" disabled>飞书环境 · 一键免登</button>
+        <div class="pad">
+          <van-button type="primary" block disabled>飞书环境 · 一键免登</van-button>
+        </div>
         <p class="tip">上线段接线（PRD-007 openid 链）</p>
 
         <div class="or">或 账号密码登录</div>
 
-        <div class="m-field">
-          <label for="m-user">账号</label>
-          <input id="m-user" v-model="form.username" autocomplete="username" placeholder="系统账号" />
-        </div>
-        <div class="m-field">
-          <label for="m-pwd">密码</label>
-          <input
-            id="m-pwd"
+        <van-cell-group inset>
+          <van-field
+            v-model="form.username"
+            label="账号"
+            placeholder="系统账号"
+            autocomplete="username"
+            clearable
+          />
+          <van-field
             v-model="form.password"
             type="password"
-            autocomplete="current-password"
+            label="密码"
             placeholder="••••••"
+            autocomplete="current-password"
             @keyup.enter="onLogin"
           />
-        </div>
-        <div v-if="captchaEnabled" class="m-field">
-          <label for="m-code">验证码</label>
-          <div style="display: flex; gap: 8px; align-items: center">
-            <input id="m-code" v-model="form.code" autocomplete="off" @keyup.enter="onLogin" />
-            <img
-              v-if="captchaImg"
-              :src="captchaImg"
-              alt="点击刷新验证码"
-              style="height: 38px; width: 110px; border-radius: 8px; flex: none"
-              @click="refreshCaptcha"
-            />
-          </div>
-        </div>
+          <van-field v-if="captchaEnabled" v-model="form.code" label="验证码" @keyup.enter="onLogin">
+            <template #button>
+              <img
+                v-if="captchaImg"
+                :src="captchaImg"
+                alt="点击刷新验证码"
+                style="height: 32px; width: 96px; border-radius: 6px; display: block"
+                @click="refreshCaptcha"
+              />
+            </template>
+          </van-field>
+        </van-cell-group>
 
-        <button class="m-btn pri" style="width: 100%" :disabled="loading" @click="onLogin">
-          {{ loading ? '登录中…' : '登 录' }}
-        </button>
+        <div class="pad" style="margin-top: 16px">
+          <van-button type="primary" block :loading="loading" loading-text="登录中…" @click="onLogin">
+            登 录
+          </van-button>
+        </div>
       </div>
     </div>
-  </div>
+  </van-config-provider>
 </template>
