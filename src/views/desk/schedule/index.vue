@@ -17,6 +17,7 @@ import {
   batchSchedule,
   conflictCheck,
   getCalendar,
+  getPendingSettlements,
   getPrepTodo,
   pageTargets,
   PREP_STATUS_LABEL,
@@ -25,6 +26,7 @@ import {
 } from '@/api/teacher/schedule'
 import type {
   CalendarSessionVO,
+  PendingSettlementVO,
   PrepTodoVO,
   PrepStatus,
   SessionBatchBo,
@@ -36,7 +38,9 @@ import type {
 import { DICT_EDU_SUBJECT, useDictStore } from '@/store/dict'
 import BatchScheduleWizard from './components/BatchScheduleWizard.vue'
 import SessionDetailDrawer from './components/SessionDetailDrawer.vue'
+import SettleDialog from './components/SettleDialog.vue'
 import type { DrawerSession } from './components/SessionDetailDrawer.vue'
+import type { SettleRow } from './components/SettleDialog.vue'
 
 // ── 日期工具（避免时区漂移，纯字符串拼装）────────────────────────
 function fmtDate(d: Date): string {
@@ -275,6 +279,9 @@ interface CalEvent {
   planLessonId?: string
   subjectLabel?: string
   endTime: string
+  // PRD-015：结算态 + 已结场次的实扣快照（抽屉冲正提示用）
+  settleStatus?: string
+  settled?: { hours: number; amount: number } | null
 }
 
 const normalized = computed<CalEvent[]>(() =>
@@ -302,6 +309,8 @@ const normalized = computed<CalEvent[]>(() =>
       lessonTitle: e.lessonTitle,
       planLessonId: e.planLessonId,
       subjectLabel: e.subjectLabel,
+      settleStatus: e.settleStatus,
+      settled: e.settled,
     }
   }),
 )
@@ -484,6 +493,54 @@ const tomorrowStr = computed(() => {
 })
 const tomorrowTodoList = computed(() => todoList.value.filter((t) => t.sessionDate === tomorrowStr.value))
 
+// ── PRD-015 待结算（V11/V12）────────────────────────────────────
+// 🔴 只提醒不自动扣（D4）：这里只是读时查询 + 顶部提醒条，扣费只在 SettleDialog 点「确认结算」。
+const pendingList = ref<PendingSettlementVO[]>([])
+const settleVisible = ref(false)
+const settleRows = ref<SettleRow[]>([])
+
+async function fetchPending() {
+  try {
+    const data = await getPendingSettlements()
+    pendingList.value = Array.isArray(data) ? data : []
+  } catch (e) {
+    console.warn('[schedule] getPendingSettlements 失败', e)
+    pendingList.value = []
+  }
+}
+
+/** 提醒条 → 全量待结算列表 */
+function openSettleAll() {
+  settleRows.value = pendingList.value
+  settleVisible.value = true
+}
+
+/**
+ * 抽屉「标记已上」→ 单场结算（同一弹窗单行版）。
+ * 该场若已在待结算清单里就用清单行（带单价）；不在（如还没到点就想结）则按抽屉信息造一行，
+ * 单价交给 BE 判定——未开户会 skipped 并给文案。
+ */
+function openSettleOne(s: DrawerSession) {
+  const hit = pendingList.value.find((p) => p.sessionId === s.id)
+  settleRows.value = [
+    hit || {
+      sessionId: s.id,
+      date: s.date,
+      start: s.start,
+      end: s.end,
+      targetName: s.targetName,
+      subject: '',
+      subjectLabel: s.subjectLabel || null,
+      planLessonTitle: s.title || null,
+      // 未在待结算清单里（如未到点就提前结）：单价此刻取不到，标记 priceUnknown 让弹窗
+      // 显示「按账户单价」而不是假的 ¥0；真实金额以 BE 按账户单价扣为准
+      price: 0,
+      priceUnknown: true,
+    },
+  ]
+  settleVisible.value = true
+}
+
 // ── 抽屉 / 向导 ─────────────────────────────────────────────────
 const drawerVisible = ref(false)
 const drawerSession = ref<DrawerSession | null>(null)
@@ -508,6 +565,8 @@ function openFromEvent(e: CalEvent) {
     lessonLocked: e.lessonLocked,
     targetId: e.targetId,
     planLessonId: e.planLessonId,
+    settleStatus: e.settleStatus,
+    settled: e.settled,
   }
   drawerVisible.value = true
 }
@@ -626,11 +685,13 @@ async function submitQuickAdd() {
 function refreshAll() {
   fetchCalendar()
   fetchTodo()
+  fetchPending()
 }
 
 onMounted(() => {
   fetchCalendar()
   fetchTodo()
+  fetchPending()
 })
 </script>
 
@@ -660,6 +721,15 @@ onMounted(() => {
         <el-icon style="margin-right: 4px"><Plus /></el-icon>
         批量排课
       </el-button>
+    </div>
+
+    <!-- PRD-015 V11 待结算提醒条（只提醒不自动扣：点开才结） -->
+    <div v-if="pendingList.length" class="sc-settle-bar">
+      <el-icon class="sc-settle-ico"><Bell /></el-icon>
+      <b>{{ pendingList.length }} 场待结算</b>
+      <span class="sc-settle-sub">课已过点还没扣课时，确认一下就好</span>
+      <span class="sc-spacer" />
+      <el-button type="primary" size="small" @click="openSettleAll">去结算</el-button>
     </div>
 
     <!-- FP8 对象筛选 chips -->
@@ -921,7 +991,11 @@ onMounted(() => {
       v-model:visible="drawerVisible"
       :session="drawerSession"
       @changed="refreshAll"
+      @settle="openSettleOne"
     />
+
+    <!-- PRD-015 V12 结算确认弹窗（全量 / 单场同一个） -->
+    <SettleDialog v-model:visible="settleVisible" :rows="settleRows" @settled="refreshAll" />
   </div>
 </template>
 
@@ -982,6 +1056,30 @@ onMounted(() => {
   padding: 0 10px;
   font-variant-numeric: tabular-nums;
   color: var(--bk-ink);
+}
+
+/* PRD-015 待结算提醒条 */
+.sc-settle-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid #f0d9b5;
+  background: #fdf7ec;
+  color: #8a5a12;
+  font-size: 13px;
+}
+.sc-settle-ico {
+  color: #b45309;
+}
+.sc-settle-bar b {
+  color: #8a5a12;
+  font-weight: 800;
+}
+.sc-settle-sub {
+  font-size: 12.5px;
+  color: #a1793c;
 }
 
 /* chips */
