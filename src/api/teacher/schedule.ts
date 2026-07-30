@@ -425,6 +425,8 @@ export interface PlanPageParams extends PageQuery {
   targetType?: TargetType
   keyword?: string
   status?: PlanStatus
+  /** PRD-015：按归属对象过滤（BE plan/page 一直支持，本批补进类型；反馈单「学生→计划」联动用） */
+  targetId?: string
 }
 
 // —— 排课 ——

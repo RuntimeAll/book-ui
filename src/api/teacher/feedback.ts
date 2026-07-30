@@ -26,8 +26,11 @@ export interface FeedbackSheetBo {
   lessonDate?: string | null
   rows: FeedbackRow[]
   // PRD-015 教务域：反馈单绑场次 / 绑课程计划（结算链自动建单时由 BE 回填）
-  sessionId?: string
-  planId?: string
+  // 🔴 传 sessionId 未传 planId → BE 从场次回填 planId
+  sessionId?: string | null
+  planId?: string | null
+  /** 计划内序号：🔴 不传 = BE 自动取该计划下 max+1（D7），FE 只读展示不回传 */
+  lessonSeq?: number | null
 }
 
 /** 列表行（不含 rows）。 */
@@ -89,10 +92,17 @@ export const deleteSheet = (id: string) =>
 export const exportPng = (id: string) =>
   request.post<FileUrlVO, FileUrlVO>(`${BASE}/sheet/${id}/export-png`)
 
-// PRD-015 按课程计划导出反馈长图 → {file,url}
-// mode='single' 每单一张 / 'long' 计划下全部反馈单拼一张长图（按 lessonSeq 排序）
-export const exportPlanPng = (planId: string, mode: 'single' | 'long') =>
-  request.post<FileUrlVO, FileUrlVO>(`${BASE}/export-plan-png`, { planId, mode })
+/** 按计划导出返回（file/url + 回显本次模式与单数）。 */
+export interface PlanExportVO extends FileUrlVO {
+  mode: 'single' | 'long'
+  sheetCount: number
+}
+
+// PRD-015 按课程计划导出反馈图 → {file,url,mode,sheetCount}
+// mode='single'（缺省）= 该计划最新一单（lessonSeq 最大）单张 / 'long' = 全部反馈单按序号升序拼长图
+// 🔴 黄条标题 = 「序号 · 上课日期（· 备注）」，无「第几次」字样（D7）
+export const exportPlanPng = (planId: string, mode: 'single' | 'long' = 'single') =>
+  request.post<PlanExportVO, PlanExportVO>(`${BASE}/export-plan-png`, { planId, mode })
 
 /**
  * 下载 PNG 产物（带鉴权头 axios，responseType=blob；request 拦截器对 blob 短路跳过 envelope）。
