@@ -5,8 +5,11 @@
  * 行操作：改期(sessionUpdate date/start/end) · 请假(sessionLeave) · 取消(sessionCancel) ·
  *         标记已上(sessionMarkDone) · 锁定/解锁内容(sessionLock/Unlock) · 改绑课次(sessionUpdate planLessonId)。
  * 请假/取消返回 {deferred,overflow} → message 提示顺延明细。
+ *
+ * 🔴 PRD-015 D9/AC11：回收线（逐题判对错→肖像）已下线——本表不再有「回收/已回收」按钮，
+ *    也不再引用 ReviewDialog；组件文件与既有回收数据保留（物理清理另立小卡）。
  */
-import { ref, computed, watch } from 'vue'
+import { ref, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   LESSON_TYPE_LABEL,
@@ -16,12 +19,10 @@ import {
   sessionLock,
   sessionUnlock,
   updateSession,
-  getReview,
   type SessionVO,
   type PlanLessonVO,
   type DeferResult,
 } from '@/api/teacher/schedule'
-import ReviewDialog from './ReviewDialog.vue'
 import {
   shortDate,
   weekdayCn,
@@ -107,56 +108,9 @@ function settleBadge(s: SessionVO): { label: string; tone: string } | null {
 // —— 行操作 busy 锁（防双触发） ——
 const busyId = ref<string>('')
 
-// —— 回收态（已回收场次集合） ——
-// 打开时探测：对「已上·非外部」场次批量 getReview，命中即标记（BE 无记录须返 code:1+null）。
-// 另在提交成功 / 弹窗探测到既有记录时增量补入。
-const reviewedIds = ref<Set<string>>(new Set())
-
-function isReviewed(s: SessionVO): boolean {
-  return reviewedIds.value.has(s.id)
-}
-
-let probeSeq = 0
-async function probeReviews() {
-  const my = ++probeSeq
-  const targets = props.sessions.filter((s) => s.sessionStatus === '1' && s.sessionType !== '3')
-  if (!targets.length) return
-  const results = await Promise.allSettled(targets.map((s) => getReview(s.id)))
-  if (my !== probeSeq) return
-  const next = new Set(reviewedIds.value)
-  results.forEach((r, i) => {
-    if (
-      r.status === 'fulfilled' &&
-      r.value &&
-      (r.value.version || (r.value.itemResults && r.value.itemResults.length))
-    ) {
-      next.add(targets[i].id)
-    }
-  })
-  reviewedIds.value = next
-}
-
-watch(() => props.sessions, probeReviews, { immediate: true })
-
-// —— 回收弹窗 ——
-const reviewVisible = ref(false)
-const reviewTarget = ref<SessionVO | null>(null)
-
-function openReview(s: SessionVO) {
-  reviewTarget.value = s
-  reviewVisible.value = true
-}
-
-function onReviewSaved(id: string) {
-  reviewedIds.value = new Set(reviewedIds.value).add(id)
-  emit('refresh')
-}
-
-function onReviewDetected(id: string) {
-  if (!reviewedIds.value.has(id)) {
-    reviewedIds.value = new Set(reviewedIds.value).add(id)
-  }
-}
+// 🔴 PRD-015 D9/AC11 回收线下线：原「已回收探测（批量 getReview）+ 回收弹窗」整段移除。
+//    场次表只留 备课/改期/改绑/标记已上/锁定/请假/取消 这一条教务主线；
+//    回收数据与 GET review 接口保留可读（下线≠坏档），ReviewDialog.vue 文件保留不删。
 
 function showDefer(res: DeferResult, verb: string) {
   const parts: string[] = [`已${verb}`]
@@ -367,15 +321,6 @@ async function saveRebind() {
               @click="emit('open-prep', s.id)"
               >去备课</el-button
             >
-            <el-button
-              v-if="s.sessionType !== '3' && s.sessionStatus === '1'"
-              size="small"
-              :type="isReviewed(s) ? 'success' : 'warning'"
-              text
-              bg
-              @click="openReview(s)"
-              >{{ isReviewed(s) ? '已回收' : '回收' }}</el-button
-            >
             <el-dropdown
               trigger="click"
               :disabled="busyId === s.id"
@@ -468,13 +413,8 @@ async function saveRebind() {
       </template>
     </el-dialog>
 
-    <!-- 课后回收弹窗（B4） -->
-    <ReviewDialog
-      v-model:visible="reviewVisible"
-      :session="reviewTarget"
-      @saved="onReviewSaved"
-      @reviewed-detected="onReviewDetected"
-    />
+    <!-- PRD-015 D9/AC11：回收线（逐题判对错）已下线，此处原「课后回收弹窗（B4）」入口移除。
+         组件文件 ReviewDialog.vue 与既有回收数据/读接口保留（下线≠坏档），物理清理另立小卡。 -->
   </div>
 </template>
 
