@@ -27,11 +27,11 @@ import { dayLabel, fmtDate, hhmm, money, todayStr, usePending } from './shared'
 const dict = useDictStore()
 const { pendingList, pendingLoading, refreshPending } = usePending()
 
-// ── 勾选态（默认全选，照 demo）────────────────────────────────
+// ── 勾选态（默认全不选：钱线动作必须显式点选，防误触批量结算——补回归挂账②）──
 const checked = ref<Set<string>>(new Set())
 
 function syncChecked() {
-  checked.value = new Set(pendingList.value.map((p) => p.sessionId))
+  checked.value = new Set()
 }
 
 function toggle(id: string) {
