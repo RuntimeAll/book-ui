@@ -94,6 +94,16 @@ function isVoided(s: SessionVO): boolean {
   return s.sessionStatus !== undefined && s.sessionStatus !== '0'
 }
 
+/**
+ * PRD-015：结算态徽标。'1' 已结（课时已扣）/ '2' 已冲正（课时已退回）；'0'/空不出徽标。
+ * 🔴 家长不看本表（老师工作台内部页），文案仍取"人话"不用内部词。
+ */
+function settleBadge(s: SessionVO): { label: string; tone: string } | null {
+  if (s.settleStatus === '1') return { label: '已结', tone: 'done' }
+  if (s.settleStatus === '2') return { label: '已退回', tone: 'back' }
+  return null
+}
+
 // —— 行操作 busy 锁（防双触发） ——
 const busyId = ref<string>('')
 
@@ -331,6 +341,10 @@ async function saveRebind() {
           <td>
             <span class="pill" :class="'pill-' + sessionStatusPill(s.sessionStatus).tone">
               {{ sessionStatusPill(s.sessionStatus).label }}
+            </span>
+            <!-- PRD-015：结算态徽标（未结不出徽标，避免全表满屏灰标签） -->
+            <span v-if="settleBadge(s)" class="settle-badge" :class="settleBadge(s)!.tone">
+              {{ settleBadge(s)!.label }}
             </span>
           </td>
           <td>
@@ -607,6 +621,28 @@ tr.row-next td {
 .pill-mute {
   color: #7d8f8b;
   background: #eef1f0;
+}
+/* PRD-015 结算态徽标 */
+.settle-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 5px;
+  font-size: 10.5px;
+  font-weight: 700;
+  border-radius: 99px;
+  padding: 0 6px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+.settle-badge.done {
+  color: var(--bk-teal-deep);
+  background: #fff;
+  border: 1px solid var(--bk-teal);
+}
+.settle-badge.back {
+  color: #b45309;
+  background: #fff;
+  border: 1px solid #e8c48f;
 }
 .rs-form {
   display: flex;
