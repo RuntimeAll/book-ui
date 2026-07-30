@@ -5,7 +5,10 @@
  * 顶部问候 + FP5 快速排课按钮（复用 BatchScheduleWizard，仅 import 不改）。
  * 教学安排区块（对照设计稿 v-overview）：
  *   FP1 今日课程时间线：从本周 getCalendar 过滤当天；外部占位灰显无备课按钮；
- *        已结束且未标已上 → 「标记已上」(sessionMarkDone)。
+ *        已结束且未结算 → 「结算这节课」(SettleDialog 单场版)。
+ *        🔴 PRD-015 修复批：原来这里直调 sessionMarkDone = 绕过结算的钱线漏口——标已上后
+ *        settle_status 仍 '0'，却因待结算清单口径（session_status='0'）从清单消失，钱扣不上。
+ *        现与场次表/详情抽屉统一：结算弹窗一次完成 扣课时课费 + 标已上 + 生成反馈壳。
  *   FP2 待备提醒条：getPrepTodo(7) 聚合；点行跳 /desk/plans 定位课次（PRD-B-101 退役 /desk/prep）。
  *   FP3 统计卡 ×4：getStatOverview()（我的学生 / 本周课次 / 待备课 / 我的题库）。
  *   FP4 本周课表：与 FP1 同源 getCalendar（周一–周日一次拉，前端过滤渲染），🔴 禁另造接口。
@@ -17,14 +20,13 @@
  */
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
 import { useUserStore } from '@/store/user'
 import { getCurrentUser } from '@/api/user'
 import {
   getCalendar,
   getPrepTodo,
   getStatOverview,
-  sessionMarkDone,
+  getPendingSettlements,
   PREP_STATUS_LABEL,
   SESSION_TYPE_LABEL,
   type CalendarSessionVO,
@@ -33,6 +35,8 @@ import {
   type PrepStatus,
 } from '@/api/teacher/schedule'
 import BatchScheduleWizard from './schedule/components/BatchScheduleWizard.vue'
+import SettleDialog from './schedule/components/SettleDialog.vue'
+import type { SettleRow } from './schedule/components/SettleDialog.vue'
 import { usePrepEntry } from '@/composables/usePrepEntry'
 
 const router = useRouter()
@@ -144,7 +148,17 @@ function evtWhat(e: CalendarSessionVO): string {
 }
 // 今日已结束（endTime < 现在，非外部，未标已上）
 function isEndedTodo(e: CalendarSessionVO): boolean {
-  return e.sessionType !== '3' && e.sessionStatus !== '1' && hhmm(e.endTime) < nowHM
+  if (e.sessionType === '3') return false
+  // PRD-015：已结/已冲正不再出结算按钮；请假/取消也不出（要结先改回已排）；
+  // 「已上但 settle_status 还是 0」的漏网场次仍出（走补结算）。
+  if (e.settleStatus === '1' || e.settleStatus === '2') return false
+  if (e.sessionStatus === '2' || e.sessionStatus === '3') return false
+  return hhmm(e.endTime) < nowHM
+}
+
+/** 结算按钮文案：正路=结算这节课；已上未结的漏网/存量场次=补结算 */
+function settleBtnLabel(e: CalendarSessionVO): string {
+  return e.sessionStatus === '1' ? '补结算' : '结算这节课'
 }
 
 const PREP_PILL: Record<PrepStatus, string> = { '2': 'ok', '1': 'mid', '0': 'todo' }
@@ -157,17 +171,41 @@ const overviewSub = computed(() => {
   return `今天 ${total} 场课${pending ? `，${pending} 场待上` : '，均已完成'}`
 })
 
-// FP1 标记已上
+// FP1 结算这节课（PRD-015 修复批：替代原「标记已上」旁路，扣费=全系统唯一触发点 SettleDialog）
 const markingId = ref('')
-async function onMarkDone(e: CalendarSessionVO) {
+const settleVisible = ref(false)
+const settleRows = ref<SettleRow[]>([])
+
+async function openSettle(e: CalendarSessionVO) {
+  const row: SettleRow = {
+    sessionId: e.id,
+    date: e.sessionDate,
+    start: hhmm(e.startTime),
+    end: hhmm(e.endTime),
+    targetName: e.targetName,
+    subject: e.subject || '',
+    subjectLabel: e.subjectLabel || null,
+    planLessonTitle: e.lessonTitle || null,
+    // 单价此刻取不到 → 弹窗显示「按账户单价」，真实金额由 BE 按账户单价扣
+    price: 0,
+    priceUnknown: true,
+  }
   markingId.value = e.id
   try {
-    await sessionMarkDone(e.id)
-    ElMessage.success('已标记为已上')
-    await Promise.all([fetchCalendar(), fetchStat()])
+    const list = await getPendingSettlements()
+    const hit = Array.isArray(list) ? list.find((p) => p.sessionId === e.id) : undefined
+    settleRows.value = [hit || row]
+  } catch (err) {
+    console.warn('[overview] 待结算清单拉取失败，单价交 BE 判定', err)
+    settleRows.value = [row]
   } finally {
     markingId.value = ''
   }
+  settleVisible.value = true
+}
+
+async function onSettled() {
+  await Promise.all([fetchCalendar(), fetchStat()])
 }
 // PRD-B-101 V5/D6：去备课 → 有空卷位则开备课语境定位第一个空位跳题库；全绑/零卷位跳课程计划页定位
 function goPrepBySession(e: CalendarSessionVO) {
@@ -329,8 +367,8 @@ onMounted(async () => {
                   text
                   bg
                   :loading="markingId === e.id"
-                  @click="onMarkDone(e)"
-                  >标记已上</el-button
+                  @click="openSettle(e)"
+                  >{{ settleBtnLabel(e) }}</el-button
                 >
                 <el-button
                   v-else-if="!isExternal(e) && e.sessionStatus !== '1'"
@@ -427,6 +465,9 @@ onMounted(async () => {
 
     <!-- FP5 批量排课向导（复用，仅 import） -->
     <BatchScheduleWizard v-model:visible="wizardVisible" @submitted="reloadAll" />
+
+    <!-- PRD-015 修复批：今日课程「结算这节课」→ 与场次表/详情抽屉同一结算弹窗 -->
+    <SettleDialog v-model:visible="settleVisible" :rows="settleRows" @settled="onSettled" />
   </div>
 </template>
 
