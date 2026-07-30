@@ -1,0 +1,849 @@
+/**
+ * PRD-015 批5 · 飞书教务速办 H5（/m/**）设计层。
+ *
+ * 交互正本 = codeplace-B/prd/PRD-015/artifacts/设计稿/飞书移动端-教务速办-demo.html（v5），
+ * 视觉按 §11「视觉允许实现期贴 book-ui 规范微调」把 brand 对齐 book-ui 教育青 --bk-teal #0F766E。
+ *
+ * 🔴 全部选择器锁在 .m-app 作用域内（照 views/variant/variant-theme.css 的 .variant-page 先例），
+ *    本文件由 MobileLayout.vue 显式 import，只随 /m/ 懒加载 chunk 进来，绝不污染桌面端页面。
+ * 🔴 单一浅色主题：book-ui 无暗色体系，Element Plus 弹窗（MessageBox/Message）恒浅色，
+ *    此处不做 prefers-color-scheme 分支，避免半套暗色与 EP 组件撞脸。
+ * 🔴 移动版式：内容宽 430px 上限居中；所有横向溢出内容自带 overflow-x 容器，body 不横滚（V24）。
+ */
+
+.m-app {
+  --m-bg: #f2f6f4;
+  --m-card: #ffffff;
+  --m-ink: #1d2a26;
+  --m-ink2: #5e6e68;
+  --m-ink3: #8ca09a;
+  --m-line: #e2eae6;
+  --m-brand: #0f766e;
+  --m-brand-deep: #0b5d56;
+  --m-on-brand: #ffffff;
+  --m-brand-soft: #e6f3f1;
+  --m-warn: #a96f14;
+  --m-warn-soft: #f9f1dd;
+  --m-danger: #c2453a;
+  --m-danger-soft: #f9e9e7;
+  --m-shadow: 0 1px 3px rgba(29, 42, 38, 0.08);
+  --m-yellow: #f5c64a;
+  --m-yellow-ink: #4a3a08;
+
+  max-width: 430px;
+  margin: 0 auto;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--m-bg);
+  color: var(--m-ink);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+@media (min-width: 520px) {
+  .m-app {
+    border-left: 1px solid var(--m-line);
+    border-right: 1px solid var(--m-line);
+  }
+}
+
+.m-app button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+.m-app button:focus-visible,
+.m-app [tabindex]:focus-visible {
+  outline: 2px solid var(--m-brand);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* ── 壳：顶栏 / 内容区 / 底部 tabbar ─────────────────────────── */
+.m-app .m-appbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--m-card);
+  border-bottom: 1px solid var(--m-line);
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.m-app .m-appbar .t {
+  font-size: 16px;
+  font-weight: 600;
+}
+.m-app .m-envchip {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--m-brand);
+  background: var(--m-brand-soft);
+  padding: 2px 8px;
+  border-radius: 99px;
+  letter-spacing: 0.04em;
+}
+
+.m-app .m-main {
+  flex: 1;
+  padding: 14px 14px 96px;
+}
+
+.m-app .m-tabbar {
+  position: fixed;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(430px, 100%);
+  z-index: 20;
+  background: var(--m-card);
+  border-top: 1px solid var(--m-line);
+  display: flex;
+}
+.m-app .m-tabbar button {
+  flex: 1;
+  padding: 9px 0 12px;
+  font-size: 12px;
+  color: var(--m-ink3);
+  position: relative;
+}
+.m-app .m-tabbar button .ic {
+  display: block;
+  font-size: 19px;
+  line-height: 1.2;
+}
+.m-app .m-tabbar button.on {
+  color: var(--m-brand);
+  font-weight: 600;
+}
+.m-app .m-tabbar .badge {
+  position: absolute;
+  top: 4px;
+  left: calc(50% + 10px);
+  background: var(--m-danger);
+  color: #fff;
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 99px;
+}
+
+/* ── 通用块 ──────────────────────────────────────────────── */
+.m-app .m-sec {
+  font-size: 12px;
+  color: var(--m-ink3);
+  letter-spacing: 0.08em;
+  margin: 18px 4px 8px;
+}
+.m-app .m-sec:first-child {
+  margin-top: 2px;
+}
+.m-app .m-card {
+  background: var(--m-card);
+  border: 1px solid var(--m-line);
+  border-radius: 12px;
+  box-shadow: var(--m-shadow);
+  padding: 12px 14px;
+  margin-bottom: 10px;
+}
+.m-app .m-hint {
+  font-size: 13px;
+  color: var(--m-ink2);
+  background: var(--m-warn-soft);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+.m-app .m-hint b {
+  color: var(--m-warn);
+}
+.m-app .m-note {
+  font-size: 12px;
+  color: var(--m-ink3);
+  margin: 6px 4px 0;
+}
+.m-app .m-empty {
+  font-size: 13px;
+  color: var(--m-ink3);
+  text-align: center;
+  padding: 28px 0;
+}
+
+.m-app .m-chip {
+  display: inline-block;
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 99px;
+  vertical-align: 2px;
+  white-space: nowrap;
+}
+.m-app .m-chip.subj,
+.m-app .m-chip.ok {
+  background: var(--m-brand-soft);
+  color: var(--m-brand);
+}
+.m-app .m-chip.rev {
+  background: var(--m-danger-soft);
+  color: var(--m-danger);
+}
+.m-app .m-chip.shell,
+.m-app .m-chip.warn {
+  background: var(--m-warn-soft);
+  color: var(--m-warn);
+}
+.m-app .m-chip.plain {
+  background: var(--m-bg);
+  color: var(--m-ink3);
+  border: 1px solid var(--m-line);
+}
+
+.m-app .m-btn {
+  border-radius: 10px;
+  padding: 10px 16px;
+  font-size: 15px;
+  font-weight: 600;
+  text-align: center;
+}
+.m-app .m-btn.pri {
+  background: var(--m-brand);
+  color: var(--m-on-brand);
+  flex: 1;
+}
+.m-app .m-btn.pri:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.m-app .m-btn.ghost {
+  border: 1px solid var(--m-line);
+  background: var(--m-card);
+  font-weight: 500;
+  font-size: 13px;
+  padding: 8px 12px;
+}
+.m-app .m-btn.ghost:disabled {
+  color: var(--m-ink3);
+  cursor: not-allowed;
+}
+
+.m-app .m-field {
+  margin-bottom: 10px;
+}
+.m-app .m-field label {
+  display: block;
+  font-size: 12px;
+  color: var(--m-ink2);
+  margin-bottom: 4px;
+}
+.m-app .m-field input {
+  width: 100%;
+  border: 1px solid var(--m-line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+  background: var(--m-bg);
+  color: var(--m-ink);
+}
+
+/* ── 弹层（mask + 底部 sheet）────────────────────────────── */
+.m-app .m-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 21, 0.45);
+  z-index: 30;
+}
+.m-app .m-sheet {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 0;
+  width: min(430px, 100%);
+  z-index: 31;
+  background: var(--m-card);
+  border-radius: 16px 16px 0 0;
+  padding: 16px 16px 20px;
+  max-height: 86dvh;
+  overflow-y: auto;
+}
+.m-app .m-sheet h3 {
+  font-size: 16px;
+  margin-bottom: 4px;
+}
+.m-app .m-sheet .sub {
+  font-size: 12px;
+  color: var(--m-ink3);
+  margin-bottom: 12px;
+}
+.m-app .m-sheet .acts {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.m-app .m-seg {
+  display: inline-flex;
+  border: 1px solid var(--m-line);
+  border-radius: 9px;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+.m-app .m-seg button {
+  padding: 6px 16px;
+  font-size: 13px;
+  background: var(--m-card);
+}
+.m-app .m-seg button.on {
+  background: var(--m-brand);
+  color: var(--m-on-brand);
+  font-weight: 600;
+}
+
+/* ── 课表：手机日历式（V20）────────────────────────────── */
+.m-app .m-calhead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.m-app .m-calhead .m {
+  font-size: 17px;
+  font-weight: 700;
+}
+.m-app .m-calhead button.nav {
+  font-size: 16px;
+  color: var(--m-ink2);
+  padding: 2px 10px;
+}
+.m-app .m-calhead .today-btn {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--m-brand);
+  border: 1px solid var(--m-brand);
+  border-radius: 99px;
+  padding: 3px 10px;
+}
+.m-app .m-cal {
+  background: var(--m-card);
+  border: 1px solid var(--m-line);
+  border-radius: 14px;
+  box-shadow: var(--m-shadow);
+  padding: 10px 8px 12px;
+  margin-bottom: 12px;
+}
+.m-app .m-calwk,
+.m-app .m-calrow {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+}
+.m-app .m-calwk span {
+  text-align: center;
+  font-size: 11px;
+  color: var(--m-ink3);
+  padding: 2px 0 6px;
+}
+.m-app .m-day {
+  position: relative;
+  text-align: center;
+  padding: 5px 0 12px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.m-app .m-day.blank {
+  cursor: default;
+}
+.m-app .m-day .n {
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+}
+.m-app .m-day.today .n {
+  background: var(--m-brand);
+  color: var(--m-on-brand);
+  font-weight: 700;
+}
+.m-app .m-day.sel {
+  background: var(--m-brand-soft);
+}
+.m-app .m-day .dots {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 3px;
+  display: flex;
+  gap: 3px;
+  justify-content: center;
+}
+.m-app .m-day .dots i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  display: block;
+}
+.m-app .m-daylist .dhead {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 4px 4px 8px;
+}
+.m-app .m-daylist .dhead .d {
+  font-size: 14px;
+  font-weight: 600;
+}
+.m-app .m-daylist .dhead .c {
+  font-size: 12px;
+  color: var(--m-ink3);
+}
+.m-app .m-slot {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 9px 0;
+  border-top: 1px dashed var(--m-line);
+  font-variant-numeric: tabular-nums;
+}
+.m-app .m-slot:first-of-type {
+  border-top: 0;
+}
+.m-app .m-slot .clr {
+  width: 4px;
+  align-self: stretch;
+  border-radius: 2px;
+  flex: none;
+}
+.m-app .m-slot .tm {
+  font-size: 13px;
+  color: var(--m-ink2);
+  width: 92px;
+  flex: none;
+}
+.m-app .m-slot .body {
+  min-width: 0;
+  flex: 1;
+}
+.m-app .m-slot .nm {
+  font-size: 14px;
+  font-weight: 600;
+}
+.m-app .m-slot .ls {
+  font-size: 12px;
+  color: var(--m-ink3);
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.m-app .m-slot .st {
+  margin-left: auto;
+  flex: none;
+}
+
+/* ── 待结算（V21）────────────────────────────────────── */
+.m-app .m-sess {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.m-app .m-sess input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+  margin-top: 4px;
+  accent-color: var(--m-brand);
+  flex: none;
+}
+.m-app .m-sess .body {
+  min-width: 0;
+}
+.m-app .m-sess .who {
+  font-size: 15px;
+  font-weight: 600;
+}
+.m-app .m-sess .meta {
+  font-size: 13px;
+  color: var(--m-ink2);
+}
+.m-app .m-sess .fee {
+  margin-left: auto;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  flex: none;
+}
+.m-app .m-sess .fee .n {
+  font-size: 15px;
+  font-weight: 600;
+}
+.m-app .m-sess .fee .u {
+  font-size: 12px;
+  color: var(--m-ink3);
+}
+.m-app .m-rowact {
+  display: flex;
+  gap: 14px;
+  margin-top: 8px;
+}
+.m-app .m-rowact button {
+  font-size: 13px;
+  color: var(--m-brand);
+}
+.m-app .m-rowact button.neg {
+  color: var(--m-danger);
+}
+.m-app .m-settlebar {
+  position: fixed;
+  bottom: 64px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(430px, 100%);
+  padding: 10px 14px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  z-index: 15;
+}
+
+.m-app .m-strow {
+  border: 1px solid var(--m-line);
+  border-radius: 10px;
+  padding: 10px;
+  margin-bottom: 8px;
+  background: var(--m-bg);
+}
+.m-app .m-strow .top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.m-app .m-strow .top .fee {
+  margin-left: auto;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.m-app .m-strow .ctl {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  align-items: center;
+}
+.m-app .m-strow .ctl label {
+  font-size: 12px;
+  color: var(--m-ink2);
+  flex: none;
+}
+.m-app .m-strow .ctl input.hrs {
+  width: 76px;
+  flex: none;
+  border: 1px solid var(--m-line);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font: inherit;
+  background: var(--m-card);
+  color: var(--m-ink);
+  font-variant-numeric: tabular-nums;
+}
+.m-app .m-strow .ctl input.tmn {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--m-line);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 12px;
+  background: var(--m-card);
+  color: var(--m-ink);
+}
+
+/* ── 账户 + 课时消耗台账（V22）───────────────────────── */
+.m-app .m-stu .name {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.m-app .m-acct {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-top: 1px dashed var(--m-line);
+  font-variant-numeric: tabular-nums;
+}
+.m-app .m-acct .price {
+  font-size: 12px;
+  color: var(--m-ink3);
+}
+.m-app .m-acct .nums {
+  margin-left: auto;
+  text-align: right;
+  line-height: 1.35;
+  cursor: pointer;
+}
+.m-app .m-acct .h {
+  font-size: 15px;
+  font-weight: 600;
+}
+.m-app .m-acct .h em {
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--m-ink3);
+  margin-left: 2px;
+}
+.m-app .m-acct .mm {
+  font-size: 12px;
+  color: var(--m-ink2);
+}
+.m-app .m-acct.owe .h,
+.m-app .m-acct.owe .mm {
+  color: var(--m-danger);
+}
+.m-app .m-acct .mini {
+  font-size: 12px;
+  color: var(--m-brand);
+  padding: 4px 2px 4px 10px;
+  flex: none;
+}
+
+.m-app .m-lrow {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 9px 6px;
+  border-top: 1px dashed var(--m-line);
+  font-variant-numeric: tabular-nums;
+}
+.m-app .m-lrow:first-child {
+  border-top: 0;
+}
+.m-app .m-lrow .ld {
+  width: 88px;
+  flex: none;
+  line-height: 1.3;
+}
+.m-app .m-lrow .ld .dd {
+  font-size: 13px;
+  font-weight: 600;
+}
+.m-app .m-lrow .ld .tt {
+  font-size: 11px;
+  color: var(--m-ink3);
+}
+.m-app .m-lrow .lc {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--m-ink2);
+  overflow-wrap: anywhere;
+}
+.m-app .m-lrow .ln {
+  text-align: right;
+  line-height: 1.3;
+  white-space: nowrap;
+  flex: none;
+}
+.m-app .m-lrow .ln .delta {
+  font-size: 13px;
+  font-weight: 600;
+}
+.m-app .m-lrow .ln .after {
+  font-size: 11px;
+  color: var(--m-ink3);
+}
+.m-app .m-lrow.recharge {
+  background: var(--m-brand-soft);
+  border-radius: 10px;
+  border-top: 0;
+  margin-top: 6px;
+}
+.m-app .m-lrow.recharge .delta,
+.m-app .m-lrow.recharge .lc {
+  color: var(--m-brand);
+  font-weight: 600;
+}
+.m-app .m-lrow.reverse {
+  background: var(--m-danger-soft);
+  border-radius: 10px;
+  border-top: 0;
+  margin-top: 6px;
+}
+.m-app .m-lrow.reverse .delta,
+.m-app .m-lrow.reverse .lc {
+  color: var(--m-danger);
+}
+
+/* ── 反馈（V23）─────────────────────────────────────── */
+.m-app .m-chips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.m-app .m-chips .lab {
+  font-size: 12px;
+  color: var(--m-ink3);
+  align-self: center;
+}
+.m-app .m-stuchip {
+  font-size: 13px;
+  padding: 6px 14px;
+  border-radius: 99px;
+  border: 1px solid var(--m-line);
+  background: var(--m-card);
+}
+.m-app .m-stuchip.today {
+  border-color: var(--m-brand);
+  color: var(--m-brand);
+}
+.m-app .m-stuchip.on {
+  background: var(--m-brand);
+  border-color: var(--m-brand);
+  color: var(--m-on-brand);
+  font-weight: 600;
+}
+.m-app .m-fb .ttl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.m-app .m-seqbadge {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: var(--m-brand);
+  color: var(--m-on-brand);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 14px;
+  flex: none;
+}
+.m-app .m-fb.shellcard .m-seqbadge {
+  background: var(--m-warn);
+}
+.m-app .m-fb .ttl .t {
+  font-size: 14px;
+  font-weight: 600;
+}
+.m-app .m-fb .ttl .d {
+  font-size: 12px;
+  color: var(--m-ink3);
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+.m-app .m-fb .pre {
+  font-size: 12px;
+  color: var(--m-ink2);
+  margin: 6px 0 0 34px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.m-app .m-fbrow {
+  border: 1px solid var(--m-line);
+  border-radius: 10px;
+  padding: 10px;
+  margin-bottom: 8px;
+  background: var(--m-bg);
+}
+.m-app .m-fbrow .no {
+  font-size: 11px;
+  color: var(--m-ink3);
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+}
+.m-app .m-fbrow .no button {
+  margin-left: auto;
+  color: var(--m-danger);
+  font-size: 11px;
+}
+.m-app .m-fbrow input {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px dashed var(--m-line);
+  background: none;
+  padding: 3px 2px;
+  font-size: 13px;
+  color: var(--m-ink);
+  margin-bottom: 4px;
+}
+
+/* ── 导出预览（PNG 出图面，恒浅色）───────────────────── */
+.m-app .m-png {
+  background: #fff;
+  border: 1px solid var(--m-line);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 10px;
+  text-align: center;
+}
+.m-app .m-png img {
+  max-width: 100%;
+  display: block;
+  margin: 0 auto;
+}
+.m-app .m-png .loading {
+  padding: 28px;
+  font-size: 13px;
+  color: var(--m-ink3);
+}
+
+/* ── 登录门（V25）───────────────────────────────────── */
+.m-app .m-login {
+  min-height: 100dvh;
+  background: var(--m-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.m-app .m-login .box {
+  width: min(360px, 100%);
+  background: var(--m-card);
+  border: 1px solid var(--m-line);
+  border-radius: 16px;
+  box-shadow: var(--m-shadow);
+  padding: 26px 22px;
+}
+.m-app .m-login h2 {
+  font-size: 18px;
+  margin-bottom: 2px;
+}
+.m-app .m-login .sub2 {
+  font-size: 12px;
+  color: var(--m-ink3);
+  margin-bottom: 16px;
+}
+.m-app .m-login .or {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--m-ink3);
+  font-size: 11px;
+  margin: 14px 0;
+}
+.m-app .m-login .or::before,
+.m-app .m-login .or::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--m-line);
+}
+.m-app .m-login .tip {
+  font-size: 11px;
+  color: var(--m-ink3);
+  margin-top: 6px;
+  text-align: center;
+}
