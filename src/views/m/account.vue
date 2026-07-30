@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * PRD-015 批5 · /m/account 课时账户（V22 / V26）+ bug 批 BUG-3/B「/m/ 全部放开」。
+ * PRD-015 · /m/account 课时账户（V22 / V26）+ bug 批 BUG-3/B「/m/ 全部放开」—— **Vant 4 版**。
  *
  * D2/D3：学生 × 学科各一账户 —— 学生分卡、学科分行（单价 / 剩余课时 / 剩余金额），
  *        余额可为负（欠费）→ 红显不拦截。
@@ -11,12 +11,19 @@
  *
  * 🔴 BUG-3/B 写操作全套上手机：开户 / 充值 / 调整 / 改单价 / 停用启用，
  *    语义与校验<b>照搬桌面 AccountEntryDialog</b>（同一套 api：upsertAccount + addAccountFlow +
- *    setAccountStatus），只把壳换成 MSheet 底部弹层——两端口径必须一致，否则同一笔钱两处算法不同。
+ *    setAccountStatus），只把壳换成底部弹层——两端口径必须一致，否则同一笔钱两处算法不同。
  * 🔴 只发 '1' 充值 / '4' 调整两种手工流水；'2' 扣课 / '3' 冲正由结算链服务端产生，前端无入口。
  * 🔴 删户不上移动端：硬删只对零流水账户放行，误触代价高，留在电脑端学生卡做。
+ *
+ * 🔴 2026-07-31 Vant 化（**只换皮不换骨**）：ElMessage/ElMessageBox → showToast/showConfirmDialog；
+ *    原生 <select> → van-picker 底部滚轮（iOS 上原生 select 在 popup 里会抢滚动）；
+ *    裸 input → van-field。load / trulyEmpty / failedCount 分级、submitEntry 的四态校验、
+ *    「余额只能经流水产生」的开户+首充两步 —— 逻辑一行未动。
  */
 import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { showConfirmDialog, showFailToast, showSuccessToast, showToast } from 'vant'
+import 'vant/es/toast/style'
+import 'vant/es/dialog/style'
 import {
   addAccountFlow,
   exportLedgerPng,
@@ -140,7 +147,7 @@ async function openLedger(stu: StudentAccounts, a: TuitionAccountVO) {
 }
 
 // ── 写操作四态（开户 / 改单价 / 充值 / 调整）────────────────────
-// 一个 MSheet 壳吃四态，字段按 mode 显隐——与桌面 AccountEntryDialog 一一对应。
+// 一个弹层壳吃四态，字段按 mode 显隐——与桌面 AccountEntryDialog 一一对应。
 type EntryMode = 'open' | 'price' | 'recharge' | 'adjust'
 
 const entryOpen = ref(false)
@@ -236,16 +243,16 @@ async function submitEntry() {
     const studentId = entryForm.studentId
     const subject = mode === 'price' ? (acc?.subject ?? '') : entryForm.subject
     if (!studentId) {
-      ElMessage.warning('请选择学生')
+      showToast('请选择学生')
       return
     }
     if (!subject) {
-      ElMessage.warning('请选择学科')
+      showToast('请选择学科')
       return
     }
     const price = num2(entryForm.price)
     if (price < 0) {
-      ElMessage.warning('课时单价不能为负')
+      showToast('课时单价不能为负')
       return
     }
     entrySaving.value = true
@@ -263,9 +270,9 @@ async function submitEntry() {
             note: entryForm.note.trim() || '开户初始',
           })
         }
-        ElMessage.success('账户已开通')
+        showSuccessToast('账户已开通')
       } else {
-        ElMessage.success('单价已更新')
+        showSuccessToast('单价已更新')
       }
     } catch {
       return // 拦截器已提示，弹层保持打开好让老师改了重试
@@ -277,11 +284,11 @@ async function submitEntry() {
     const hours = num2(entryForm.hours)
     const amount = num2(entryForm.amount)
     if (!hours && !amount) {
-      ElMessage.warning('课时与金额不能同时为 0')
+      showToast('课时与金额不能同时为 0')
       return
     }
     if (mode === 'recharge' && (hours < 0 || amount < 0)) {
-      ElMessage.warning('充值填正数；要扣回请用「调整」')
+      showToast('充值填正数；要扣回请用「调整」')
       return
     }
     entrySaving.value = true
@@ -292,7 +299,7 @@ async function submitEntry() {
         amountDelta: amount,
         ...(entryForm.note.trim() ? { note: entryForm.note.trim() } : {}),
       })
-      ElMessage.success(mode === 'recharge' ? '充值已记入' : '调整已记入')
+      showSuccessToast(mode === 'recharge' ? '充值已记入' : '调整已记入')
     } catch {
       return
     } finally {
@@ -306,6 +313,33 @@ async function submitEntry() {
   if (ledgerOpen.value && curAccount.value) await loadLedgerRows(curAccount.value.id)
 }
 
+// ── 学生 / 学科选择器（van-picker 底部滚轮）───────────────────
+const stuPickerOpen = ref(false)
+const subjPickerOpen = ref(false)
+
+const studentColumns = computed(() => students.value.map((s) => ({ text: s.name, value: s.id })))
+const subjectColumns = computed(() =>
+  subjectOptions.value.map((d) => ({ text: d.dictLabel, value: d.dictValue })),
+)
+
+const entryStudentName = computed(
+  () => students.value.find((s) => s.id === entryForm.studentId)?.name || '',
+)
+
+function onPickStudent({ selectedOptions }: { selectedOptions: { value?: string | number }[] }) {
+  const v = selectedOptions[0]?.value
+  entryForm.studentId = v == null ? '' : String(v)
+  // 换学生 → 已开学科集合变了，之前选的学科可能已不在候选里，清掉重选
+  entryForm.subject = ''
+  stuPickerOpen.value = false
+}
+
+function onPickSubject({ selectedOptions }: { selectedOptions: { value?: string | number }[] }) {
+  const v = selectedOptions[0]?.value
+  entryForm.subject = v == null ? '' : String(v)
+  subjPickerOpen.value = false
+}
+
 // ── 停用 / 启用 ────────────────────────────────────────────────
 const acting = ref('')
 
@@ -313,17 +347,20 @@ async function toggleStatus(stu: StudentAccounts, a: TuitionAccountVO) {
   const disable = a.status !== '1'
   const subj = subjectLabel(a.subject)
   if (disable) {
-    const ok = await ElMessageBox.confirm(
-      `停用后「${subj}」不再出现在建计划的学科里，这科的课也无法结算。余额和记录都保留，随时可以再启用。`,
-      `停用 ${stu.name} 的${subj}账户`,
-      { type: 'warning', confirmButtonText: '停用', cancelButtonText: '取消' },
-    ).catch(() => false)
+    const ok = await showConfirmDialog({
+      title: `停用 ${stu.name} 的${subj}账户`,
+      message: `停用后「${subj}」不再出现在建计划的学科里，这科的课也无法结算。余额和记录都保留，随时可以再启用。`,
+      confirmButtonText: '停用',
+      cancelButtonText: '取消',
+    })
+      .then(() => true)
+      .catch(() => false)
     if (!ok) return
   }
   acting.value = a.id
   try {
     await setAccountStatus(a.id, disable ? '1' : '0')
-    ElMessage.success(disable ? '已停用' : '已启用')
+    showSuccessToast(disable ? '已停用' : '已启用')
     await load()
   } catch {
     // 拦截器已提示
@@ -356,7 +393,7 @@ async function buildLedgerPng(): Promise<boolean> {
     expUrl.value = URL.createObjectURL(blob)
     return true
   } catch {
-    ElMessage.error('流水单生成失败')
+    showFailToast('流水单生成失败')
     return false
   } finally {
     expLoading.value = false
@@ -383,7 +420,7 @@ function downloadLedgerPng() {
 async function sendLedgerToBot() {
   const ok = expUrl.value ? true : await buildLedgerPng()
   if (!ok) return
-  ElMessage.success('已生成，bot 推送上线段接线')
+  showSuccessToast('已生成，bot 推送上线段接线')
 }
 
 onMounted(load)
@@ -391,54 +428,104 @@ onMounted(load)
 
 <template>
   <section>
-    <div class="m-sechead">
-      <span class="m-sec">学生 × 学科 账户 · 点「记录」看消耗台账</span>
-      <button class="m-btn ghost" :disabled="loading || loadFailed" @click="openCreate()">＋ 开户</button>
-    </div>
+    <van-cell-group inset>
+      <van-cell title="学生 × 学科 账户" label="点「记录」看消耗台账">
+        <template #value>
+          <van-button
+            size="small"
+            type="primary"
+            plain
+            icon="plus"
+            :disabled="loading || loadFailed"
+            @click="openCreate()"
+          >
+            开户
+          </van-button>
+        </template>
+      </van-cell>
+    </van-cell-group>
 
-    <div v-if="loading" class="m-empty">加载中…</div>
+    <van-loading v-if="loading" class="m-note" size="18">加载中…</van-loading>
 
     <!-- 🔴 BUG-1：加载失败必须现形，绝不伪装成「没开户」 -->
-    <div v-else-if="loadFailed" class="m-failbar">
-      <span>账户加载失败——这是接口/网络问题，不代表没有开户。</span>
-      <button class="m-btn ghost" @click="load">重试</button>
-    </div>
+    <van-notice-bar
+      v-else-if="loadFailed"
+      type="danger"
+      wrapable
+      :scrollable="false"
+      left-icon="warning-o"
+    >
+      账户加载失败——这是接口/网络问题，不代表没有开户。
+      <template #right-icon>
+        <van-button size="mini" type="danger" plain @click="load">重试</van-button>
+      </template>
+    </van-notice-bar>
     <template v-else>
-      <div v-if="failedCount" class="m-failbar">
-        <span>{{ failedCount }} 名学生的账户加载失败，下面的清单不完整。</span>
-        <button class="m-btn ghost" @click="load">重试</button>
-      </div>
+      <van-notice-bar
+        v-if="failedCount"
+        type="danger"
+        wrapable
+        :scrollable="false"
+        left-icon="warning-o"
+      >
+        {{ failedCount }} 名学生的账户加载失败，下面的清单不完整。
+        <template #right-icon>
+          <van-button size="mini" type="danger" plain @click="load">重试</van-button>
+        </template>
+      </van-notice-bar>
       <!-- BUG-3/B：空态不再指路电脑端，右上角就能开户 -->
-      <div v-if="trulyEmpty" class="m-empty">还没有账户 —— 点右上角开户</div>
+      <van-empty v-if="trulyEmpty" image="search" description="还没有账户">
+        <van-button round type="primary" icon="plus" @click="openCreate()">开通第一个账户</van-button>
+      </van-empty>
     </template>
 
-    <div v-for="g in groups" :key="g.id" class="m-card m-stu">
-      <div class="stuhead">
-        <div class="name">{{ g.name }}</div>
-        <button class="mini" @click="openCreate(g)">＋ 开新科</button>
-      </div>
-      <template v-for="a in g.accounts" :key="a.id">
-        <div class="m-acct" :class="{ owe: isOwe(a), off: a.status === '1' }">
-          <span class="m-chip subj">{{ subjectLabel(a.subject) }}</span>
-          <span v-if="a.status === '1'" class="m-chip warn">已停用</span>
-          <span class="price">单价 {{ money(a.lessonPrice) }}/课时</span>
-          <div class="nums" role="button" tabindex="0" @click="openLedger(g, a)" @keyup.enter="openLedger(g, a)">
-            <div class="h">{{ fmtHours(a.hoursRemain) }}<em>课时</em></div>
-            <div class="mm">{{ money(a.amountRemain) }}<template v-if="isOwe(a)"> · 欠费</template></div>
+    <van-cell-group v-for="g in groups" :key="g.id" inset>
+      <van-cell :title="g.name" title-class="m-rowtitle">
+        <template #value>
+          <van-button size="mini" type="primary" plain icon="plus" @click="openCreate(g)">
+            开新科
+          </van-button>
+        </template>
+      </van-cell>
+
+      <van-cell
+        v-for="a in g.accounts"
+        :key="a.id"
+        :class="{ 'm-muted': a.status === '1' }"
+        clickable
+        @click="openLedger(g, a)"
+      >
+        <template #title>
+          <span class="m-rowtitle">
+            <van-tag type="primary" plain>{{ subjectLabel(a.subject) }}</van-tag>
+            <van-tag v-if="a.status === '1'" type="warning">已停用</van-tag>
+            <span class="m-note" style="margin: 0">单价 {{ money(a.lessonPrice) }}/课时</span>
+          </span>
+        </template>
+        <template #value>
+          <div class="m-num" :class="{ 'm-owe': isOwe(a) }">
+            <b>{{ fmtHours(a.hoursRemain) }}</b> 课时
           </div>
-          <button class="mini" @click="openLedger(g, a)">记录</button>
-          <button class="mini" @click="openEntry('recharge', g, a)">充值</button>
-        </div>
-        <!-- 写操作第二行（BUG-3/B）：一行塞不下六个按钮，次要动作下沉一行 -->
-        <div class="m-rowact acctmore">
-          <button @click="openEntry('adjust', g, a)">调整</button>
-          <button @click="openEntry('price', g, a)">改单价</button>
-          <button :disabled="acting === a.id" @click="toggleStatus(g, a)">
-            {{ a.status === '1' ? '启用' : '停用' }}
-          </button>
-        </div>
-      </template>
-    </div>
+          <div class="m-num m-note" :class="{ 'm-owe': isOwe(a) }" style="margin: 0">
+            {{ money(a.amountRemain) }}<template v-if="isOwe(a)"> · 欠费</template>
+          </div>
+        </template>
+        <template #label>
+          <!-- 写操作全套上手机（BUG-3/B）：轻按即达，不再指路电脑端 -->
+          <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px">
+            <van-button size="mini" @click.stop="openLedger(g, a)">记录</van-button>
+            <van-button size="mini" type="primary" @click.stop="openEntry('recharge', g, a)">
+              充值
+            </van-button>
+            <van-button size="mini" @click.stop="openEntry('adjust', g, a)">调整</van-button>
+            <van-button size="mini" @click.stop="openEntry('price', g, a)">改单价</van-button>
+            <van-button size="mini" :loading="acting === a.id" @click.stop="toggleStatus(g, a)">
+              {{ a.status === '1' ? '启用' : '停用' }}
+            </van-button>
+          </div>
+        </template>
+      </van-cell>
+    </van-cell-group>
 
     <!-- 课时消耗台账 -->
     <MSheet
@@ -446,8 +533,8 @@ onMounted(load)
       :title="ledgerTitle"
       sub="日期 · 上课时间 · 内容 · 消耗 · 剩余——充值(重置)与冲正同列展示；消耗按实扣课时（默认 1 场=1 课时）"
     >
-      <div v-if="ledgerLoading" class="m-empty">加载中…</div>
-      <div v-else-if="!ledgerRows.length" class="m-empty">暂无记录</div>
+      <van-loading v-if="ledgerLoading" class="m-note" size="18">加载中…</van-loading>
+      <van-empty v-else-if="!ledgerRows.length" image="search" description="暂无记录" />
       <template v-else>
         <div v-for="(f, i) in ledgerRows" :key="i" class="m-lrow" :class="rowClass(f.flowType)">
           <div class="ld">
@@ -467,61 +554,95 @@ onMounted(load)
       </template>
 
       <template #acts>
-        <button class="m-btn ghost" @click="ledgerOpen = false">关闭</button>
-        <button class="m-btn pri" :disabled="!ledgerRows.length" @click="openExport">
-          导出流水（Excel 版式）
-        </button>
+        <van-button block @click="ledgerOpen = false">关闭</van-button>
+        <van-button block type="primary" :disabled="!ledgerRows.length" @click="openExport">
+          导出流水
+        </van-button>
       </template>
     </MSheet>
 
     <!-- 开户 / 改单价 / 充值 / 调整（四态共壳，语义同桌面 AccountEntryDialog）-->
     <MSheet v-model="entryOpen" :title="entryTitle" :sub="entrySub">
-      <template v-if="entryMode === 'open'">
-        <div class="m-field">
-          <label for="m-stu">学生</label>
-          <select id="m-stu" v-model="entryForm.studentId">
-            <option v-for="s in students" :key="s.id" :value="s.id">{{ s.name }}</option>
-          </select>
-        </div>
-        <div class="m-field">
-          <label for="m-subj">学科</label>
-          <select id="m-subj" v-model="entryForm.subject">
-            <option value="">请选择</option>
-            <option v-for="d in subjectOptions" :key="d.dictValue" :value="d.dictValue">
-              {{ d.dictLabel }}
-            </option>
-          </select>
-        </div>
-      </template>
+      <van-cell-group inset>
+        <template v-if="entryMode === 'open'">
+          <van-field
+            :model-value="entryStudentName"
+            label="学生"
+            placeholder="请选择"
+            readonly
+            is-link
+            @click="stuPickerOpen = true"
+          />
+          <van-field
+            :model-value="entryForm.subject ? subjectLabel(entryForm.subject) : ''"
+            label="学科"
+            placeholder="请选择"
+            readonly
+            is-link
+            @click="subjPickerOpen = true"
+          />
+        </template>
 
-      <div v-if="entryMode === 'open' || entryMode === 'price'" class="m-field">
-        <label for="m-price">课时单价（元/课时）</label>
-        <input id="m-price" v-model="entryForm.price" type="number" step="10" inputmode="decimal" />
-      </div>
+        <van-field
+          v-if="entryMode === 'open' || entryMode === 'price'"
+          v-model="entryForm.price"
+          label="课时单价"
+          type="number"
+          inputmode="decimal"
+          placeholder="元 / 课时"
+        />
 
-      <template v-if="entryMode !== 'price'">
-        <div class="m-field">
-          <label for="m-hrs">{{ entryMode === 'open' ? '初始课时（可留空）' : '课时数' }}</label>
-          <input id="m-hrs" v-model="entryForm.hours" type="number" step="0.5" inputmode="decimal" />
-        </div>
-        <div class="m-field">
-          <label for="m-amt">{{ entryMode === 'open' ? '初始金额（可留空）' : '金额（元）' }}</label>
-          <input id="m-amt" v-model="entryForm.amount" type="number" step="0.01" inputmode="decimal" />
-        </div>
-        <p v-if="suggestAmount" class="m-note">{{ suggestAmount }}</p>
-        <div class="m-field">
-          <label for="m-note">备注</label>
-          <input id="m-note" v-model="entryForm.note" placeholder="如：暑期第二期 / 补记 7-28 少上的一节" />
-        </div>
-      </template>
+        <template v-if="entryMode !== 'price'">
+          <van-field
+            v-model="entryForm.hours"
+            :label="entryMode === 'open' ? '初始课时' : '课时数'"
+            type="number"
+            inputmode="decimal"
+            :placeholder="entryMode === 'open' ? '可留空' : '如 10'"
+          />
+          <van-field
+            v-model="entryForm.amount"
+            :label="entryMode === 'open' ? '初始金额' : '金额'"
+            type="number"
+            inputmode="decimal"
+            :placeholder="entryMode === 'open' ? '可留空' : '元'"
+          />
+          <van-field
+            v-model="entryForm.note"
+            label="备注"
+            placeholder="如：暑期第二期 / 补记 7-28 少上的一节"
+          />
+        </template>
+      </van-cell-group>
+      <p v-if="suggestAmount" class="m-note" style="margin-left: 20px">{{ suggestAmount }}</p>
 
       <template #acts>
-        <button class="m-btn ghost" @click="entryOpen = false">取消</button>
-        <button class="m-btn pri" :disabled="entrySaving" @click="submitEntry">
-          {{ entrySaving ? '保存中…' : '保存' }}
-        </button>
+        <van-button block @click="entryOpen = false">取消</van-button>
+        <van-button block type="primary" :loading="entrySaving" loading-text="保存中…" @click="submitEntry">
+          保存
+        </van-button>
       </template>
     </MSheet>
+
+    <!-- 学生选择 -->
+    <van-popup v-model:show="stuPickerOpen" position="bottom" round>
+      <van-picker
+        title="选择学生"
+        :columns="studentColumns"
+        @confirm="onPickStudent"
+        @cancel="stuPickerOpen = false"
+      />
+    </van-popup>
+
+    <!-- 学科选择（已开过的学科不在候选里，那种去行内点「启用」） -->
+    <van-popup v-model:show="subjPickerOpen" position="bottom" round>
+      <van-picker
+        title="选择学科"
+        :columns="subjectColumns"
+        @confirm="onPickSubject"
+        @cancel="subjPickerOpen = false"
+      />
+    </van-popup>
 
     <!-- 流水单导出预览 -->
     <MSheet
@@ -535,11 +656,11 @@ onMounted(load)
         <div v-else class="loading">未能生成流水单</div>
       </div>
       <template #acts>
-        <button class="m-btn ghost" @click="expOpen = false">关闭</button>
-        <button class="m-btn ghost" :disabled="!expUrl" @click="downloadLedgerPng">下载图片</button>
-        <button class="m-btn pri" :disabled="expLoading" @click="sendLedgerToBot">
-          机器人发到我的飞书
-        </button>
+        <van-button block @click="expOpen = false">关闭</van-button>
+        <van-button block :disabled="!expUrl" @click="downloadLedgerPng">下载图片</van-button>
+        <van-button block type="primary" :loading="expLoading" @click="sendLedgerToBot">
+          发到飞书
+        </van-button>
       </template>
     </MSheet>
   </section>
