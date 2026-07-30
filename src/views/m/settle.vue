@@ -126,9 +126,26 @@ async function confirmSettle() {
     const res = await settleSessions({ items, genFeedback: genFeedback.value })
     sheetOpen.value = false
     const n = res?.settled ?? items.length
-    ElMessage.success(
-      genFeedback.value ? `已结算 ${n} 场：扣费完成，反馈壳已生成` : `已结算 ${n} 场：扣费完成`,
-    )
+    const shells = res?.feedbackSheetIds?.length || 0
+    const skipped = res?.skipped || []
+    // 🔴 修复批：原来无条件说「反馈壳已生成」——散课/未绑计划的场次 BE 不建壳（SettlementService
+    //    createFeedbackShell 只在 plan_id 非空时建），老师会去反馈页白等。按实际返回条数说话，
+    //    与桌面端 SettleDialog 同口径。
+    if (n > 0) {
+      let msg = `已结算 ${n} 场：扣费完成`
+      if (genFeedback.value) {
+        msg += shells > 0 ? `，生成 ${shells} 张反馈壳` : '；散课/未绑计划的场次不生成反馈壳'
+      }
+      ElMessage.success(msg)
+    }
+    // 全部被跳过（未开户/已结算幂等/班课…）时不能报"成功"，把 BE 的 reason 原样给老师
+    if (skipped.length) {
+      ElMessage({
+        type: 'warning',
+        message: `${skipped.length} 场跳过：${skipped.map((s) => s.reason).join('；')}`,
+        duration: 6000,
+      })
+    }
     await reloadAll()
   } catch {
     // 拦截器已提示（含重复结算的幂等业务码文案）
