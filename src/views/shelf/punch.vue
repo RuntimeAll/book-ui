@@ -29,12 +29,13 @@ import {
   previewPunchDay,
   exportPunchDay,
   exportPunchBook,
+  getPunchBookExportStatus,
   upsertPunchDay,
   submitPunchReview,
   stripModuleItemIds,
   punchModuleLabel,
   PUNCH_ISSUE_KINDS,
-  type PunchBookExportResult,
+  type PunchBookExportState,
   type PunchDayBrief,
   type PunchDayDetail,
   type PunchIssue,
@@ -482,11 +483,18 @@ async function saveEdit() {
 // ═══════════════════════════════════════════════════════════════════════════
 const exporting = ref(false)
 const exportDialogVisible = ref(false)
-const exportRunning = ref(false)
 const exportPapers = ref<PunchPaper[]>(['question', 'answer'])
-/** 整书导出结果：每种卷一份全册合并 PDF（无结果 = 还没跑 / 已重置）。 */
-const exportResult = ref<PunchBookExportResult | null>(null)
+/**
+ * 整册导出状态（BE style_meta.punchExport 持久化态镜像）：
+ * null=从未导过 / running=后台渲染中（轮询跟进）/ done=有全册链接 / failed=可重试。
+ * 🔴 换页/重开弹窗都从 BE 拉真态，不靠本地内存——异步导出的进度在服务端。
+ */
+const exportState = ref<PunchBookExportState | null>(null)
 const exportErr = ref('')
+let exportPollTimer: ReturnType<typeof setInterval> | null = null
+
+const exportRunning = computed(() => exportState.value?.status === 'running')
+const exportDone = computed(() => exportState.value?.status === 'done')
 
 async function onExportDay() {
   if (!curDay.value) return
@@ -507,46 +515,71 @@ async function onExportDay() {
   }
 }
 
-function openExportBook() {
+async function openExportBook() {
   if (!days.value.length) {
     ElMessage.warning('本书还没有内容')
     return
   }
   exportPapers.value = ['question', 'answer']
-  exportResult.value = null
   exportErr.value = ''
   exportDialogVisible.value = true
+  // 打开即拉服务端真态：上次导好的全册直接可下；后台在跑则接上轮询
+  try {
+    const res = await getPunchBookExportStatus(bookId)
+    exportState.value = res?.export ?? null
+    if (exportRunning.value) startExportPoll()
+  } catch {
+    /* http 拦截器已弹错 */
+  }
 }
 
 /**
- * 整书导出 = 一次 POST exportBook（BE 整书合并端点）→ 每种卷一份**全册合并** PDF。
- * 🔴 同步长任务（BE 逐天渲染后合并，实测 40-80s，api 层已放宽 timeout 至 5 分钟）；
- *    不再由 FE 逐天串行调 exportDay 出 N×2 个散链接。
+ * 整册导出 v2 = 异步提交 + 轮询（BE worker 后台逐天渲染合并，结果覆盖写
+ * style_meta.punchExport 持久化）。提交立即返回 running，本页每 5s 轮询到 done/failed；
+ * 中途关弹窗/换页不影响后台任务，回来重开弹窗即见结果。
  */
 async function runExportBook() {
   if (!exportPapers.value.length) {
     ElMessage.warning('请至少选一种卷')
     return
   }
-  exportRunning.value = true
   exportErr.value = ''
-  exportResult.value = null
   try {
     const res = await exportPunchBook(bookId, exportPapers.value)
-    const n = [res?.questionUrl, res?.answerUrl].filter(Boolean).length
-    if (!n) {
-      // 无链接不算成功：留在错误分支，别给个空的「已合并」假绿
-      exportErr.value = '导出未返回文件地址'
-      ElMessage.warning('导出未返回文件地址')
-      return
-    }
-    exportResult.value = res
-    ElMessage.success(`整书已导出（${res?.days ?? days.value.length} 天合并 · ${n} 份 PDF）`)
+    exportState.value = res?.export ?? { status: 'running' }
+    ElMessage.success('整册导出已开始（后台渲染约 2-5 分钟，可关闭弹窗继续审核）')
+    startExportPoll()
   } catch (e: unknown) {
-    // http 拦截器已弹错；这里再在弹窗里留一行原因，方便重试前判断
-    exportErr.value = (e as { message?: string })?.message || '整书导出失败'
-  } finally {
-    exportRunning.value = false
+    exportErr.value = (e as { message?: string })?.message || '整册导出提交失败'
+  }
+}
+
+/** 轮询整册导出状态：5s 一拍，done/failed 停；页面卸载清定时器（后台任务不受影响）。 */
+function startExportPoll() {
+  stopExportPoll()
+  exportPollTimer = setInterval(async () => {
+    try {
+      const res = await getPunchBookExportStatus(bookId)
+      const st = res?.export ?? null
+      exportState.value = st
+      if (!st || st.status === 'done' || st.status === 'failed') {
+        stopExportPoll()
+        if (st?.status === 'done') {
+          ElMessage.success(`整册已合并（${st.days ?? days.value.length} 天）——弹窗内可下载`)
+        } else if (st?.status === 'failed') {
+          exportErr.value = st.error || '整册导出失败'
+        }
+      }
+    } catch {
+      /* 单拍失败不停轮询（网络抖动）；http 拦截器已弹错 */
+    }
+  }, 5_000)
+}
+
+function stopExportPoll() {
+  if (exportPollTimer != null) {
+    clearInterval(exportPollTimer)
+    exportPollTimer = null
   }
 }
 
@@ -585,6 +618,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   ro?.disconnect()
   ro = null
+  stopExportPoll()   // 只清本页定时器；后台导出任务照跑，回来重开弹窗即见结果
 })
 </script>
 
@@ -829,7 +863,7 @@ onBeforeUnmount(() => {
       </template>
     </el-drawer>
 
-    <!-- ══ 导出本书（FP10 整书合并：每种卷一份全册 PDF）══ -->
+    <!-- ══ 导出本书（FP10 整册异步：后台渲染合并，结果持久化可续看/重导覆盖）══ -->
     <el-dialog v-model="exportDialogVisible" title="导出本书" width="520px" :close-on-click-modal="false">
       <div class="exp-head">
         <span>卷种</span>
@@ -839,36 +873,41 @@ onBeforeUnmount(() => {
         </el-checkbox-group>
       </div>
       <div class="exp-body">
-        <!-- 跑中：整书合并是同步长任务，明说等多久，别让人以为卡死 -->
+        <!-- 跑中：异步后台任务——明说可以关窗，回来重开即见结果 -->
         <div v-if="exportRunning" class="exp-wait">
-          全册 {{ days.length }} 天正在合并渲染，约需 1 分钟，请勿关闭本窗口…
+          全册 {{ exportState?.days ?? days.length }} 天正在后台合并渲染（约 2-5 分钟）…<br />
+          可关闭本窗口继续审核，完成后重开「导出本书」即可下载。
         </div>
-        <!-- 出结果：每种卷一份全册合并 PDF -->
-        <template v-else-if="exportResult">
-          <div class="exp-done">✓ 全册已合并（{{ exportResult.days ?? days.length }} 天）</div>
+        <!-- 出结果：每种卷一份全册合并 PDF（持久化——上次导好的直接可下）-->
+        <template v-else-if="exportDone">
+          <div class="exp-done">
+            ✓ 全册已合并（{{ exportState?.days ?? days.length }} 天）
+            <span v-if="exportState?.exportedAt" class="exp-time">{{ String(exportState.exportedAt).slice(0, 16).replace('T', ' ') }}</span>
+          </div>
           <div class="exp-files">
             <el-button
-              v-if="exportResult.questionUrl"
+              v-if="exportState?.questionUrl"
               type="primary"
               plain
-              @click="openExportFile(exportResult.questionUrl)"
+              @click="openExportFile(exportState?.questionUrl)"
             >题目全册 PDF ↗</el-button>
             <el-button
-              v-if="exportResult.answerUrl"
+              v-if="exportState?.answerUrl"
               plain
-              @click="openExportFile(exportResult.answerUrl)"
+              @click="openExportFile(exportState?.answerUrl)"
             >解析全册 PDF ↗</el-button>
           </div>
         </template>
         <div v-else-if="exportErr" class="exp-err">{{ exportErr }}</div>
         <div v-else class="hint exp-tip">
-          选好卷种后点「开始导出」：全书各天合并成一份 PDF（每种卷一份），整书合并渲染约 1 分钟。
+          选好卷种后点「开始导出」：后台把全书各天合并成一份 PDF（每种卷一份，约 2-5 分钟），
+          期间可关窗继续审核；导好的全册长期可下，重新导出会覆盖上一次。
         </div>
       </div>
       <template #footer>
-        <el-button :disabled="exportRunning" @click="exportDialogVisible = false">关闭</el-button>
-        <el-button type="primary" :loading="exportRunning" @click="runExportBook">
-          {{ exportResult ? '重新导出' : '开始导出' }}
+        <el-button @click="exportDialogVisible = false">关闭</el-button>
+        <el-button type="primary" :loading="exportRunning" :disabled="exportRunning" @click="runExportBook">
+          {{ exportRunning ? '后台导出中…' : exportDone ? '重新导出（覆盖）' : '开始导出' }}
         </el-button>
       </template>
     </el-dialog>
@@ -1365,6 +1404,12 @@ onBeforeUnmount(() => {
   text-align: center;
   padding: 30px 10px 22px;
   line-height: 1.7;
+}
+.exp-time {
+  margin-left: 8px;
+  font-weight: 400;
+  font-size: 12px;
+  color: #9ca3af;
 }
 .exp-done {
   font-size: 13px;

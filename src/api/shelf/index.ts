@@ -146,6 +146,22 @@ export function readBookNetdiskCount(b?: ShelfBookVO | null): number {
   return Number(b?.netdiskCount ?? 0) || 0
 }
 
+/** 打卡书整册导出态（style_meta.punchExport 镜像；shelf 卡片⋯菜单判「可下载/导出中」用）。 */
+export interface BookPunchExport {
+  status?: string
+  questionUrl?: string
+  answerUrl?: string
+  days?: number
+  exportedAt?: string
+  error?: string
+}
+
+/** 打卡书整册导出态兼容读：行上 styleMeta.punchExport；没有返 undefined（=从未导过）。 */
+export function readBookPunchExport(b?: ShelfBookVO | null): BookPunchExport | undefined {
+  const pe = (b?.styleMeta as { punchExport?: unknown } | null | undefined)?.punchExport
+  return pe && typeof pe === 'object' ? (pe as BookPunchExport) : undefined
+}
+
 /** PDF 直录书元信息兼容读：顶层字段优先，回落 styleMeta（BE 两处都可能落）。 */
 export function readBookPdfMeta(b?: ShelfBookVO | null): { pdfUrl: string; pdfPages: number; coverUrl: string } {
   const meta = (b?.styleMeta ?? {}) as { pdfUrl?: unknown; pdfPages?: unknown; coverUrl?: unknown }

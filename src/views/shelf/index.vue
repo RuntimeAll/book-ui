@@ -4,20 +4,23 @@
  * 讲义/练习册/专项的唯一入口：类型筛选 + 书卡片（结构统计一眼看厚度）。
  * 数据源 = /teacher/shelf/book/page（owner 过滤）；「新建书」走 createBook 建空书起步。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   pageBooks,
   createBook,
   deleteBook,
+  exportBook,
   readBookNetdiskCount,
   readBookPdfMeta,
+  readBookPunchExport,
   BOOK_TYPE_LABEL,
   type BookType,
   type BookNetdisk,
   type ShelfBookVO,
 } from '@/api/shelf'
+import { exportPunchBook, getPunchBookExportStatus } from '@/api/teacher/punch'
 import {
   useDictStore,
   DICT_EDU_SUBJECT, DICT_EDU_STAGE, DICT_EDU_GRADE, DICT_EDU_VOLUME,
@@ -274,8 +277,96 @@ function openReview(b: ShelfBookVO) {
   router.push(`/bookshelf/review/${b.id}`)
 }
 
-function onExport() {
-  ElMessage.info('导出功能由备课链（PRD-003）承载，敬请期待')
+// ── 卡片「⋯」菜单：导出接真（2026-07-30 用户点单——此前是 PRD-003 占位 toast）──
+// 三分流：打卡书=整册异步导出（BE worker + style_meta.punchExport 持久化，菜单直下）；
+//         待解析书=取 PDF 原件；其余（讲义/练习册/课本）=BE 同步整书导出后新窗打开。
+
+/** 本地触发中的打卡书整册导出（行 styleMeta 还没刷出 running 前先把菜单置灰） */
+const punchExporting = ref<Record<string, boolean>>({})
+const punchPollTimers: Record<string, ReturnType<typeof setInterval>> = {}
+
+/** 打卡书：提交整册异步导出（题目+解析双卷）→ 轮询到 done 后刷新列表，菜单出现下载项。 */
+async function onExportPunch(b: ShelfBookVO) {
+  try {
+    await exportPunchBook(b.id)
+    punchExporting.value[b.id] = true
+    ElMessage.success(`「${b.title}」整册导出已开始（后台约 2-5 分钟），完成后在「⋯」菜单下载`)
+    startPunchPoll(b.id)
+  } catch {
+    /* http 拦截器已弹错（含 running 撞并发闸的 409） */
+  }
+}
+
+function startPunchPoll(bookId: string) {
+  stopPunchPoll(bookId)
+  punchPollTimers[bookId] = setInterval(async () => {
+    try {
+      const res = await getPunchBookExportStatus(bookId)
+      const st = res?.export
+      if (!st || st.status !== 'running') {
+        stopPunchPoll(bookId)
+        punchExporting.value[bookId] = false
+        if (st?.status === 'done') ElMessage.success('整册 PDF 已导好——「⋯」菜单可下载')
+        else if (st?.status === 'failed') ElMessage.error(st.error || '整册导出失败，可重试')
+        void load()   // 刷行上 styleMeta，让下载项亮出来
+      }
+    } catch {
+      /* 单拍失败不停轮询（网络抖动） */
+    }
+  }, 5_000)
+}
+
+function stopPunchPoll(bookId: string) {
+  const t = punchPollTimers[bookId]
+  if (t != null) {
+    clearInterval(t)
+    delete punchPollTimers[bookId]
+  }
+}
+
+onUnmounted(() => {
+  for (const id of Object.keys(punchPollTimers)) stopPunchPoll(id)
+})
+
+/** 普通书：BE 同步整书导出（讲义分讲渲染/课本整页图拼 A4，大书 1-3 分钟）→ 新窗打开。 */
+const exportingBookId = ref('')
+async function onExportGeneric(b: ShelfBookVO) {
+  if (exportingBookId.value) {
+    ElMessage.info('已有整书导出在跑，请稍候')
+    return
+  }
+  exportingBookId.value = b.id
+  ElMessage.info(`正在生成「${b.title}」整书 PDF（大书约 1-3 分钟），完成后自动打开…`)
+  try {
+    const res = await exportBook(b.id)
+    if (res?.url) window.open(res.url, '_blank')
+    else ElMessage.warning('导出未返回文件地址')
+  } catch {
+    /* http 拦截器已弹错 */
+  } finally {
+    exportingBookId.value = ''
+  }
+}
+
+/** 菜单统一分发（模板里箭头函数三元套娃会失控，收进一个函数）。 */
+function onCardMenu(cmd: string, b: ShelfBookVO) {
+  const pe = readBookPunchExport(b)
+  switch (cmd) {
+    case 'del': void onDelete(b); break
+    case 'netdisk': openNetdisk(b); break
+    case 'dl-q': if (pe?.questionUrl) window.open(pe.questionUrl, '_blank'); break
+    case 'dl-a': if (pe?.answerUrl) window.open(pe.answerUrl, '_blank'); break
+    case 'export':
+      if (isPunchBook(b)) void onExportPunch(b)
+      else if (isPdfPendingBook(b)) openBook(b)   // 待解析书：导出 = 取 PDF 原件（与「打开」同源）
+      else void onExportGeneric(b)
+      break
+  }
+}
+
+/** 打卡书菜单置灰判定：本地刚触发 或 行上持久化态就是 running。 */
+function isPunchExportRunning(b: ShelfBookVO): boolean {
+  return Boolean(punchExporting.value[b.id]) || readBookPunchExport(b)?.status === 'running'
 }
 
 async function onDelete(b: ShelfBookVO) {
@@ -496,12 +587,25 @@ onMounted(() => {
                 class="review-btn"
                 @click="openReview(b)"
               >录入审核</el-button>
-              <el-dropdown trigger="click" @command="(c: string) => c === 'del' ? onDelete(b) : c === 'netdisk' ? openNetdisk(b) : c === 'export' && onExport()">
+              <el-dropdown trigger="click" @command="(c: string) => onCardMenu(c, b)">
                 <el-button size="small">⋯</el-button>
                 <template #dropdown>
                   <el-dropdown-menu>
                     <el-dropdown-item command="netdisk">网盘链接</el-dropdown-item>
-                    <el-dropdown-item command="export">导出</el-dropdown-item>
+                    <!-- 打卡书：整册异步导出（后台渲染，styleMeta 持久化）+ 导好的全册直接可下 -->
+                    <template v-if="isPunchBook(b)">
+                      <el-dropdown-item command="export" :disabled="isPunchExportRunning(b)">
+                        {{ isPunchExportRunning(b) ? '整册导出中…' : '导出整册 PDF' }}
+                      </el-dropdown-item>
+                      <el-dropdown-item v-if="readBookPunchExport(b)?.questionUrl" command="dl-q">下载题目全册</el-dropdown-item>
+                      <el-dropdown-item v-if="readBookPunchExport(b)?.answerUrl" command="dl-a">下载解析全册</el-dropdown-item>
+                    </template>
+                    <!-- 待解析书：导出 = 取 PDF 原件 -->
+                    <el-dropdown-item v-else-if="isPdfPendingBook(b)" command="export">下载 PDF 原件</el-dropdown-item>
+                    <!-- 讲义/练习册/课本：BE 整书导出（同步 1-3 分钟）后新窗打开 -->
+                    <el-dropdown-item v-else command="export" :disabled="exportingBookId === b.id">
+                      {{ exportingBookId === b.id ? '整书导出中…' : '导出整书 PDF' }}
+                    </el-dropdown-item>
                     <el-dropdown-item command="del" style="color: var(--el-color-danger)">删除书</el-dropdown-item>
                   </el-dropdown-menu>
                 </template>
