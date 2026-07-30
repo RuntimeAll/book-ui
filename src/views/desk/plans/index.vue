@@ -56,6 +56,7 @@ import {
 import PlanFormDialog from './components/PlanFormDialog.vue'
 import LessonEditDialog from './components/LessonEditDialog.vue'
 import ParentExportDialog from './components/ParentExportDialog.vue'
+import BatchExportDialog from '@/views/feedback/components/BatchExportDialog.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -548,6 +549,13 @@ function openParentExport() {
   parentExportVisible.value = true
 }
 
+// ── PRD-015 D13 按计划导出反馈（单图/长图，与「家长版课表」并列同一入口位）────
+const feedbackExportVisible = ref(false)
+function openFeedbackExport() {
+  if (!planDetail.value) return
+  feedbackExportVisible.value = true
+}
+
 // ── 展示辅助 ────────────────────────────────────────────────────────────────
 function planTermLabel(p: PlanVO): string {
   const parts = [p.termTag, p.year != null ? String(p.year) : ''].filter(Boolean)
@@ -693,6 +701,7 @@ onMounted(async () => {
           </div>
           <div class="acts">
             <el-button size="small" @click="openParentExport">家长版课表</el-button>
+            <el-button size="small" @click="openFeedbackExport">导出反馈合集</el-button>
             <el-button size="small" @click="doCopyPlan(planDetail)">复制计划</el-button>
             <el-button size="small" type="primary" @click="openNewLesson">+ 添加课次</el-button>
           </div>
@@ -827,6 +836,8 @@ onMounted(async () => {
       @saved="onLessonSaved"
     />
     <ParentExportDialog v-model="parentExportVisible" :plan="planDetail" />
+    <!-- PRD-015 D13：该计划的反馈单单图/长图导出（与反馈列表页共用同一弹窗组件） -->
+    <BatchExportDialog v-model="feedbackExportVisible" :plan="planDetail" />
 
     <!-- 绑定书籍章节弹窗 -->
     <el-dialog
