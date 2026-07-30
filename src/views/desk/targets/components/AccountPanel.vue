@@ -3,18 +3,23 @@
  * PRD-015 批2 · 学生详情「课时账户」区块（V7/V8/AC4）。
  *
  * 一科一行：学科 chip / 单价 / 剩余课时 / 剩余金额（负数=欠费红显，不拦截）
- *   + 「记录」（课时台账抽屉：手抄本五列语义，充值绿 / 冲正红）+ 「充值」「调整」。
+ *   + 「记录」（课时台账抽屉：手抄本五列语义，充值绿 / 冲正红）+「充值」「调整」
+ *   + bug 批 BUG-3/A 补齐的 CRUD：「改单价」「停用/启用」「删除」。
  * 台账抽屉内可「导出流水单」→ Excel 风格 PNG（对账/发家长；零内部词、无合计行）。
  *
  * 🔴 账户 = 学生 × 学科绑定（开户即绑定学科）——建计划的学科下拉吃的就是这里的开户结果。
+ * 🔴 停用 vs 删除：停用只是让该科退出建计划/结算，余额流水留档随时可启用；
+ *    删除是硬删，BE 只放行零流水账户（有记录一律劝停用），前端不预判、直接吃 BE 的 400 文案。
  * 🔴 班级对象无账户（班课收费模型未拍），父级不渲染本组件。
  */
 import { ref, computed, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   listAccounts,
   getAccountLedger,
   exportLedgerPng,
+  setAccountStatus,
+  deleteAccount,
   TUITION_FLOW_TYPE_LABEL,
   type TuitionAccountVO,
   type TuitionFlowType,
@@ -54,15 +59,66 @@ watch(() => props.studentId, load, { immediate: true })
 
 const openedSubjects = computed(() => accounts.value.map((a) => a.subject))
 
-// —— 录入弹窗（开通 / 充值 / 调整）——
+// —— 录入弹窗（开通 / 改单价 / 充值 / 调整）——
+type EntryMode = 'open' | 'price' | 'recharge' | 'adjust'
 const entryVisible = ref(false)
-const entryMode = ref<'open' | 'recharge' | 'adjust'>('open')
+const entryMode = ref<EntryMode>('open')
 const entryAccount = ref<TuitionAccountVO | null>(null)
 
-function openEntry(mode: 'open' | 'recharge' | 'adjust', acc?: TuitionAccountVO) {
+function openEntry(mode: EntryMode, acc?: TuitionAccountVO) {
   entryMode.value = mode
   entryAccount.value = acc ?? null
   entryVisible.value = true
+}
+
+// —— 停用 / 启用 / 删除（BUG-3/A）——
+const acting = ref('')
+
+/** 停用 = 退出建计划下拉与结算取价；启用 = 放回来。余额流水一概不动。 */
+async function toggleStatus(a: TuitionAccountVO) {
+  const disable = a.status !== '1'
+  const subj = a.subjectLabel || a.subject
+  if (disable) {
+    const ok = await ElMessageBox.confirm(
+      `停用后「${subj}」不再出现在建计划的学科里，这科的课也无法结算。余额和记录都保留，随时可以再启用。`,
+      `停用 ${subj} 账户`,
+      { type: 'warning', confirmButtonText: '停用', cancelButtonText: '取消' },
+    ).catch(() => false)
+    if (!ok) return
+  }
+  acting.value = a.id
+  try {
+    await setAccountStatus(a.id, disable ? '1' : '0')
+    ElMessage.success(disable ? '已停用' : '已启用')
+    await load()
+    emit('changed')
+  } catch {
+    // request 拦截器已弹错误 toast
+  } finally {
+    acting.value = ''
+  }
+}
+
+/** 删户：只有零流水的才删得掉（开错学科当场删），有记录 BE 返 400 劝停用。 */
+async function removeAccount(a: TuitionAccountVO) {
+  const subj = a.subjectLabel || a.subject
+  const ok = await ElMessageBox.confirm(
+    `删除「${subj}」账户。只有从没有过充值/扣课记录的账户才能删；有记录的请改用「停用」。`,
+    `删除 ${subj} 账户`,
+    { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+  ).catch(() => false)
+  if (!ok) return
+  acting.value = a.id
+  try {
+    await deleteAccount(a.id)
+    ElMessage.success('账户已删除')
+    await load()
+    emit('changed')
+  } catch {
+    // 有流水 → BE 400「请改为停用」，拦截器已把原文弹出来
+  } finally {
+    acting.value = ''
+  }
 }
 
 async function onEntrySaved() {
@@ -155,8 +211,9 @@ defineExpose({ reload: load })
     </div>
 
     <div v-if="accounts.length" class="acc-list">
-      <div v-for="a in accounts" :key="a.id" class="acc-row">
+      <div v-for="a in accounts" :key="a.id" class="acc-row" :class="{ off: a.status === '1' }">
         <span class="subj">{{ a.subjectLabel || a.subject }}</span>
+        <span v-if="a.status === '1'" class="offtag">已停用</span>
         <span class="cell">
           <i>单价</i>
           <b>{{ fmtNum(a.lessonPrice) }}</b>
@@ -175,6 +232,13 @@ defineExpose({ reload: load })
           <el-button size="small" text bg @click="openLedger(a)">记录</el-button>
           <el-button size="small" text bg type="primary" @click="openEntry('recharge', a)">充值</el-button>
           <el-button size="small" text bg @click="openEntry('adjust', a)">调整</el-button>
+          <el-button size="small" text bg @click="openEntry('price', a)">改单价</el-button>
+          <el-button size="small" text bg :loading="acting === a.id" @click="toggleStatus(a)">
+            {{ a.status === '1' ? '启用' : '停用' }}
+          </el-button>
+          <el-button size="small" text bg type="danger" :loading="acting === a.id" @click="removeAccount(a)">
+            删除
+          </el-button>
         </span>
       </div>
     </div>
@@ -268,6 +332,23 @@ defineExpose({ reload: load })
   border-radius: 10px;
   padding: 9px 14px;
   background: #fff;
+}
+/* 停用行：整行降饱和，但数字仍可读（余额还在，只是这科不参与建计划/结算） */
+.acc-row.off {
+  background: #fafcfb;
+  border-style: dashed;
+}
+.acc-row.off .subj {
+  color: #7d8f8b;
+  background: #eef1f0;
+}
+.offtag {
+  font-size: 11px;
+  color: #a96f14;
+  background: #f9f1dd;
+  border-radius: 99px;
+  padding: 1px 8px;
+  flex: none;
 }
 .subj {
   font-size: 12px;

@@ -587,9 +587,14 @@ export interface PendingSettlementVO {
   planLessonTitle: string | null
   /**
    * 结算时点账户单价（元/课时）。
-   * 🔴 null = 该生该科<b>未开户</b>——照常列出但不能结算，FE 提示先开户（BE 会 skipped）。
+   * 🔴 null = 该生该科<b>未开户或账户已停用</b>——照常列出但不能结算，FE 按 accountStatus 提示（BE 会 skipped）。
    */
   price: number | null
+  /**
+   * 账户状态（additive，bug 批 BUG-3/A）：`null` 没开户 / `'0'` 在用 / `'1'` 已停用。
+   * price=null 的两种成因靠它区分——别对已停用的账户劝人「去开户」。
+   */
+  accountStatus?: '0' | '1' | null
 }
 
 // PRD-015 结算单项（hours 缺省 = 1 课时；timeNote = 实际上课时间备注，覆盖排课起止）

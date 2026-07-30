@@ -154,3 +154,18 @@ export const getAccountLedger = (accountId: string, query: LedgerQueryParams = {
  */
 export const exportLedgerPng = (accountId: string) =>
   request.post<FileUrlVO, FileUrlVO>(`${BASE}/${accountId}/export-ledger-png`)
+
+/**
+ * 停用 / 启用账户：POST account/{id}/status（bug 批 BUG-3/A）。
+ * 停用后该学科不再出现在建计划下拉、结算取不到账户；余额与流水原样保留，随时可启用回来。
+ */
+export const setAccountStatus = (accountId: string, status: AccountStatus) =>
+  request.post<void, void>(`${BASE}/${accountId}/status`, { status })
+
+/**
+ * 删户：DELETE account/{id}（bug 批 BUG-3/A）。
+ * 🔴 只有<b>零流水</b>账户能删（开错学科当场删）；有任何一条课时记录 BE 返 400 让改用停用——
+ *    删了账户台账就与已结场次对不上账，审计线不能断。
+ */
+export const deleteAccount = (accountId: string) =>
+  request.delete<void, void>(`${BASE}/${accountId}`)

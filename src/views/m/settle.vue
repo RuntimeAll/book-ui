@@ -43,6 +43,11 @@ function settleable(p: PendingSettlementVO): boolean {
 
 const blockedCount = computed(() => pendingList.value.filter((p) => !settleable(p)).length)
 
+/** 不可结算的原因（BUG-3/A）：账户停用与从没开户是两回事，别一律劝人去开户 */
+function blockReason(p: PendingSettlementVO): string {
+  return p.accountStatus === '1' ? '该科账户已停用，先在账户页启用' : '未开通该科账户，先去账户页开户'
+}
+
 // ── 勾选态（默认全不选：钱线动作必须显式点选，防误触批量结算——补回归挂账②）──
 const checked = ref<Set<string>>(new Set())
 
@@ -235,7 +240,7 @@ onMounted(reloadAll)
       <template v-if="pendingList.length">
         有 <b>{{ pendingList.length }} 场</b>已过点未结算——勾选后一键结算：扣课时课费 + 标已上 + 生成反馈壳。
         <template v-if="blockedCount">
-          其中 <b>{{ blockedCount }} 场</b>该科还没开户，先去电脑端学生卡开户才能结算。
+          其中 <b>{{ blockedCount }} 场</b>取不到单价（没开户或账户停用），去「账户」页处理后才能结算。
         </template>
       </template>
       <template v-else-if="pendingLoading">正在查过点未结算的场次…</template>
@@ -263,13 +268,13 @@ onMounted(reloadAll)
           <div class="who">
             {{ p.targetName }}
             <span v-if="p.subject" class="m-chip subj">{{ dict.label(DICT_EDU_SUBJECT, p.subject) }}</span>
-            <span v-if="!settleable(p)" class="m-chip warn">未开户</span>
+            <span v-if="!settleable(p)" class="m-chip warn">{{ p.accountStatus === '1' ? '已停用' : '未开户' }}</span>
           </div>
           <div class="meta">
             {{ dayLabel(p.date) }} {{ hhmm(p.start) }}–{{ hhmm(p.end) }}
             <template v-if="p.planLessonTitle"> · {{ p.planLessonTitle }}</template>
           </div>
-          <div v-if="!settleable(p)" class="warnline">未开通该科账户，先去学生卡开户</div>
+          <div v-if="!settleable(p)" class="warnline">{{ blockReason(p) }}</div>
         </div>
         <div class="fee">
           <!-- 🔴 BUG-2：单价未知画成「—」，绝不打成 ¥0（那等于告诉老师这节课免费） -->

@@ -1,10 +1,13 @@
 <script setup lang="ts">
 /**
- * PRD-015 批2 · 课时账户录入弹窗（三态共用一个壳）。
- * - open      开通学科账户 / 改单价（学科 + 单价）
+ * PRD-015 批2 · 课时账户录入弹窗（四态共用一个壳）。
+ * - open      开通学科账户（学科 + 单价）
+ * - price     改单价（学科锁定只读，只改单价；bug 批 BUG-3/A 补的入口）
  * - recharge  充值（金额 + 课时数 + 备注）
  * - adjust    调整（金额 + 课时数，均可正负 + 备注）
  *
+ * 🔴 open 与 price 走同一个 upsertAccount 端点（uk 冲突=改单价语义），差别只在 UI：
+ *    price 态不许换学科——换学科等于开另一个账户，余额会挂错科。
  * 🔴 只发 '1' 充值 / '4' 调整两种手工流水；'2' 扣课 / '3' 冲正由结算链服务端产生，前端无入口。
  * 🔴 余额允许为负（欠费不拦截，老师最高权限）——本弹窗不做余额充足性校验。
  */
@@ -17,7 +20,7 @@ import {
   type TuitionAccountVO,
 } from '@/api/teacher/account'
 
-type Mode = 'open' | 'recharge' | 'adjust'
+type Mode = 'open' | 'price' | 'recharge' | 'adjust'
 
 const props = defineProps<{
   modelValue: boolean
@@ -47,9 +50,14 @@ const visible = computed({
 
 const title = computed(() => {
   if (props.mode === 'open') return '开通学科账户'
-  const s = props.account?.subjectLabel || ''
-  return props.mode === 'recharge' ? `充值${s ? ' · ' + s : ''}` : `调整${s ? ' · ' + s : ''}`
+  const s = props.account?.subjectLabel || props.account?.subject || ''
+  const suffix = s ? ' · ' + s : ''
+  if (props.mode === 'price') return `改单价${suffix}`
+  return props.mode === 'recharge' ? `充值${suffix}` : `调整${suffix}`
 })
+
+/** 学科/单价表单（open 与 price 共用），流水表单（recharge / adjust）另一套 */
+const isPriceForm = computed(() => props.mode === 'open' || props.mode === 'price')
 
 const formRef = ref<FormInstance>()
 const submitting = ref(false)
@@ -68,7 +76,9 @@ const rules = computed<FormRules>(() =>
         subject: [{ required: true, message: '请选择学科', trigger: 'change' }],
         lessonPrice: [{ required: true, message: '请填写课时单价', trigger: 'blur' }],
       }
-    : {},
+    : props.mode === 'price'
+      ? { lessonPrice: [{ required: true, message: '请填写课时单价', trigger: 'blur' }] }
+      : {},
 )
 
 /** 充值时按单价换算的参考金额（只提示不代填，两笔增量老师自己定） */
@@ -83,8 +93,9 @@ watch(
   (open) => {
     if (!open) return
     formRef.value?.clearValidate()
-    form.subject = ''
-    form.lessonPrice = 0
+    // 改单价：学科与现价从目标账户回填（学科锁死，只让改价）
+    form.subject = props.mode === 'price' ? (props.account?.subject ?? '') : ''
+    form.lessonPrice = props.mode === 'price' ? (props.account?.lessonPrice ?? 0) : 0
     form.hoursDelta = 0
     form.amountDelta = 0
     form.note = ''
@@ -96,13 +107,19 @@ async function submit() {
   if (!ok) return
   submitting.value = true
   try {
-    if (props.mode === 'open') {
+    if (isPriceForm.value) {
+      // price 态 subject 来自目标账户（模板里只读展示），命中 uk = 改单价、不动余额
+      const subject = props.mode === 'price' ? (props.account?.subject ?? '') : form.subject
+      if (!subject) {
+        ElMessage.warning('缺少学科，无法保存')
+        return
+      }
       await upsertAccount({
         studentId: props.studentId,
-        subject: form.subject,
+        subject,
         lessonPrice: Number(form.lessonPrice) || 0,
       })
-      ElMessage.success('账户已开通')
+      ElMessage.success(props.mode === 'price' ? '单价已更新（不影响已扣的历史记录）' : '账户已开通')
     } else {
       if (!props.account) return
       if (!form.hoursDelta && !form.amountDelta) {
@@ -130,16 +147,23 @@ async function submit() {
 <template>
   <el-dialog v-model="visible" :title="title" width="460px" append-to-body :close-on-click-modal="false">
     <el-form ref="formRef" :model="form" :rules="rules" label-width="86px">
-      <template v-if="mode === 'open'">
-        <el-form-item label="学科" prop="subject">
+      <template v-if="isPriceForm">
+        <el-form-item v-if="mode === 'open'" label="学科" prop="subject">
           <el-select v-model="form.subject" placeholder="选择学科" style="width: 100%">
             <el-option v-for="d in SUBJECT_OPTIONS" :key="d.dictValue" :label="d.dictLabel" :value="d.dictValue" />
           </el-select>
           <span class="fh">开通即绑定该学科，之后可给这科单独建计划</span>
         </el-form-item>
+        <!-- 改单价：学科只读——换学科等于开另一个账户，余额会挂错科 -->
+        <el-form-item v-else label="学科">
+          <span class="ro">{{ account?.subjectLabel || account?.subject || '—' }}</span>
+        </el-form-item>
         <el-form-item label="课时单价" prop="lessonPrice">
           <el-input-number v-model="form.lessonPrice" :min="0" :precision="2" :step="10" style="width: 180px" />
           <span class="fh">元 / 课时</span>
+        </el-form-item>
+        <el-form-item v-if="mode === 'price'" label=" ">
+          <span class="fh">改后只影响以后结算的场次；已扣过的记录按当时单价留档，不回溯</span>
         </el-form-item>
       </template>
 
@@ -184,5 +208,10 @@ async function submit() {
   margin-left: 10px;
   font-size: 12px;
   color: #8ba09a;
+}
+.ro {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--bk-teal-deep);
 }
 </style>

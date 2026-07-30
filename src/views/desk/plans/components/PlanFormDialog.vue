@@ -123,7 +123,8 @@ async function loadSubjectOptions(studentId: string) {
   }
   subjectLoading.value = true
   try {
-    subjectOptions.value = (await listAccounts(studentId)) ?? []
+    // 🔴 bug 批 BUG-3/A：停用账户不进下拉（BE requireSubjectAccount 同口径，选了也会 400）
+    subjectOptions.value = ((await listAccounts(studentId)) ?? []).filter((a) => a.status !== '1')
   } catch {
     subjectOptions.value = []
   } finally {

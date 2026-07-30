@@ -72,6 +72,16 @@ function settleable(r: SettleRow): boolean {
   return r.price !== null && r.price !== undefined
 }
 
+/**
+ * 不可结算的原因（bug 批 BUG-3/A）：price=null 有两种成因，得说准——
+ * accountStatus='1' 是「开了但停用了」（去学生卡启用），null 才是真没开户。
+ */
+function blockReason(r: SettleRow): string {
+  return r.accountStatus === '1'
+    ? '该科账户已停用，先去学生卡启用'
+    : '未开通该科账户，先去学生卡开户'
+}
+
 function editOf(id: string): EditRow {
   // 兜底返新对象（不共享单例）：万一 edits 还没填好，往兜底上写不会串到别的行
   return edits.value[id] || { checked: false, hours: 1, start: '', end: '', start0: '', end0: '' }
@@ -230,7 +240,7 @@ async function submit() {
             <span class="st-sub">
               {{ r.subjectLabel || '' }}{{ r.planLessonTitle ? ' · ' + r.planLessonTitle : '' }}
             </span>
-            <span v-if="!settleable(r)" class="st-warn">未开通该科账户，先去学生卡开户</span>
+            <span v-if="!settleable(r)" class="st-warn">{{ blockReason(r) }}</span>
           </td>
           <td>
             <el-input-number
