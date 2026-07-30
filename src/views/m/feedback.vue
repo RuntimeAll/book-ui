@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * PRD-015 批5 · /m/feedback 课后反馈（V23）。
+ * PRD-015 · /m/feedback 课后反馈（V23）—— **Vant 4 版**。
  *
  * 顶部学生 chips：「今天上课」的学生（当日 getCalendar 有场次）前置高亮，其余排后；切学生 = 切该生
  * 计划的反馈列表（pageSheets(planId)，D6 反馈绑计划/场次）。结算自动生成的壳（title 为空 = 未填内容，
@@ -9,9 +9,14 @@
  *
  * 🔴 家长可见物红线：卷面文案零内部词——序号只出「{seq} · 日期」，不写"第几次/第 N 节课"（D7）。
  * 🔴 seq 由服务端按计划自动递增，前端只读展示不回写。
+ *
+ * 🔴 2026-07-31 Vant 化（**只换皮不换骨**）：ElMessage → showToast/showFailToast；手搓 chips →
+ *    van-button 圆角组；手搓 seg → van-tabs；裸 input → van-field。
+ *    probeShells 懒探针、isShell 定性口径、saveEdit 回传 sessionId/planId 防覆盖绑定 —— 逻辑一行未动。
  */
 import { computed, onMounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { showFailToast, showSuccessToast, showToast } from 'vant'
+import 'vant/es/toast/style'
 import {
   downloadArtifact,
   exportPlanPng,
@@ -175,7 +180,7 @@ async function openEdit(row: FeedbackSheetBrief) {
       kp_id: r.kp_id ?? null,
     }))
   } catch {
-    ElMessage.error('加载失败')
+    showFailToast('加载失败')
     editOpen.value = false
   } finally {
     editLoading.value = false
@@ -195,7 +200,7 @@ async function saveEdit() {
   if (!d) return
   const rows = editRows.value.filter((r) => r.module || r.content || r.mastery || r.weakness)
   if (!rows.length) {
-    ElMessage.warning('至少填一条内容')
+    showToast('至少填一条内容')
     return
   }
   saving.value = true
@@ -220,7 +225,7 @@ async function saveEdit() {
     // 本地即刻定性（保存后徽标从「待补内容」翻篇，不等下一次探针）
     rowCounts.value = { ...rowCounts.value, [d.id]: rows.length }
     editOpen.value = false
-    ElMessage.success('已保存')
+    showSuccessToast('已保存')
     await loadSheets()
   } catch {
     // 拦截器已提示
@@ -236,6 +241,7 @@ const expUrl = ref('')
 const expMode = ref<'single' | 'long'>(
   localStorage.getItem(EXPORT_MODE_KEY) === 'long' ? 'long' : 'single',
 )
+const expTab = computed(() => (expMode.value === 'long' ? 1 : 0))
 
 function revokeExp() {
   if (expUrl.value) {
@@ -247,7 +253,7 @@ function revokeExp() {
 async function buildExport(): Promise<boolean> {
   const s = selStudent.value
   if (!s?.planId) {
-    ElMessage.warning('该学生还没有课程计划，无法按计划导出')
+    showToast('该学生还没有课程计划，无法按计划导出')
     return false
   }
   expLoading.value = true
@@ -258,7 +264,7 @@ async function buildExport(): Promise<boolean> {
     expUrl.value = URL.createObjectURL(blob)
     return true
   } catch {
-    ElMessage.error('导出失败')
+    showFailToast('导出失败')
     return false
   } finally {
     expLoading.value = false
@@ -267,7 +273,7 @@ async function buildExport(): Promise<boolean> {
 
 async function openExport() {
   if (!sheets.value.length) {
-    ElMessage.warning('该学生还没有反馈可导出')
+    showToast('该学生还没有反馈可导出')
     return
   }
   expOpen.value = true
@@ -287,6 +293,10 @@ async function setMode(m: 'single' | 'long') {
   await buildExport()
 }
 
+function onExportTab({ name }: { name: number | string }) {
+  void setMode(Number(name) === 1 ? 'long' : 'single')
+}
+
 function downloadExport() {
   if (!expUrl.value) return
   const a = document.createElement('a')
@@ -299,7 +309,7 @@ function downloadExport() {
 async function sendToBot() {
   const ok = expUrl.value ? true : await buildExport()
   if (!ok) return
-  ElMessage.success('已生成，bot 推送上线段接线')
+  showSuccessToast('已生成，bot 推送上线段接线')
 }
 
 onMounted(async () => {
@@ -310,84 +320,91 @@ onMounted(async () => {
 
 <template>
   <section>
-    <div v-if="loading" class="m-empty">加载中…</div>
-    <div v-else-if="!students.length" class="m-empty">还没有学生</div>
+    <van-loading v-if="loading" class="m-note" size="18">加载中…</van-loading>
+    <van-empty v-else-if="!students.length" image="search" description="还没有学生" />
 
     <template v-else>
-      <div class="m-chips">
-        <span v-if="todayChips.length" class="lab">今天上课</span>
-        <button
+      <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px">
+        <span v-if="todayChips.length" class="m-note" style="margin: 0">今天上课</span>
+        <van-button
           v-for="s in todayChips"
           :key="s.id"
-          class="m-stuchip today"
-          :class="{ on: selId === s.id }"
+          round
+          size="small"
+          :type="selId === s.id ? 'primary' : 'default'"
+          :plain="selId !== s.id"
           @click="selectStudent(s.id)"
         >
           {{ s.name }}
-        </button>
-        <span v-if="restChips.length" class="lab">其他</span>
-        <button
+        </van-button>
+        <span v-if="restChips.length" class="m-note" style="margin: 0">其他</span>
+        <van-button
           v-for="s in restChips"
           :key="s.id"
-          class="m-stuchip"
-          :class="{ on: selId === s.id }"
+          round
+          size="small"
+          :type="selId === s.id ? 'primary' : 'default'"
           @click="selectStudent(s.id)"
         >
           {{ s.name }}
-        </button>
+        </van-button>
       </div>
 
-      <div class="m-sec">{{ planTitle }}</div>
+      <van-cell-group inset :title="planTitle">
+        <van-loading v-if="sheetsLoading" class="m-note" size="18">加载中…</van-loading>
+        <van-empty v-else-if="!sheets.length" image="search" description="该学生还没有反馈" />
+        <template v-else>
+          <van-cell v-for="f in sheets" :key="f.id" clickable is-link @click="openEdit(f)">
+            <template #title>
+              <span class="m-rowtitle">
+                <van-tag :type="isShell(f) ? 'warning' : 'primary'" round size="medium">
+                  {{ f.lessonSeq ?? '·' }}
+                </van-tag>
+                <b>{{ rowTitle(f) }}</b>
+                <van-tag v-if="isShell(f)" type="warning" plain>待补内容</van-tag>
+              </span>
+            </template>
+            <template #label>{{ previewOf(f) }}</template>
+          </van-cell>
+        </template>
+      </van-cell-group>
 
-      <div v-if="sheetsLoading" class="m-empty">加载中…</div>
-      <div v-else-if="!sheets.length" class="m-empty">该学生还没有反馈</div>
-      <template v-else>
-        <div
-          v-for="f in sheets"
-          :key="f.id"
-          class="m-card m-fb"
-          :class="{ shellcard: isShell(f) }"
-          role="button"
-          tabindex="0"
-          @click="openEdit(f)"
-          @keyup.enter="openEdit(f)"
-        >
-          <div class="ttl">
-            <span class="m-seqbadge">{{ f.lessonSeq ?? '·' }}</span>
-            <span class="t">{{ rowTitle(f) }}</span>
-            <span v-if="isShell(f)" class="m-chip shell">待补内容</span>
-            <span class="d">{{ f.targetName || '' }}</span>
-          </div>
-          <div class="pre">{{ previewOf(f) }}</div>
-        </div>
-      </template>
-
-      <button class="m-btn pri" style="width: 100%; margin-top: 6px" @click="openExport">
-        导出反馈
-      </button>
+      <div style="padding: 12px">
+        <van-button type="primary" block icon="photo-o" @click="openExport">导出反馈</van-button>
+      </div>
     </template>
 
     <!-- 逐条填写 -->
     <MSheet v-model="editOpen" :title="editTitle" sub="五列简化为逐条卡片，手机上顺手填">
-      <div v-if="editLoading" class="m-empty">加载中…</div>
+      <van-loading v-if="editLoading" class="m-note" size="18">加载中…</van-loading>
       <template v-else>
-        <div v-for="(r, i) in editRows" :key="i" class="m-fbrow">
-          <div class="no">
-            第 {{ i + 1 }} 条
-            <button v-if="editRows.length > 1" @click="delRow(i)">删除</button>
-          </div>
-          <input v-model="r.module" placeholder="所属模块" />
-          <input v-model="r.content" placeholder="学习内容" />
-          <input v-model="r.mastery" placeholder="掌握情况" />
-          <input v-model="r.weakness" placeholder="不足点" />
+        <van-cell-group v-for="(r, i) in editRows" :key="i" inset :title="`第 ${i + 1} 条`">
+          <van-field v-model="r.module" label="所属模块" placeholder="如：分数应用题" />
+          <van-field v-model="r.content" label="学习内容" placeholder="这节讲了什么" type="textarea" rows="1" autosize />
+          <van-field v-model="r.mastery" label="掌握情况" placeholder="学生表现" type="textarea" rows="1" autosize />
+          <van-field v-model="r.weakness" label="不足点" placeholder="待加强的地方" type="textarea" rows="1" autosize />
+          <van-cell v-if="editRows.length > 1">
+            <template #value>
+              <van-button size="mini" type="danger" plain @click="delRow(i)">删除这条</van-button>
+            </template>
+          </van-cell>
+        </van-cell-group>
+        <div style="padding: 4px 16px">
+          <van-button block icon="plus" @click="addRow">加一条</van-button>
         </div>
-        <button class="m-btn ghost" style="width: 100%" @click="addRow">＋ 加一条</button>
       </template>
       <template #acts>
-        <button class="m-btn ghost" @click="editOpen = false">取消</button>
-        <button class="m-btn pri" :disabled="saving || editLoading" @click="saveEdit">
-          {{ saving ? '保存中…' : '保存' }}
-        </button>
+        <van-button block @click="editOpen = false">取消</van-button>
+        <van-button
+          block
+          type="primary"
+          :loading="saving"
+          loading-text="保存中…"
+          :disabled="editLoading"
+          @click="saveEdit"
+        >
+          保存
+        </van-button>
       </template>
     </MSheet>
 
@@ -397,19 +414,19 @@ onMounted(async () => {
       title="导出反馈"
       sub="版式=系统现有导出模板；默认单图=最新一单，长图=整计划拼接，记住上次选择"
     >
-      <div class="m-seg">
-        <button :class="{ on: expMode === 'single' }" @click="setMode('single')">单图</button>
-        <button :class="{ on: expMode === 'long' }" @click="setMode('long')">长图</button>
-      </div>
+      <van-tabs :active="expTab" @click-tab="onExportTab">
+        <van-tab title="单图" />
+        <van-tab title="长图" />
+      </van-tabs>
       <div class="m-png">
         <div v-if="expLoading" class="loading">出图中…</div>
         <img v-else-if="expUrl" :src="expUrl" alt="课后反馈" />
         <div v-else class="loading">未能生成图片</div>
       </div>
       <template #acts>
-        <button class="m-btn ghost" @click="expOpen = false">关闭</button>
-        <button class="m-btn ghost" :disabled="!expUrl" @click="downloadExport">下载图片</button>
-        <button class="m-btn pri" :disabled="expLoading" @click="sendToBot">机器人发到我的飞书</button>
+        <van-button block @click="expOpen = false">关闭</van-button>
+        <van-button block :disabled="!expUrl" @click="downloadExport">下载图片</van-button>
+        <van-button block type="primary" :loading="expLoading" @click="sendToBot">发到飞书</van-button>
       </template>
     </MSheet>
   </section>
