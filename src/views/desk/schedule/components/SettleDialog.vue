@@ -88,6 +88,18 @@ const totalHours = computed(
 const totalAmount = computed(
   () => Math.round(selected.value.reduce((s, r) => s + rowAmount(r), 0) * 100) / 100,
 )
+
+/**
+ * 合计金额文案。🔴 priceUnknown 的行（单场版从抽屉/场次表/工作台进来、该场不在待结算清单里）
+ * 单价此刻取不到，若照常求和会在钱屏上打出假的「¥0」——与行内「按账户单价」自相矛盾。
+ * 全未知 → 只说按账户单价；部分未知 → 已知部分求和 + 剩余场次注明。
+ */
+const unknownCount = computed(() => selected.value.filter((r) => r.priceUnknown).length)
+const totalAmountLabel = computed(() => {
+  if (!unknownCount.value) return `¥${totalAmount.value}`
+  if (unknownCount.value === selected.value.length) return '金额按账户单价'
+  return `¥${totalAmount.value} + ${unknownCount.value} 场按账户单价`
+})
 const allChecked = computed({
   get: () => {
     const ok = props.rows.filter(settleable)
@@ -226,7 +238,7 @@ async function submit() {
         <el-checkbox v-model="genFeedback">同时生成本次反馈</el-checkbox>
         <span class="st-total">
           已选 <b>{{ selected.length }}</b> 场 · 共扣 <b>{{ totalHours }}</b> 课时 ·
-          <b>¥{{ totalAmount }}</b>
+          <b>{{ totalAmountLabel }}</b>
         </span>
         <span class="st-spacer" />
         <el-button @click="innerVisible = false">取消</el-button>
