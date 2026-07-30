@@ -170,17 +170,17 @@ onMounted(fetchMonth)
     </div>
 
     <van-cell-group inset>
-      <van-cell :title="cnDay(selDate) + (selDate === today ? ' · 今天' : '')">
+      <van-cell :title="cnDay(selDate) + (selDate === today ? ' · 今天' : '')" value-class="m-vnarrow">
         <template #value>
           <span class="m-muted">{{ daySessions.length ? `${daySessions.length} 场` : '无排课' }}</span>
         </template>
       </van-cell>
 
       <van-loading v-if="loading" class="m-note" size="18">加载中…</van-loading>
-      <van-empty v-else-if="failed" image="error" description="课表暂时取不到，稍后重试">
+      <van-empty v-else-if="failed" image="error" image-size="70" description="课表暂时取不到，稍后重试">
         <van-button round type="primary" size="small" @click="fetchMonth">重新加载</van-button>
       </van-empty>
-      <van-empty v-else-if="!daySessions.length" image="search" description="这天没有排课" />
+      <van-empty v-else-if="!daySessions.length" image="search" image-size="70" description="这天没有排课" />
       <template v-else>
         <van-cell
           v-for="e in daySessions"

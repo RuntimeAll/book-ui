@@ -286,12 +286,13 @@ onMounted(reloadAll)
 
     <van-cell-group inset title="过点未结算">
       <van-loading v-if="pendingLoading" class="m-note" size="18">加载中…</van-loading>
-      <van-empty v-else-if="!pendingList.length" image="search" description="干净！没有待结算场次" />
+      <van-empty v-else-if="!pendingList.length" image="search" image-size="70" description="干净！没有待结算场次" />
       <template v-else>
       <van-cell
         v-for="p in pendingList"
         :key="p.sessionId"
         :clickable="settleable(p)"
+        value-class="m-vnarrow"
         @click="toggle(p.sessionId)"
       >
         <template #icon>
@@ -337,9 +338,9 @@ onMounted(reloadAll)
 
     <van-cell-group inset title="近几日已处理">
       <van-loading v-if="doneLoading" class="m-note" size="18">加载中…</van-loading>
-      <van-empty v-else-if="!doneList.length" image="search" description="近 14 天没有已结算场次" />
+      <van-empty v-else-if="!doneList.length" image="search" image-size="70" description="近 14 天没有已结算场次" />
       <template v-else>
-      <van-cell v-for="s in doneList" :key="s.id">
+      <van-cell v-for="s in doneList" :key="s.id" value-class="m-vnarrow">
         <template #title>
           <span class="m-rowtitle">
             <b>{{ s.targetName }}</b>

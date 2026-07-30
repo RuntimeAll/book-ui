@@ -184,6 +184,28 @@
   flex: none;
 }
 
+/**
+ * van-cell 默认 title 与 value 各 flex:1 —— 右列只放「¥400 / 默认 1 课时」这种短数字时，
+ * 会白占一半宽把左边的学生名挤成三行。带数字右列的行统一挂 value-class="m-vnarrow"。
+ */
+.m-app .m-vnarrow {
+  flex: none;
+  min-width: 76px;
+  max-width: 44%;
+}
+
+/* 学生 chips：20 个学生时会吃掉整屏，限高内部滚，列表区不被挤没 */
+.m-app .m-chiprow {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  max-height: 116px;
+  overflow-y: auto;
+  margin-bottom: 12px;
+  padding: 2px;
+}
+
 /* ── 通用：一行两段的行内信息（学生名 + 徽标）───────────────────── */
 .m-app .m-rowtitle {
   display: flex;

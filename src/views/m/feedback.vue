@@ -321,10 +321,10 @@ onMounted(async () => {
 <template>
   <section>
     <van-loading v-if="loading" class="m-note" size="18">加载中…</van-loading>
-    <van-empty v-else-if="!students.length" image="search" description="还没有学生" />
+    <van-empty v-else-if="!students.length" image="search" image-size="70" description="还没有学生" />
 
     <template v-else>
-      <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px">
+      <div class="m-chiprow">
         <span v-if="todayChips.length" class="m-note" style="margin: 0">今天上课</span>
         <van-button
           v-for="s in todayChips"
@@ -352,7 +352,7 @@ onMounted(async () => {
 
       <van-cell-group inset :title="planTitle">
         <van-loading v-if="sheetsLoading" class="m-note" size="18">加载中…</van-loading>
-        <van-empty v-else-if="!sheets.length" image="search" description="该学生还没有反馈" />
+        <van-empty v-else-if="!sheets.length" image="search" image-size="70" description="该学生还没有反馈" />
         <template v-else>
           <van-cell v-for="f in sheets" :key="f.id" clickable is-link @click="openEdit(f)">
             <template #title>

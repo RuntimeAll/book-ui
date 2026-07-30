@@ -492,6 +492,7 @@ onMounted(load)
         v-for="a in g.accounts"
         :key="a.id"
         :class="{ 'm-muted': a.status === '1' }"
+        value-class="m-vnarrow"
         clickable
         @click="openLedger(g, a)"
       >
@@ -534,7 +535,7 @@ onMounted(load)
       sub="日期 · 上课时间 · 内容 · 消耗 · 剩余——充值(重置)与冲正同列展示；消耗按实扣课时（默认 1 场=1 课时）"
     >
       <van-loading v-if="ledgerLoading" class="m-note" size="18">加载中…</van-loading>
-      <van-empty v-else-if="!ledgerRows.length" image="search" description="暂无记录" />
+      <van-empty v-else-if="!ledgerRows.length" image="search" image-size="70" description="暂无记录" />
       <template v-else>
         <div v-for="(f, i) in ledgerRows" :key="i" class="m-lrow" :class="rowClass(f.flowType)">
           <div class="ld">
