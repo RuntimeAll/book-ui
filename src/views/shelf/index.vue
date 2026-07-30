@@ -213,6 +213,10 @@ function isPunchBook(b: ShelfBookVO): boolean {
 function isPdfPendingBook(b: ShelfBookVO): boolean {
   return String(b.bookType) === 'pdf_pending'
 }
+/** 电子课本：整页图书 —— 打开进阅读页（章目录+翻页），不进题块浏览页（2026-07-30 改版）。 */
+function isTextbookBook(b: ShelfBookVO): boolean {
+  return String(b.bookType) === 'textbook'
+}
 /** 待解析书封面缩略图（OSS 图走 BE proxy 防 Content-Disposition 拒渲）。 */
 function coverStyle(b: ShelfBookVO): Record<string, string> {
   if (!isPdfPendingBook(b)) return {}
@@ -232,6 +236,10 @@ function statLine(b: ShelfBookVO): string {
   // 打卡书：天=节点、计算题在 content_json 不计入 questionCount——按天数口径显示，
   // 防「10 节 · 20 题」误导（实际 31 题/天，verifier S12）
   if (isPunchBook(b)) return b.nodeCount != null ? `${b.nodeCount} 天 · 每天一练` : '空书'
+  // 电子课本：页=题引用（一页一题）——按「章·页」口径显示，别用「节·题」误导（阅读态改版）
+  if (isTextbookBook(b)) {
+    return b.nodeCount != null ? `${b.nodeCount} 章 · ${b.questionCount ?? 0} 页` : '空书'
+  }
   // 待解析书：没有节点/题，厚度口径 = PDF 页数；年级册+章节（styleMeta.unit）挂前面
   if (isPdfPendingBook(b)) {
     const parts: string[] = []
@@ -250,14 +258,19 @@ function statLine(b: ShelfBookVO): string {
 }
 
 /**
- * 打开书 —— 按 bookType 分流（PRD-013 FP1）：
- *   daily_punch → 打卡书阅读+审核页（天目录 + punch-v1 纸面 + 人眼审核流）
+ * 打开书 —— 按 bookType 分流（PRD-013 FP1 + 2026-07-30 阅读态改版）：
+ *   daily_punch → 打卡阅读页（干净展示态；审核独立走「审核」按钮）
+ *   textbook    → 电子课本阅读页（章目录+页码跳转+单页整页图翻书，不再进题块浏览页）
  *   pdf_pending → 新窗打开 PDF 本体（在线预览/下载），书内无结构不进浏览页
- *   其他类型     → 原书浏览页，行为不变
+ *   其他类型     → 原书浏览页（讲义/练习册题块形态），行为不变
  */
 function openBook(b: ShelfBookVO) {
   if (isPunchBook(b)) {
-    router.push(`/bookshelf/punch/${b.id}`)
+    router.push(`/bookshelf/punch-read/${b.id}`)
+    return
+  }
+  if (isTextbookBook(b)) {
+    router.push(`/bookshelf/textbook/${b.id}`)
     return
   }
   if (isPdfPendingBook(b)) {
@@ -275,6 +288,11 @@ function openBook(b: ShelfBookVO) {
 // 🔴 PRD-006 — 录入审核入口（按页比对源书原版 → 逐页确认；普通用户可见）
 function openReview(b: ShelfBookVO) {
   router.push(`/bookshelf/review/${b.id}`)
+}
+
+// 🔴 2026-07-30 拆分 — 打卡书审核入口（审核是功能不是展示：独立页，与「打开」的阅读态分离）
+function openPunchReview(b: ShelfBookVO) {
+  router.push(`/bookshelf/punch/${b.id}`)
 }
 
 // ── 卡片「⋯」菜单：导出接真（2026-07-30 用户点单——此前是 PRD-003 占位 toast）──
@@ -579,10 +597,16 @@ onMounted(() => {
             </div>
             <div class="ops">
               <el-button size="small" type="primary" @click="openBook(b)">打开</el-button>
-              <!-- 🔴 PRD-013：打卡书的人眼审核在打卡页内（逐天通过/记问题），不走 PRD-006 页级源书比对 -->
-              <!-- 待解析书还没拆成页/题，页级比对无从谈起，同样不给入口 -->
+              <!-- 🔴 2026-07-30 拆分：打卡书「打开」=干净阅读态，审核走独立按钮进 punch.vue 审核页 -->
               <el-button
-                v-if="!isPunchBook(b) && !isPdfPendingBook(b)"
+                v-if="isPunchBook(b)"
+                size="small"
+                class="review-btn"
+                @click="openPunchReview(b)"
+              >审核</el-button>
+              <!-- PRD-006 页级源书比对审核（讲义/练习册/课本）；待解析书没拆页无从比对，不给入口 -->
+              <el-button
+                v-else-if="!isPdfPendingBook(b)"
                 size="small"
                 class="review-btn"
                 @click="openReview(b)"

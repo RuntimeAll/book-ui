@@ -268,8 +268,22 @@ const router = createRouter({
           name: 'BookshelfReview',
           component: () => import('@/views/shelf/review.vue'),
         },
-        // 🔴 PRD-013 批2 — 每日打卡书阅读 + 审核页（左天目录 / 中 punch-v1 纸面 iframe / 审核流）。
-        //   入口 = 书架 daily_punch 类型书卡片点击（G4 可达性铁则，不许 goto 直达）。
+        // 🔴 2026-07-30 课本展示改版 — 电子课本阅读页（章目录+页码跳转+单页整页图翻书）。
+        //   入口 = 书架 textbook 卡片「打开」；讲义/练习册仍走 book.vue 题块浏览页。
+        {
+          path: '/bookshelf/textbook/:id',
+          name: 'BookshelfTextbook',
+          component: () => import('@/views/shelf/textbook.vue'),
+        },
+        // 🔴 2026-07-30 拍板 — 打卡书阅读页（干净展示态：天目录+纸面+导出，无审核痕迹）。
+        //   入口 = 书架 daily_punch 卡片「打开」；审核是功能不是展示，独立在 punch.vue。
+        {
+          path: '/bookshelf/punch-read/:bookId',
+          name: 'BookshelfPunchRead',
+          component: () => import('@/views/shelf/punch-read.vue'),
+        },
+        // 🔴 PRD-013 批2 — 每日打卡书审核页（左天目录 / 中 punch-v1 纸面 iframe / 审核流）。
+        //   入口 = 书架 daily_punch 卡片「审核」按钮 + 阅读页顶栏「审核」（2026-07-30 拆分后不再是打开缺省）。
         {
           path: '/bookshelf/punch/:bookId',
           name: 'BookshelfPunch',

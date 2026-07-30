@@ -418,6 +418,30 @@ export interface BookExportResult {
   bookType?: string
 }
 
+/** 电子课本阅读页数据（GET book/{id}/pages）：目录（章+起始页）+ 全书页表（页码→整页图 OSS url）。 */
+export interface TextbookChapter {
+  nodeId: string
+  name: string
+  startPage: number
+}
+export interface TextbookPagesResult {
+  bookId: string
+  title: string
+  totalPages: number
+  chapters: TextbookChapter[]
+  pages: { page: number; url: string }[]
+}
+
+/**
+ * 电子课本阅读页数据：一次拉全书「章目录 + 页码→页图」表（2026-07-30 课本展示改版）。
+ * 页图=题块整页图（零迁移），页码=source_page；FE 据此做目录跳页+单页翻书。
+ */
+export const getTextbookPages = (bookId: string) =>
+  request.get<TextbookPagesResult, TextbookPagesResult>(`${BASE}/book/${bookId}/pages`, {
+    // 全书页表一次返回（百余条 url），比默认宽放些
+    timeout: 30_000,
+  })
+
 /**
  * 整书导出 PDF：POST book/{bookId}/export → {url, pages}。
  * 讲义/练习册=分讲 HTML→Chrome→PDF 合并；电子课本=整页图逐页拼 A4。
