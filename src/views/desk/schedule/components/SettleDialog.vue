@@ -3,15 +3,18 @@
  * PRD-015 批3 · 一键结算弹窗（V11/V12，AC5）。
  *
  * 多选待结算场次 → 每场可改「实扣课时」（默认 1，两位小数；金额随之实时重算 = 实扣 × 单价）
- * + 「实际上课时间」备注 → 勾「同时生成反馈壳」（默认勾，D12）→ 确认扣费三连。
+ * + **直接改上课起止时间** → 勾「同时生成反馈壳」（默认勾，D12）→ 确认扣费三连。
  *
  * 🔴 只提醒不自动扣（D4）：本弹窗的「确认结算」是全系统唯一扣费触发点。
  * 🔴 未开户的场次（price=null）不可选，提示先去学生卡开户——BE 也会 skipped 兜底。
+ * 🔴 上课时间（BUG-5/D 拍板）：默认 = 该场排课起止，用的是排课/改期同款 el-time-picker。
+ *    改了 → 结算前先走既有 updateSession 改期链（同日改起止，不触发顺延）把场次时间更新掉；
+ *    没改 → 完全不动，也不写「实际上课时间」这种冗余备注（原来是个空输入框要老师手抄一遍）。
  * 单场版 = 父级只传一行（详情抽屉「标记已上」走这条路）。
  */
 import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { settleSessions, type PendingSettlementVO } from '@/api/teacher/schedule'
+import { settleSessions, updateSession, type PendingSettlementVO } from '@/api/teacher/schedule'
 
 /**
  * 弹窗行 = 待结算行 + priceUnknown（单场版从抽屉进来、该场还没进待结算清单时单价取不到，
@@ -35,24 +38,29 @@ const innerVisible = computed({
   set: (v) => emit('update:visible', v),
 })
 
-/** 每场的编辑态：sessionId → {checked, hours, timeNote} */
+/** 每场的编辑态：sessionId → {checked, hours, start, end}；start0/end0 = 排课起止快照用于判改动 */
 interface EditRow {
   checked: boolean
   hours: number
-  timeNote: string
+  start: string
+  end: string
+  start0: string
+  end0: string
 }
 const edits = ref<Record<string, EditRow>>({})
 const genFeedback = ref(true)
 const saving = ref(false)
 
-/** 打开时重置：可结算的默认全选、实扣 1 课时 */
+/** 打开时重置：可结算的默认全选、实扣 1 课时、上课时间预填该场排课起止 */
 watch(
   () => [props.visible, props.rows] as const,
   ([v]) => {
     if (!v) return
     const next: Record<string, EditRow> = {}
     for (const r of props.rows) {
-      next[r.sessionId] = { checked: settleable(r), hours: 1, timeNote: '' }
+      const s = (r.start || '').slice(0, 5)
+      const e = (r.end || '').slice(0, 5)
+      next[r.sessionId] = { checked: settleable(r), hours: 1, start: s, end: e, start0: s, end0: e }
     }
     edits.value = next
   },
@@ -65,7 +73,14 @@ function settleable(r: SettleRow): boolean {
 }
 
 function editOf(id: string): EditRow {
-  return edits.value[id] || { checked: false, hours: 1, timeNote: '' }
+  // 兜底返新对象（不共享单例）：万一 edits 还没填好，往兜底上写不会串到别的行
+  return edits.value[id] || { checked: false, hours: 1, start: '', end: '', start0: '', end0: '' }
+}
+
+/** 上课时间被改过？改了才走改期，没改一个字节都不动（BUG-5/D） */
+function timeChanged(r: SettleRow): boolean {
+  const e = editOf(r.sessionId)
+  return !!e.start && !!e.end && (e.start !== e.start0 || e.end !== e.end0)
 }
 
 /** 该行金额 = 实扣课时 × 单价（两位小数） */
@@ -127,17 +142,30 @@ async function submit() {
     ElMessage.warning('实扣课时需大于 0')
     return
   }
+  // BUG-5/D：改过时间的场次，结算前先走既有改期链更新场次时间。
+  // 顺序不能反——先扣费后改期会让流水与场次时间对不上；改期失败则整单不结算。
+  const retimed = picked.filter(timeChanged)
+  const badTime = retimed.find((r) => editOf(r.sessionId).start >= editOf(r.sessionId).end)
+  if (badTime) {
+    ElMessage.warning(`「${badTime.targetName || '该场'}」的结束时间要晚于开始时间`)
+    return
+  }
   saving.value = true
   try {
+    for (const r of retimed) {
+      const e = editOf(r.sessionId)
+      await updateSession(r.sessionId, { date: r.date, start: e.start, end: e.end })
+      e.start0 = e.start
+      e.end0 = e.end
+    }
+    if (retimed.length) {
+      ElMessage.success(`已更新 ${retimed.length} 场的上课时间`)
+    }
     const res = await settleSessions({
-      items: picked.map((r) => {
-        const e = editOf(r.sessionId)
-        return {
-          sessionId: r.sessionId,
-          hours: Number(e.hours),
-          timeNote: e.timeNote?.trim() || undefined,
-        }
-      }),
+      items: picked.map((r) => ({
+        sessionId: r.sessionId,
+        hours: Number(editOf(r.sessionId).hours),
+      })),
       genFeedback: genFeedback.value,
     })
     const ok = res?.settled ?? 0
@@ -170,9 +198,10 @@ async function submit() {
 </script>
 
 <template>
-  <el-dialog v-model="innerVisible" title="结算确认" width="760px" append-to-body>
+  <el-dialog v-model="innerVisible" title="结算确认" width="860px" append-to-body>
     <div class="st-hint">
-      确认后自动完成：扣课时课费 · 场次标记已上 · 生成本次反馈（可关）。金额 = 实扣课时 × 该科单价。
+      确认后自动完成：扣课时课费 · 场次标记已上 · 生成本次反馈（可关）。金额 = 实扣课时 × 该科单价。<br />
+      上课时间默认 = 排课时间，<b>改了即更新场次时间</b>（结算前自动改期，不触发后续课次顺延）。
     </div>
 
     <table class="st-tb">
@@ -182,11 +211,11 @@ async function submit() {
             <el-checkbox v-model="allChecked" />
           </th>
           <th style="width: 78px">日期</th>
-          <th style="width: 106px">时段</th>
+          <th style="width: 106px">排课时段</th>
           <th>学生 · 内容</th>
           <th style="width: 104px">实扣课时</th>
           <th style="width: 92px">金额</th>
-          <th style="width: 150px">实际上课时间</th>
+          <th style="width: 236px">上课时间（改了即改期）</th>
         </tr>
       </thead>
       <tbody>
@@ -218,13 +247,28 @@ async function submit() {
           </td>
           <td class="num money">{{ amountLabel(r) }}</td>
           <td>
-            <el-input
-              v-model="editOf(r.sessionId).timeNote"
-              size="small"
-              placeholder="如 09:05-10:40"
-              maxlength="30"
-              :disabled="!settleable(r)"
-            />
+            <div class="st-time">
+              <el-time-picker
+                v-model="editOf(r.sessionId).start"
+                format="HH:mm"
+                value-format="HH:mm"
+                placeholder="开始"
+                size="small"
+                style="width: 92px"
+                :disabled="!settleable(r)"
+              />
+              <span class="st-dash">–</span>
+              <el-time-picker
+                v-model="editOf(r.sessionId).end"
+                format="HH:mm"
+                value-format="HH:mm"
+                placeholder="结束"
+                size="small"
+                style="width: 92px"
+                :disabled="!settleable(r)"
+              />
+              <el-tag v-if="timeChanged(r)" size="small" type="warning" effect="plain">改期</el-tag>
+            </div>
           </td>
         </tr>
         <tr v-if="!rows.length">
@@ -303,6 +347,15 @@ async function submit() {
   display: block;
   font-size: 11.5px;
   color: #b45309;
+}
+/* 上课时间列（BUG-5/D）：两枚 el-time-picker 并排 + 「改期」标记 */
+.st-time {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.st-time .st-dash {
+  color: #8ba09a;
 }
 .st-empty {
   text-align: center;
