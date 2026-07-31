@@ -88,9 +88,22 @@ watch(
   },
 )
 
-/** 复制文本：有提取码 → 「链接 提取码：xxx」；无提取码 → 只给链接。 */
+/**
+ * 链接自带提取码：拼 `?pwd=xxxx`，对方点开自动填码直接进，不必手敲。
+ * 🔴 不带 pwd 的话多一步手动输入，就多一批人流失（2026-07-31 用户点名）。
+ * 已带 pwd= 的原样保留（避免重复拼）。
+ */
+function withPwd(url: string, code: string): string {
+  if (!url || !code || /[?&]pwd=/.test(url)) return url
+  return url + (url.includes('?') ? '&' : '?') + 'pwd=' + encodeURIComponent(code)
+}
+
+/**
+ * 复制文本 = 「链接（自带 pwd） 提取码：xxx」。
+ * 提取码文本仍保留：部分客户端会吞掉 URL 参数，留一份兜底。
+ */
 function copyTextOf(r: Row): string {
-  const url = r.url.trim()
+  const url = withPwd(r.url.trim(), r.code.trim())
   const code = r.code.trim()
   return code ? `${url} 提取码：${code}` : url
 }
