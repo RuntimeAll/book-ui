@@ -136,13 +136,30 @@ export interface PunchExportResult {
   answerUrl?: string
 }
 
-/** 整书导出结果：每种卷一份**全册合并** PDF（days = 合并进去的天数）。 */
-export interface PunchBookExportResult {
-  bookId: string
+/** 整册导出状态（style_meta.punchExport 持久化态；重导覆盖上一次）。 */
+export type PunchBookExportStatus = 'running' | 'done' | 'failed'
+
+/**
+ * 整册导出状态 + 结果（BE 覆盖写 style_meta_json.punchExport，换页/重登可续看）。
+ * running → 轮询等；done → questionUrl/answerUrl 直接可下；failed → error 展示可重试。
+ */
+export interface PunchBookExportState {
+  status: PunchBookExportStatus | string
+  /** 提交的卷种 */
+  papers?: PunchPaper[]
   /** 合并的天数 */
   days?: number
   questionUrl?: string
   answerUrl?: string
+  startedAt?: string
+  exportedAt?: string
+  durationMs?: number
+  error?: string
+}
+
+export interface PunchBookExportStatusResult {
+  bookId: string
+  export: PunchBookExportState | null
 }
 
 // ---------------------------------------------------------------------------
@@ -178,17 +195,23 @@ export const exportPunchDay = (bookId: string, day: number, papers?: PunchPaper[
   )
 
 /**
- * 导出整书合并 PDF → OSS：POST exportBook {bookId,papers?} → {days,questionUrl,answerUrl}。
- * 每种卷出**一份全册合并** PDF（BE 逐天渲染后合并，不再由 FE 逐天串行调 exportDay）。
- * 🔴 同步长任务（全册 Chrome 渲染 + 合并，实测 40-80s）——超时放宽 5 分钟，对齐
- *    api/shelf 的 exportBook（默认 15s 必超时）。
+ * 提交整册异步导出：POST exportBook {bookId,papers?} → {bookId, export:{status:'running',...}}。
+ * BE worker 后台逐天渲染合并（10 天双卷约 2-5min），结果覆盖写 style_meta.punchExport
+ * （持久化；重导覆盖上一次）。提交后轮询 {@link getPunchBookExportStatus} 等 done/failed。
+ * 🔴 running 未超时（15min）重复提交返 409。
  */
 export const exportPunchBook = (bookId: string, papers?: PunchPaper[]) =>
-  request.post<PunchBookExportResult, PunchBookExportResult>(
+  request.post<PunchBookExportStatusResult, PunchBookExportStatusResult>(
     `${BASE}/exportBook`,
     { bookId, ...(papers && papers.length ? { papers } : {}) },
-    { timeout: 300_000 },
+    { timeout: 30_000 },
   )
+
+/** 整册导出状态轮询：GET exportStatus?bookId= → {export: punchExport | null}。 */
+export const getPunchBookExportStatus = (bookId: string) =>
+  request.get<PunchBookExportStatusResult, PunchBookExportStatusResult>(`${BASE}/exportStatus`, {
+    params: { bookId },
+  })
 
 /**
  * 幂等建/覆盖一天：POST upsertDay {bookId,day,goals,modules} → {nodeId,itemIds}。

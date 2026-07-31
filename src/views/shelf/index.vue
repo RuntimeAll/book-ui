@@ -4,23 +4,32 @@
  * 讲义/练习册/专项的唯一入口：类型筛选 + 书卡片（结构统计一眼看厚度）。
  * 数据源 = /teacher/shelf/book/page（owner 过滤）；「新建书」走 createBook 建空书起步。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   pageBooks,
   createBook,
   deleteBook,
+  exportBook,
+  readBookNetdiskCount,
+  readBookPdfMeta,
+  readBookPunchExport,
   BOOK_TYPE_LABEL,
   type BookType,
+  type BookNetdisk,
   type ShelfBookVO,
 } from '@/api/shelf'
+import { exportPunchBook, getPunchBookExportStatus } from '@/api/teacher/punch'
 import {
   useDictStore,
   DICT_EDU_SUBJECT, DICT_EDU_STAGE, DICT_EDU_GRADE, DICT_EDU_VOLUME,
 } from '@/store/dict'
 import { getProgress, type ReviewProgress } from '@/api/review'
 import LineIcon from '@/components/LineIcon.vue'
+import { proxyImage } from '@/utils/image-proxy'
+import NetdiskDialog from './components/NetdiskDialog.vue'
+import ImportPdfDialog from './components/ImportPdfDialog.vue'
 
 const router = useRouter()
 const dict = useDictStore()
@@ -78,7 +87,8 @@ async function load() {
 /** 限并发（5）逐本拉审核进度回填 progressMap；单本失败静默（角标非关键，不打断列表）。 */
 async function loadProgressBadges(list: ShelfBookVO[]) {
   progressMap.value = {}
-  const ids = list.map((b) => b.id)
+  // 待解析书没有页级录入审核（不给「录入审核」入口），不必拉进度
+  const ids = list.filter((b) => !isPdfPendingBook(b)).map((b) => b.id)
   let idx = 0
   const worker = async () => {
     while (idx < ids.length) {
@@ -185,17 +195,37 @@ function coverClass(t: string): string {
   if (t === 'lecture') return 'cover c1'
   if (t === 'special' || t === 'variant_special') return 'cover c3'
   if (t === 'daily_punch') return 'cover c4'
+  if (t === 'pdf_pending') return 'cover c5'
   return 'cover c2'
 }
 function tagClass(t: string): string {
   if (t === 'lecture') return 'tag lec'
   if (t === 'special' || t === 'variant_special') return 'tag sp'
   if (t === 'daily_punch') return 'tag punch'
+  if (t === 'pdf_pending') return 'tag pdf'
   return 'tag wb'
 }
 /** 每日打卡书 = 独立阅读/审核页（PRD-013），与常规书浏览页分流。 */
 function isPunchBook(b: ShelfBookVO): boolean {
   return String(b.bookType) === 'daily_punch'
+}
+/** PDF 直录待解析书：只有 PDF 本体 + 封面，尚未拆成节点/题 —— 打开即看 PDF，不进书浏览页。 */
+function isPdfPendingBook(b: ShelfBookVO): boolean {
+  return String(b.bookType) === 'pdf_pending'
+}
+/** 电子课本：整页图书 —— 打开进阅读页（章目录+翻页），不进题块浏览页（2026-07-30 改版）。 */
+function isTextbookBook(b: ShelfBookVO): boolean {
+  return String(b.bookType) === 'textbook'
+}
+/** 待解析书封面缩略图（OSS 图走 BE proxy 防 Content-Disposition 拒渲）。 */
+function coverStyle(b: ShelfBookVO): Record<string, string> {
+  if (!isPdfPendingBook(b)) return {}
+  const url = proxyImage(readBookPdfMeta(b).coverUrl)
+  return url ? { backgroundImage: `url("${url}")` } : {}
+}
+/** 已绑网盘条数小标（0 条不显示）：明细 / netdiskCount 两口径兼容读。 */
+function netdiskCountOf(b: ShelfBookVO): number {
+  return readBookNetdiskCount(b)
 }
 function typeLabel(t: string): string {
   return BOOK_TYPE_LABEL[t as BookType] ?? t
@@ -206,6 +236,20 @@ function statLine(b: ShelfBookVO): string {
   // 打卡书：天=节点、计算题在 content_json 不计入 questionCount——按天数口径显示，
   // 防「10 节 · 20 题」误导（实际 31 题/天，verifier S12）
   if (isPunchBook(b)) return b.nodeCount != null ? `${b.nodeCount} 天 · 每天一练` : '空书'
+  // 电子课本：页=题引用（一页一题）——按「章·页」口径显示，别用「节·题」误导（阅读态改版）
+  if (isTextbookBook(b)) {
+    return b.nodeCount != null ? `${b.nodeCount} 章 · ${b.questionCount ?? 0} 页` : '空书'
+  }
+  // 待解析书：没有节点/题，厚度口径 = PDF 页数；年级册+章节（styleMeta.unit）挂前面
+  if (isPdfPendingBook(b)) {
+    const parts: string[] = []
+    if (b.grade) parts.push(String(b.grade))
+    const unit = (b.styleMeta as Record<string, unknown> | undefined)?.unit
+    if (typeof unit === 'string' && unit) parts.push(unit)
+    const pages = readBookPdfMeta(b).pdfPages
+    parts.push(pages > 0 ? `${pages} 页 · 待解析` : '待解析')
+    return parts.join(' · ')
+  }
   const parts: string[] = []
   if (b.nodeCount != null) parts.push(`${b.nodeCount} 节`)
   if (b.questionCount != null) parts.push(`${b.questionCount} 题`)
@@ -214,13 +258,28 @@ function statLine(b: ShelfBookVO): string {
 }
 
 /**
- * 打开书 —— 按 bookType 分流（PRD-013 FP1）：
- *   daily_punch → 打卡书阅读+审核页（天目录 + punch-v1 纸面 + 人眼审核流）
- *   其他类型     → 原书浏览页，行为不变
+ * 打开书 —— 按 bookType 分流（PRD-013 FP1 + 2026-07-30 阅读态改版）：
+ *   daily_punch → 打卡阅读页（干净展示态；审核独立走「审核」按钮）
+ *   textbook    → 电子课本阅读页（章目录+页码跳转+单页整页图翻书，不再进题块浏览页）
+ *   pdf_pending → 新窗打开 PDF 本体（在线预览/下载），书内无结构不进浏览页
+ *   其他类型     → 原书浏览页（讲义/练习册题块形态），行为不变
  */
 function openBook(b: ShelfBookVO) {
   if (isPunchBook(b)) {
-    router.push(`/bookshelf/punch/${b.id}`)
+    router.push(`/bookshelf/punch-read/${b.id}`)
+    return
+  }
+  if (isTextbookBook(b)) {
+    router.push(`/bookshelf/textbook/${b.id}`)
+    return
+  }
+  if (isPdfPendingBook(b)) {
+    const { pdfUrl } = readBookPdfMeta(b)
+    if (!pdfUrl) {
+      ElMessage.warning('这本书还没有 PDF 文件地址')
+      return
+    }
+    window.open(pdfUrl, '_blank')
     return
   }
   router.push(`/bookshelf/book/${b.id}`)
@@ -231,8 +290,101 @@ function openReview(b: ShelfBookVO) {
   router.push(`/bookshelf/review/${b.id}`)
 }
 
-function onExport() {
-  ElMessage.info('导出功能由备课链（PRD-003）承载，敬请期待')
+// 🔴 2026-07-30 拆分 — 打卡书审核入口（审核是功能不是展示：独立页，与「打开」的阅读态分离）
+function openPunchReview(b: ShelfBookVO) {
+  router.push(`/bookshelf/punch/${b.id}`)
+}
+
+// ── 卡片「⋯」菜单：导出接真（2026-07-30 用户点单——此前是 PRD-003 占位 toast）──
+// 三分流：打卡书=整册异步导出（BE worker + style_meta.punchExport 持久化，菜单直下）；
+//         待解析书=取 PDF 原件；其余（讲义/练习册/课本）=BE 同步整书导出后新窗打开。
+
+/** 本地触发中的打卡书整册导出（行 styleMeta 还没刷出 running 前先把菜单置灰） */
+const punchExporting = ref<Record<string, boolean>>({})
+const punchPollTimers: Record<string, ReturnType<typeof setInterval>> = {}
+
+/** 打卡书：提交整册异步导出（题目+解析双卷）→ 轮询到 done 后刷新列表，菜单出现下载项。 */
+async function onExportPunch(b: ShelfBookVO) {
+  try {
+    await exportPunchBook(b.id)
+    punchExporting.value[b.id] = true
+    ElMessage.success(`「${b.title}」整册导出已开始（后台约 2-5 分钟），完成后在「⋯」菜单下载`)
+    startPunchPoll(b.id)
+  } catch {
+    /* http 拦截器已弹错（含 running 撞并发闸的 409） */
+  }
+}
+
+function startPunchPoll(bookId: string) {
+  stopPunchPoll(bookId)
+  punchPollTimers[bookId] = setInterval(async () => {
+    try {
+      const res = await getPunchBookExportStatus(bookId)
+      const st = res?.export
+      if (!st || st.status !== 'running') {
+        stopPunchPoll(bookId)
+        punchExporting.value[bookId] = false
+        if (st?.status === 'done') ElMessage.success('整册 PDF 已导好——「⋯」菜单可下载')
+        else if (st?.status === 'failed') ElMessage.error(st.error || '整册导出失败，可重试')
+        void load()   // 刷行上 styleMeta，让下载项亮出来
+      }
+    } catch {
+      /* 单拍失败不停轮询（网络抖动） */
+    }
+  }, 5_000)
+}
+
+function stopPunchPoll(bookId: string) {
+  const t = punchPollTimers[bookId]
+  if (t != null) {
+    clearInterval(t)
+    delete punchPollTimers[bookId]
+  }
+}
+
+onUnmounted(() => {
+  for (const id of Object.keys(punchPollTimers)) stopPunchPoll(id)
+})
+
+/** 普通书：BE 同步整书导出（讲义分讲渲染/课本整页图拼 A4，大书 1-3 分钟）→ 新窗打开。 */
+const exportingBookId = ref('')
+async function onExportGeneric(b: ShelfBookVO) {
+  if (exportingBookId.value) {
+    ElMessage.info('已有整书导出在跑，请稍候')
+    return
+  }
+  exportingBookId.value = b.id
+  ElMessage.info(`正在生成「${b.title}」整书 PDF（大书约 1-3 分钟），完成后自动打开…`)
+  try {
+    const res = await exportBook(b.id)
+    if (res?.url) window.open(res.url, '_blank')
+    else ElMessage.warning('导出未返回文件地址')
+  } catch {
+    /* http 拦截器已弹错 */
+  } finally {
+    exportingBookId.value = ''
+  }
+}
+
+/** 菜单统一分发（模板里箭头函数三元套娃会失控，收进一个函数）。 */
+function onCardMenu(cmd: string, b: ShelfBookVO) {
+  const pe = readBookPunchExport(b)
+  switch (cmd) {
+    case 'del': void onDelete(b); break
+    case 'netdisk': openNetdisk(b); break
+    case 'dl-q': if (pe?.questionUrl) window.open(pe.questionUrl, '_blank'); break
+    case 'dl-a': if (pe?.answerUrl) window.open(pe.answerUrl, '_blank'); break
+    case 'export':
+      if (isPunchBook(b)) void onExportPunch(b)
+      else if (isPdfPendingBook(b)) openBook(b)   // 待解析书：导出 = 取 PDF 原件（与「打开」同源）
+      else void onExportGeneric(b)
+      break
+  }
+}
+
+/** 打卡书菜单置灰判定：本地刚触发 或 行上持久化态就是 running。 */
+function isPunchExportRunning(b: ShelfBookVO): boolean {
+  return Boolean(punchExporting.value[b.id]) || readBookPunchExport(b)?.status === 'running'
 }
 
 async function onDelete(b: ShelfBookVO) {
@@ -284,6 +436,35 @@ async function submitCreate() {
   } finally {
     creating.value = false
   }
+}
+
+// —— 网盘链接弹窗（所有书型通用）——
+const netdiskVisible = ref(false)
+const netdiskBook = ref<ShelfBookVO | null>(null)
+
+function openNetdisk(b: ShelfBookVO) {
+  netdiskBook.value = b
+  netdiskVisible.value = true
+}
+
+/** 保存成功就地回填该行（明细 + 计数），卡片小标立刻跟上，不整页重拉。 */
+function onNetdiskSaved(p: { bookId: string; netdisks: BookNetdisk[] }) {
+  books.value = books.value.map((b) =>
+    b.id === p.bookId
+      ? { ...b, styleMeta: { ...(b.styleMeta ?? {}), netdisks: p.netdisks }, netdiskCount: p.netdisks.length }
+      : b,
+  )
+}
+
+// —— 导入 PDF 弹窗（直录待解析书）——
+const importVisible = ref(false)
+
+function openImportPdf() {
+  importVisible.value = true
+}
+
+function onPdfImported() {
+  load()
 }
 
 onMounted(() => {
@@ -385,15 +566,26 @@ onMounted(() => {
         <el-button v-if="hasActiveFilter" text class="reset-btn" @click="resetFilters">重置筛选</el-button>
         <span class="count">共 {{ shownBooks.length }} 本</span>
         <el-button type="primary" plain class="new-btn" @click="openCreate">＋ 新建书</el-button>
+        <!-- PDF 直录：整本 PDF 先原样入架占位（待解析），后续再走管线拆书 -->
+        <el-button plain class="import-btn" @click="openImportPdf">导入 PDF</el-button>
       </div>
     </div>
 
     <div v-loading="loading" class="grid-wrap">
       <div v-if="shownBooks.length" class="grid">
         <div v-for="b in shownBooks" :key="b.id" class="bookcard">
-          <div :class="coverClass(b.bookType)" @click="openBook(b)">{{ b.title }}</div>
+          <div
+            :class="[coverClass(b.bookType), { 'has-img': isPdfPendingBook(b) && coverStyle(b).backgroundImage }]"
+            :style="coverStyle(b)"
+            @click="openBook(b)"
+          >
+            <span class="cover-title">{{ b.title }}</span>
+            <span v-if="isPdfPendingBook(b)" class="pending-flag">待解析</span>
+          </div>
           <div class="bd">
             <span :class="tagClass(b.bookType)">{{ typeLabel(b.bookType) }}</span>
+            <!-- 已绑网盘条数小标（0 条不显示）-->
+            <span v-if="netdiskCountOf(b) > 0" class="nd-chip" title="已绑网盘链接">☁{{ netdiskCountOf(b) }}</span>
             <div class="stat">{{ statLine(b) }}</div>
             <!-- 🔴 PRD-006 录入审核进度角标（AC5）：done→录入确认完成徽标 / 否则迷你进度条 -->
             <div v-if="reviewInfoMap[b.id]" class="rv-badge">
@@ -405,13 +597,39 @@ onMounted(() => {
             </div>
             <div class="ops">
               <el-button size="small" type="primary" @click="openBook(b)">打开</el-button>
-              <!-- 🔴 PRD-013：打卡书的人眼审核在打卡页内（逐天通过/记问题），不走 PRD-006 页级源书比对 -->
-              <el-button v-if="!isPunchBook(b)" size="small" class="review-btn" @click="openReview(b)">录入审核</el-button>
-              <el-dropdown trigger="click" @command="(c: string) => c === 'del' ? onDelete(b) : c === 'export' && onExport()">
+              <!-- 🔴 2026-07-30 拆分：打卡书「打开」=干净阅读态，审核走独立按钮进 punch.vue 审核页 -->
+              <el-button
+                v-if="isPunchBook(b)"
+                size="small"
+                class="review-btn"
+                @click="openPunchReview(b)"
+              >审核</el-button>
+              <!-- PRD-006 页级源书比对审核（讲义/练习册/课本）；待解析书没拆页无从比对，不给入口 -->
+              <el-button
+                v-else-if="!isPdfPendingBook(b)"
+                size="small"
+                class="review-btn"
+                @click="openReview(b)"
+              >录入审核</el-button>
+              <el-dropdown trigger="click" @command="(c: string) => onCardMenu(c, b)">
                 <el-button size="small">⋯</el-button>
                 <template #dropdown>
                   <el-dropdown-menu>
-                    <el-dropdown-item command="export">导出</el-dropdown-item>
+                    <el-dropdown-item command="netdisk">网盘链接</el-dropdown-item>
+                    <!-- 打卡书：整册异步导出（后台渲染，styleMeta 持久化）+ 导好的全册直接可下 -->
+                    <template v-if="isPunchBook(b)">
+                      <el-dropdown-item command="export" :disabled="isPunchExportRunning(b)">
+                        {{ isPunchExportRunning(b) ? '整册导出中…' : '导出整册 PDF' }}
+                      </el-dropdown-item>
+                      <el-dropdown-item v-if="readBookPunchExport(b)?.questionUrl" command="dl-q">下载题目全册</el-dropdown-item>
+                      <el-dropdown-item v-if="readBookPunchExport(b)?.answerUrl" command="dl-a">下载解析全册</el-dropdown-item>
+                    </template>
+                    <!-- 待解析书：导出 = 取 PDF 原件 -->
+                    <el-dropdown-item v-else-if="isPdfPendingBook(b)" command="export">下载 PDF 原件</el-dropdown-item>
+                    <!-- 讲义/练习册/课本：BE 整书导出（同步 1-3 分钟）后新窗打开 -->
+                    <el-dropdown-item v-else command="export" :disabled="exportingBookId === b.id">
+                      {{ exportingBookId === b.id ? '整书导出中…' : '导出整书 PDF' }}
+                    </el-dropdown-item>
                     <el-dropdown-item command="del" style="color: var(--el-color-danger)">删除书</el-dropdown-item>
                   </el-dropdown-menu>
                 </template>
@@ -443,6 +661,11 @@ onMounted(() => {
         <el-button type="primary" :loading="creating" @click="submitCreate">创建并打开</el-button>
       </template>
     </el-dialog>
+
+    <!-- 网盘链接管理（所有书型通用） -->
+    <NetdiskDialog v-model:visible="netdiskVisible" :book="netdiskBook" @saved="onNetdiskSaved" />
+    <!-- PDF 直录待解析书 -->
+    <ImportPdfDialog v-model:visible="importVisible" @imported="onPdfImported" />
   </div>
 </template>
 
@@ -555,6 +778,10 @@ onMounted(() => {
 .new-btn {
   margin-left: auto;
 }
+.import-btn {
+  color: var(--bk-teal-deep);
+  border-color: var(--el-color-primary-light-7);
+}
 
 .grid-wrap {
   min-height: 200px;
@@ -601,6 +828,47 @@ onMounted(() => {
 .cover.c4 {
   background: linear-gradient(135deg, #c2701a, #f0b45c);
 }
+/* PDF 直录待解析：冷灰蓝（未加工态），与已成书的四档拉开 */
+.cover.c5 {
+  background: linear-gradient(135deg, #4a5b66, #8ea3ad);
+  position: relative;
+  justify-content: space-between;
+}
+/* 有封面缩略图时铺图 + 底部压暗，白字标题仍读得清 */
+.cover.has-img {
+  background-size: cover;
+  background-position: center top;
+  background-repeat: no-repeat;
+}
+.cover.has-img::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.05) 35%, rgba(0, 0, 0, 0.62));
+}
+.cover .cover-title {
+  position: relative;
+  z-index: 1;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+/* 封面右下「待解析」标（区分色，一眼看出这本还没拆） */
+.pending-flag {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  align-self: flex-end;
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #fde68a;
+  color: #92400e;
+  text-shadow: none;
+  white-space: nowrap;
+}
 .bd {
   padding: 10px 14px 12px;
 }
@@ -626,6 +894,22 @@ onMounted(() => {
 .tag.punch {
   background: #fdf3e3;
   color: #b45309;
+}
+.tag.pdf {
+  background: #eef1f3;
+  color: #4a5b66;
+}
+/* 网盘小标：跟在类型徽标后，0 条不渲染 */
+.nd-chip {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 6px;
+  background: #e8f1fb;
+  color: #1268b3;
+  cursor: default;
 }
 .stat {
   font-size: 11.5px;

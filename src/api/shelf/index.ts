@@ -18,7 +18,9 @@ import request from '@/http/request'
 // 书类型 = 开放注册制（BE 不校验，MCP 可传任意新 slug）：新增类型只需在此补一行 label，
 // 书架过滤段随 BOOK_TYPE_LABEL 自动生成；注册规矩见 认知/服务与能力总目录.md「书类型注册表」
 // daily_punch 每日打卡（PRD-013 D1：打卡内容 = 一本有结构的书，天=节点）
-export type BookType = 'lecture' | 'workbook' | 'textbook' | 'special' | 'variant_special' | 'daily_punch'
+// pdf_pending 待解析（PDF 直录书：只有 PDF 本体 + 封面图，尚未拆成节点/题）
+export type BookType =
+  | 'lecture' | 'workbook' | 'textbook' | 'special' | 'variant_special' | 'daily_punch' | 'pdf_pending'
 export const BOOK_TYPE_LABEL: Record<BookType, string> = {
   lecture: '讲义',
   workbook: '练习册',
@@ -26,6 +28,7 @@ export const BOOK_TYPE_LABEL: Record<BookType, string> = {
   special: '专项',
   variant_special: '举一反三专项',
   daily_punch: '每日打卡',
+  pdf_pending: '待解析',
 }
 
 /** 内容项类型：explain 讲解块 / question 题引用 */
@@ -50,6 +53,32 @@ export interface ItemExplain {
   /** 讲解正文（富文本 Markdown + LaTeX） */
   text?: string
   [k: string]: unknown
+}
+
+/** 网盘服务商（所有书型通用的网盘链接管理）。 */
+export type NetdiskProvider = 'baidu' | 'quark' | 'aliyun' | 'other'
+export const NETDISK_PROVIDER_LABEL: Record<NetdiskProvider, string> = {
+  baidu: '百度网盘',
+  quark: '夸克网盘',
+  aliyun: '阿里云盘',
+  other: '其他',
+}
+
+/** 书绑定的一条网盘链接（存 biz_shelf_book.style_meta_json.netdisks）。 */
+export interface BookNetdisk {
+  provider: NetdiskProvider | string
+  /** 分享链接 */
+  url: string
+  /** 提取码（无则空） */
+  code?: string | null
+  /** 备注（如「含答案册」） */
+  note?: string | null
+}
+
+/** 保存网盘链接返回（全量覆盖式：返回落库后的最新明细）。 */
+export interface BookNetdisksResult {
+  bookId: string
+  netdisks: BookNetdisk[]
 }
 
 /** 书卡片 / 详情（bookBrief）。withStats=true 时带 nodeCount/itemCount/questionCount。 */
@@ -85,6 +114,63 @@ export interface ShelfBookVO {
   volumeCode?: number | null
   /** 版本 biz_edu_edition（1浙教 2人教…） */
   editionCode?: number | null
+  // ── 网盘链接（列表行兼容口径）──
+  /** 已绑网盘条数；分页行不下发 styleMeta 明细时用它出小标 */
+  netdiskCount?: number
+  // ── PDF 直录书（bookType=pdf_pending）──
+  /** PDF 本体地址（在线预览/下载） */
+  pdfUrl?: string | null
+  /** PDF 页数 */
+  pdfPages?: number | null
+  /** 封面缩略图（PDF 首页渲染） */
+  coverUrl?: string | null
+}
+
+/**
+ * 网盘明细兼容读：优先 styleMeta.netdisks（分页行 bookBrief 已带 styleMeta），
+ * 顶层 netdisks 兜底；两处都没有返 undefined —— 调用方据此判断「行里没明细，需 GET 详情」。
+ */
+export function readBookNetdisks(b?: ShelfBookVO | null): BookNetdisk[] | undefined {
+  if (!b) return undefined
+  const fromMeta = (b.styleMeta as { netdisks?: unknown } | null | undefined)?.netdisks
+  if (Array.isArray(fromMeta)) return fromMeta as BookNetdisk[]
+  const fromTop = (b as unknown as { netdisks?: unknown }).netdisks
+  if (Array.isArray(fromTop)) return fromTop as BookNetdisk[]
+  return undefined
+}
+
+/** 已绑网盘条数：有明细按明细数，否则读行上的 netdiskCount（两口径兼容）。 */
+export function readBookNetdiskCount(b?: ShelfBookVO | null): number {
+  const list = readBookNetdisks(b)
+  if (list) return list.length
+  return Number(b?.netdiskCount ?? 0) || 0
+}
+
+/** 打卡书整册导出态（style_meta.punchExport 镜像；shelf 卡片⋯菜单判「可下载/导出中」用）。 */
+export interface BookPunchExport {
+  status?: string
+  questionUrl?: string
+  answerUrl?: string
+  days?: number
+  exportedAt?: string
+  error?: string
+}
+
+/** 打卡书整册导出态兼容读：行上 styleMeta.punchExport；没有返 undefined（=从未导过）。 */
+export function readBookPunchExport(b?: ShelfBookVO | null): BookPunchExport | undefined {
+  const pe = (b?.styleMeta as { punchExport?: unknown } | null | undefined)?.punchExport
+  return pe && typeof pe === 'object' ? (pe as BookPunchExport) : undefined
+}
+
+/** PDF 直录书元信息兼容读：顶层字段优先，回落 styleMeta（BE 两处都可能落）。 */
+export function readBookPdfMeta(b?: ShelfBookVO | null): { pdfUrl: string; pdfPages: number; coverUrl: string } {
+  const meta = (b?.styleMeta ?? {}) as { pdfUrl?: unknown; pdfPages?: unknown; coverUrl?: unknown }
+  const pick = (top: unknown, inMeta: unknown) => (top != null && top !== '' ? top : inMeta)
+  return {
+    pdfUrl: String(pick(b?.pdfUrl, meta.pdfUrl) ?? ''),
+    pdfPages: Number(pick(b?.pdfPages, meta.pdfPages) ?? 0) || 0,
+    coverUrl: String(pick(b?.coverUrl, meta.coverUrl) ?? ''),
+  }
 }
 
 /** 内容项 VO */
@@ -196,6 +282,49 @@ export const getBookStructure = (id: string) =>
 export const deleteBook = (id: string) =>
   request.delete<void, void>(`${BASE}/book/${id}`)
 
+/**
+ * 保存书的网盘链接（全量覆盖：传空数组=清空）→ {bookId, netdisks}。
+ * 所有书型通用；落 style_meta_json.netdisks，书详情 GET 的 styleMeta.netdisks 可读回。
+ */
+export const saveBookNetdisks = (bookId: string, netdisks: BookNetdisk[]) =>
+  request.post<BookNetdisksResult, BookNetdisksResult>(`${BASE}/book/${bookId}/netdisks`, { netdisks })
+
+/** PDF 直录建书入参（multipart）。grade/subjectId 可空——只为分类，不影响建书。 */
+export interface BookImportPdfBo {
+  file: File | Blob
+  title: string
+  /** 年级文本（写 biz_shelf_book.grade 文本列，如「五年级」） */
+  grade?: string
+  subjectId?: string
+}
+
+/** PDF 直录建书返回（bookType 固定 pdf_pending）。 */
+export interface BookImportPdfResult {
+  id: string
+  title: string
+  bookType: string
+  pdfUrl?: string
+  pdfPages?: number
+  coverUrl?: string
+}
+
+/**
+ * PDF 直录待解析书：POST book/importPdf（multipart file/title/grade?/subjectId?）。
+ * 🔴 上传 + 首页渲封面是同步长任务（大 PDF 数十秒），超时放宽到 5 分钟覆盖默认 15s。
+ */
+export function importBookPdf(bo: BookImportPdfBo): Promise<BookImportPdfResult> {
+  const form = new FormData()
+  // Blob 入参补文件名（BE @RequestPart file 需要 filename 才认扩展名）
+  form.append('file', bo.file, (bo.file as File).name || 'book.pdf')
+  form.append('title', bo.title)
+  if (bo.grade) form.append('grade', bo.grade)
+  if (bo.subjectId) form.append('subjectId', bo.subjectId)
+  return request.post<BookImportPdfResult, BookImportPdfResult>(`${BASE}/book/importPdf`, form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 300_000,
+  })
+}
+
 /** 增节点：POST node → {id} */
 export const addNode = (bo: ShelfNodeBo) =>
   request.post<{ id: string }, { id: string }>(`${BASE}/node`, bo)
@@ -288,6 +417,30 @@ export interface BookExportResult {
   bookId?: string
   bookType?: string
 }
+
+/** 电子课本阅读页数据（GET book/{id}/pages）：目录（章+起始页）+ 全书页表（页码→整页图 OSS url）。 */
+export interface TextbookChapter {
+  nodeId: string
+  name: string
+  startPage: number
+}
+export interface TextbookPagesResult {
+  bookId: string
+  title: string
+  totalPages: number
+  chapters: TextbookChapter[]
+  pages: { page: number; url: string }[]
+}
+
+/**
+ * 电子课本阅读页数据：一次拉全书「章目录 + 页码→页图」表（2026-07-30 课本展示改版）。
+ * 页图=题块整页图（零迁移），页码=source_page；FE 据此做目录跳页+单页翻书。
+ */
+export const getTextbookPages = (bookId: string) =>
+  request.get<TextbookPagesResult, TextbookPagesResult>(`${BASE}/book/${bookId}/pages`, {
+    // 全书页表一次返回（百余条 url），比默认宽放些
+    timeout: 30_000,
+  })
 
 /**
  * 整书导出 PDF：POST book/{bookId}/export → {url, pages}。
