@@ -146,6 +146,36 @@ export function readBookNetdiskCount(b?: ShelfBookVO | null): number {
   return Number(b?.netdiskCount ?? 0) || 0
 }
 
+/** 书的宣发文案（存 biz_shelf_book.style_meta_json.promo）：发小红书/朋友圈的现成话术，跟着书走。 */
+export interface BookPromo {
+  /** 宣发标题（≤100 字） */
+  title?: string | null
+  /** 宣发描述/正文（≤3000 字，可多行） */
+  desc?: string | null
+}
+
+/** 保存宣发文案返回（覆盖式；promo=null 表示已清空）。 */
+export interface BookPromoResult {
+  bookId: string
+  promo: BookPromo | null
+}
+
+/** 宣发文案兼容读：styleMeta.promo 优先，顶层 promo 兜底；两处都没有返 undefined。 */
+export function readBookPromo(b?: ShelfBookVO | null): BookPromo | undefined {
+  if (!b) return undefined
+  const fromMeta = (b.styleMeta as { promo?: unknown } | null | undefined)?.promo
+  if (fromMeta && typeof fromMeta === 'object') return fromMeta as BookPromo
+  const fromTop = (b as unknown as { promo?: unknown }).promo
+  if (fromTop && typeof fromTop === 'object') return fromTop as BookPromo
+  return undefined
+}
+
+/** 是否已存过宣发文案（标题/描述任一非空）——卡片小标用。 */
+export function hasBookPromo(b?: ShelfBookVO | null): boolean {
+  const p = readBookPromo(b)
+  return !!(p && ((p.title ?? '').trim() || (p.desc ?? '').trim()))
+}
+
 /** 打卡书整册导出态（style_meta.punchExport 镜像；shelf 卡片⋯菜单判「可下载/导出中」用）。 */
 export interface BookPunchExport {
   status?: string
@@ -288,6 +318,13 @@ export const deleteBook = (id: string) =>
  */
 export const saveBookNetdisks = (bookId: string, netdisks: BookNetdisk[]) =>
   request.post<BookNetdisksResult, BookNetdisksResult>(`${BASE}/book/${bookId}/netdisks`, { netdisks })
+
+/**
+ * 保存书的宣发文案（覆盖式：标题+描述都传空=清空）→ {bookId, promo}。
+ * 所有书型通用；落 style_meta_json.promo，书详情 GET 的 styleMeta.promo 可读回。
+ */
+export const saveBookPromo = (bookId: string, promo: BookPromo) =>
+  request.post<BookPromoResult, BookPromoResult>(`${BASE}/book/${bookId}/promo`, promo)
 
 /** PDF 直录建书入参（multipart）。grade/subjectId 可空——只为分类，不影响建书。 */
 export interface BookImportPdfBo {

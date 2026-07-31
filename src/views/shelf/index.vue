@@ -15,9 +15,11 @@ import {
   readBookNetdiskCount,
   readBookPdfMeta,
   readBookPunchExport,
+  hasBookPromo,
   BOOK_TYPE_LABEL,
   type BookType,
   type BookNetdisk,
+  type BookPromo,
   type ShelfBookVO,
 } from '@/api/shelf'
 import { exportPunchBook, getPunchBookExportStatus } from '@/api/teacher/punch'
@@ -29,6 +31,7 @@ import { getProgress, type ReviewProgress } from '@/api/review'
 import LineIcon from '@/components/LineIcon.vue'
 import { proxyImage } from '@/utils/image-proxy'
 import NetdiskDialog from './components/NetdiskDialog.vue'
+import PromoDialog from './components/PromoDialog.vue'
 import ImportPdfDialog from './components/ImportPdfDialog.vue'
 
 const router = useRouter()
@@ -227,6 +230,10 @@ function coverStyle(b: ShelfBookVO): Record<string, string> {
 function netdiskCountOf(b: ShelfBookVO): number {
   return readBookNetdiskCount(b)
 }
+/** 已存宣发文案小标（没存不显示）。 */
+function hasPromoOf(b: ShelfBookVO): boolean {
+  return hasBookPromo(b)
+}
 function typeLabel(t: string): string {
   return BOOK_TYPE_LABEL[t as BookType] ?? t
 }
@@ -372,6 +379,7 @@ function onCardMenu(cmd: string, b: ShelfBookVO) {
   switch (cmd) {
     case 'del': void onDelete(b); break
     case 'netdisk': openNetdisk(b); break
+    case 'promo': openPromo(b); break
     case 'dl-q': if (pe?.questionUrl) window.open(pe.questionUrl, '_blank'); break
     case 'dl-a': if (pe?.answerUrl) window.open(pe.answerUrl, '_blank'); break
     case 'export':
@@ -453,6 +461,22 @@ function onNetdiskSaved(p: { bookId: string; netdisks: BookNetdisk[] }) {
     b.id === p.bookId
       ? { ...b, styleMeta: { ...(b.styleMeta ?? {}), netdisks: p.netdisks }, netdiskCount: p.netdisks.length }
       : b,
+  )
+}
+
+// —— 宣发文案弹窗（所有书型通用）——
+const promoVisible = ref(false)
+const promoBook = ref<ShelfBookVO | null>(null)
+
+function openPromo(b: ShelfBookVO) {
+  promoBook.value = b
+  promoVisible.value = true
+}
+
+/** 保存成功就地回填该行，卡片小标立刻跟上，不整页重拉。 */
+function onPromoSaved(p: { bookId: string; promo: BookPromo | null }) {
+  books.value = books.value.map((b) =>
+    b.id === p.bookId ? { ...b, styleMeta: { ...(b.styleMeta ?? {}), promo: p.promo } } : b,
   )
 }
 
@@ -586,6 +610,8 @@ onMounted(() => {
             <span :class="tagClass(b.bookType)">{{ typeLabel(b.bookType) }}</span>
             <!-- 已绑网盘条数小标（0 条不显示）-->
             <span v-if="netdiskCountOf(b) > 0" class="nd-chip" title="已绑网盘链接">☁{{ netdiskCountOf(b) }}</span>
+            <!-- 已存宣发文案小标（没存不显示）-->
+            <span v-if="hasPromoOf(b)" class="pm-chip" title="已存宣发文案">📣</span>
             <div class="stat">{{ statLine(b) }}</div>
             <!-- 🔴 PRD-006 录入审核进度角标（AC5）：done→录入确认完成徽标 / 否则迷你进度条 -->
             <div v-if="reviewInfoMap[b.id]" class="rv-badge">
@@ -616,6 +642,7 @@ onMounted(() => {
                 <template #dropdown>
                   <el-dropdown-menu>
                     <el-dropdown-item command="netdisk">网盘链接</el-dropdown-item>
+                    <el-dropdown-item command="promo">宣发文案</el-dropdown-item>
                     <!-- 打卡书：整册异步导出（后台渲染，styleMeta 持久化）+ 导好的全册直接可下 -->
                     <template v-if="isPunchBook(b)">
                       <el-dropdown-item command="export" :disabled="isPunchExportRunning(b)">
@@ -664,6 +691,8 @@ onMounted(() => {
 
     <!-- 网盘链接管理（所有书型通用） -->
     <NetdiskDialog v-model:visible="netdiskVisible" :book="netdiskBook" @saved="onNetdiskSaved" />
+    <!-- 宣发文案（所有书型通用） -->
+    <PromoDialog v-model:visible="promoVisible" :book="promoBook" @saved="onPromoSaved" />
     <!-- PDF 直录待解析书 -->
     <ImportPdfDialog v-model:visible="importVisible" @imported="onPdfImported" />
   </div>
@@ -909,6 +938,17 @@ onMounted(() => {
   border-radius: 6px;
   background: #e8f1fb;
   color: #1268b3;
+  cursor: default;
+}
+.pm-chip {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: #fdf0e3;
+  color: #b8641a;
   cursor: default;
 }
 .stat {
