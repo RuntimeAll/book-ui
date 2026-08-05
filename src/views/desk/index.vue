@@ -37,6 +37,8 @@ const MENU_GROUPS: MenuGroup[] = [
       { title: '排课总览', path: '/desk/schedule', icon: 'schedule' },
       { title: '学生与班级', path: '/desk/targets', icon: 'targets' },
       { title: '课程计划', path: '/desk/plans', icon: 'plans' },
+      // PRD-018 D12：账单升为一等页面，与课程计划平级并列（原先寄居在学生详情里）
+      { title: '课时账单', path: '/desk/account', icon: 'account' },
       { title: '课后反馈', path: '/desk/feedback', icon: 'prep' },
     ],
   },

@@ -225,6 +225,9 @@ const router = createRouter({
             { path: 'schedule', name: 'ScheduleOverview', component: () => import('@/views/desk/schedule/index.vue') },
             { path: 'targets', name: 'TeachTargets', component: () => import('@/views/desk/targets/index.vue') },
             { path: 'plans', name: 'CoursePlans', component: () => import('@/views/desk/plans/index.vue') },
+            // 🔴 PRD-018 D12 — 课时账单（一等页面，与课程计划平级）：我的全部账本 + 台账 + 充值/调整/转账/导出。
+            //   `?accountId=` 直达某本账（学生详情「在课时账单页打开」跳进来用）。
+            { path: 'account', name: 'AccountBill', component: () => import('@/views/desk/account/index.vue') },
             // 🔴 PRD-004 课后反馈单（列表 + 编辑，最小版 CRUD+PNG）
             { path: 'feedback', name: 'FeedbackList', component: () => import('@/views/feedback/index.vue') },
             { path: 'feedback/edit', name: 'FeedbackCreate', component: () => import('@/views/feedback/edit.vue') },

@@ -7,7 +7,7 @@
  * 🔴 **默认实扣只认 BE**（拍板 D-a）：默认小时 = `plannedHours`（= 该绑定的每节时长，BE 用与
  *    settleOne 同一个函数算出），默认金额 = `plannedAmount`。**前端不再自算默认值**——排课时段
  *    只是日程，改期/拖拽/缓冲格子永不影响钱。只有老师手动改了小时数，金额才前端按
- *    `pricePerHour` 重算（hours 参数 = 人工覆盖位）。
+ *    账本计价重算（hours 参数 = 人工覆盖位）。
  * 🔴 **D10 域间解耦**：结算只做「扣课 + 标已上」两件事，**不再副作用式建反馈壳**；
  *    「同时生成反馈壳」开关整段撤除，课后反馈到反馈页单独建单。
  * 🔴 **D10 拆收费硬闸**：未开本 / 账本停用（price=null）**不再阻止勾选**——教学事实不被收费
@@ -29,7 +29,7 @@ import { useTuitionUnit } from '@/composables/useTuitionUnit'
 
 /**
  * 弹窗行 = 待结算行 + priceUnknown（单场版从抽屉/场次表/工作台进来、该场还没进待结算清单时
- * 单价与 plannedHours 都取不到；金额列显示「按账本时薪」而不是假的 ¥0，真实扣数由 BE 算）。
+ * 计价与 plannedHours 都取不到；金额列显示「按账本计价」而不是假的 ¥0，真实扣数由 BE 算）。
  */
 export type SettleRow = PendingSettlementVO & { priceUnknown?: boolean }
 
@@ -171,7 +171,7 @@ function lessonSub(r: SettleRow): string {
 
 /**
  * 该行金额。🔴 没改小时 → 直接用 BE 的 plannedAmount（唯一权威，前端不自算）；
- * 改了小时 → 才按 hours × pricePerHour 重算。拿不到时薪就返 null（画「按账本时薪」而不是 ¥0）。
+ * 改了小时 → 才按 hours × 账本计价参数重算。拿不到计价就返 null（画「按账本计价」而不是 ¥0）。
  */
 function rowAmount(r: SettleRow): number | null {
   if (!hoursTouched(r)) return r.plannedAmount ?? null
@@ -181,11 +181,11 @@ function rowAmount(r: SettleRow): number | null {
   return Math.round(h * pph * 100) / 100
 }
 
-/** 金额列文案：无账本 '—'（绝不画 ¥0）/ 算不出来「按账本时薪」/ 正常 ¥N */
+/** 金额列文案：无账本 '—'（绝不画 ¥0）/ 算不出来「按账本计价」/ 正常 ¥N */
 function amountLabel(r: SettleRow): string {
   if (noAccount(r)) return '—'
   const a = rowAmount(r)
-  return a === null ? '按账本时薪' : fmtMoney(a)
+  return a === null ? '按账本计价' : fmtMoney(a)
 }
 
 const selected = computed(() => props.rows.filter((r) => editOf(r.sessionId).checked))
@@ -203,15 +203,15 @@ const noAccountCount = computed(() => selected.value.filter(noAccount).length)
 const totalAmount = computed(
   () => Math.round(selected.value.reduce((s, r) => s + (noAccount(r) ? 0 : rowAmount(r) ?? 0), 0) * 100) / 100,
 )
-/** 金额算不出来的行（单场版/无时薪）——照常求和会在钱屏上打出假 ¥0，必须注明 */
+/** 金额算不出来的行（单场版/无计价）——照常求和会在钱屏上打出假 ¥0，必须注明 */
 const unknownAmountCount = computed(
   () => selected.value.filter((r) => !noAccount(r) && rowAmount(r) === null).length,
 )
 const totalAmountLabel = computed(() => {
   const known = selected.value.length - unknownAmountCount.value - noAccountCount.value
-  if (!known) return unknownAmountCount.value ? '金额按账本时薪' : '—'
+  if (!known) return unknownAmountCount.value ? '金额按账本计价' : '—'
   const base = fmtMoney(totalAmount.value)
-  return unknownAmountCount.value ? `${base} + ${unknownAmountCount.value} 场按账本时薪` : base
+  return unknownAmountCount.value ? `${base} + ${unknownAmountCount.value} 场按账本计价` : base
 })
 
 const allChecked = computed({

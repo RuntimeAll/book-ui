@@ -628,7 +628,7 @@ export interface PendingSettlementVO {
    *    结算时 BE 跳过扣课进「待补扣」。
    */
   price: number | null
-  /** 🆕 时薪（元/小时）；无账本为 null */
+  /** 🆕 内部计价参数（每小时多少元）；无账本为 null。🔴 D11 不上屏，展示走「每节价」 */
   pricePerHour?: number | null
   /** 🆕 每节时长（小时，来自绑定）；无绑定为 null */
   hoursPerLesson?: number | null

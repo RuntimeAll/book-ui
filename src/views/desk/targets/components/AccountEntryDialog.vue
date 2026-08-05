@@ -1,15 +1,20 @@
 <script setup lang="ts">
 /**
- * PRD-018 批3 · 课时账本录入弹窗（四态共用一个壳，对照设计稿 ③④）。
- * - open      开通学科账户：学科 + 时薪 + 每节时长，底部折叠「记入已有账本」
- * - price     改时薪：学科只读，改时薪 + 每节时长
+ * PRD-018 批3 · 课时账本录入弹窗（四态共用一个壳，对照设计稿 ③④）→ **批5 D11/D12 改造**。
+ * - open      开通学科账户：学科 + 每节时长 + 每节价，底部折叠「记入已有账本」
+ * - price     改计价：学科只读，改每节时长 + 每节价
  * - recharge  充值：三档任填一档（小时 / 节 / 金额）+ 业务日期
  * - adjust    调整：同 recharge，允许负数
  *
  * 🔴 D1 v2.1：底账只记小时。三档换算<b>只在前端做给人看</b>，落库只发老师选中的那一档
  *    （发三个 BE 得猜以谁为准，等于把口径决定权丢给服务端）。
+ * 🔴 **D11（批5）**：用户可见面只有「每节 X 小时 · Y 元/节」，按小时计价的说法一律不上屏。
+ *    输入也按这两个值收，提交前换算成内部计价参数 `pricePerHour = 每节价 ÷ 每节时长`
+ *    （唯一换算入口 = `toPricePerHour`，**保 4 位**：350 ÷ 1.5 = 233.3333，砍两位每笔差几分）。
+ * 🔴 **D12（批5）**：`studentId` 改为可选 —— 「课时账单」页开户时没有学生上下文，
+ *    本弹窗自带学生选择器（选完即时拉该生已开学科，避免重复开同一科）。
  * 🔴 AC9：金额档把老师输入的钱原样带 `amountPaid`——收 3500 台账就显示 3500 整，
- *    不能让「小时 × 时薪」的派生尾差替老师改写他真收到的数。
+ *    不能让派生尾差替老师改写他真收到的数。
  * 🔴 D9：`occurDate` 业务日期默认今天、可回填历史；台账按它排序而不是按写入时间，
  *    所以补录一笔旧充值后，它后面每一行的剩余都会自动重算。
  * 🔴 D4 规则②：共享账本（`account.shared`）多人每节时长不同 → 基准不唯一，「按节」档禁用。
@@ -21,11 +26,13 @@ import { useDictStore, DICT_EDU_SUBJECT } from '@/store/dict'
 import {
   upsertAccount,
   addAccountFlow,
+  listAccounts,
   listMyAccountBooks,
   type TuitionAccountVO,
   type TuitionFlowBo,
   type AccountBookVO,
 } from '@/api/teacher/account'
+import { pageTargets } from '@/api/teacher/schedule'
 import { useTuitionUnit, todayStr } from '@/composables/useTuitionUnit'
 
 type Mode = 'open' | 'price' | 'recharge' | 'adjust'
@@ -35,10 +42,11 @@ type Tab = 'h' | 'j' | 'y'
 const props = defineProps<{
   modelValue: boolean
   mode: Mode
-  studentId: string
+  /** 🔄 批5：可选 —— 不传（课时账单页开户）时本弹窗自带学生选择器 */
+  studentId?: string
   /** price / recharge / adjust 模式下的目标账本绑定 */
   account?: TuitionAccountVO | null
-  /** open 模式下已开户学科码（下拉里排除，改时薪走行内「改时薪」入口） */
+  /** open 模式下已开户学科码（下拉里排除，改计价走行内「改计价」入口） */
   openedSubjects?: string[]
 }>()
 
@@ -47,28 +55,60 @@ const emit = defineEmits<{
   (e: 'saved'): void
 }>()
 
-const { fmtNum, fmtMoney } = useTuitionUnit()
+const { fmtNum, fmtMoney, toLessonPrice, toPricePerHour, priceSpecText } = useTuitionUnit()
 
 const dict = useDictStore()
 dict.load(DICT_EDU_SUBJECT)
-const SUBJECT_OPTIONS = computed(() =>
-  dict.list(DICT_EDU_SUBJECT).filter((d) => !(props.openedSubjects || []).includes(d.dictValue)),
-)
 
 const visible = computed({
   get: () => props.modelValue,
   set: (v) => emit('update:modelValue', v),
 })
 
+// ── 学生：父级给了就锁定，没给就本弹窗自选（D12 账单页开户）───────────────
+const students = ref<{ id: string; name: string }[]>([])
+const pickedStudentId = ref('')
+/** 自选学生时该生已开的学科（父级传了 studentId 就吃 props.openedSubjects） */
+const pickedOpened = ref<string[]>([])
+
+const selfPick = computed(() => !props.studentId)
+const effStudentId = computed(() => props.studentId || pickedStudentId.value)
+
+async function loadStudents() {
+  try {
+    const res = await pageTargets({ targetType: '0', pageSize: 500 })
+    students.value = (res?.rows ?? []).map((s) => ({ id: s.id, name: s.name }))
+  } catch {
+    students.value = []
+  }
+}
+
+/** 换学生 → 重新拉他已开的学科（同一科重复开会撞 uk，不如直接从候选里拿掉） */
+watch(pickedStudentId, async (id) => {
+  pickedOpened.value = []
+  if (!id) return
+  try {
+    pickedOpened.value = ((await listAccounts(id)) ?? []).map((a) => a.subject)
+  } catch {
+    pickedOpened.value = []
+  }
+})
+
+const openedList = computed(() => (selfPick.value ? pickedOpened.value : props.openedSubjects || []))
+
+const SUBJECT_OPTIONS = computed(() =>
+  dict.list(DICT_EDU_SUBJECT).filter((d) => !openedList.value.includes(d.dictValue)),
+)
+
 const title = computed(() => {
   if (props.mode === 'open') return '开通学科账户'
   const s = props.account?.subjectLabel || props.account?.subject || ''
   const suffix = s ? ' · ' + s : ''
-  if (props.mode === 'price') return `改时薪${suffix}`
+  if (props.mode === 'price') return `改计价${suffix}`
   return props.mode === 'recharge' ? `充值${suffix}` : `调整${suffix}`
 })
 
-/** 学科/时薪表单（open 与 price 共用），流水表单（recharge / adjust）另一套 */
+/** 学科/计价表单（open 与 price 共用），流水表单（recharge / adjust）另一套 */
 const isPriceForm = computed(() => props.mode === 'open' || props.mode === 'price')
 
 const formRef = ref<FormInstance>()
@@ -76,11 +116,11 @@ const submitting = ref(false)
 
 const form = reactive({
   subject: '',
-  /** 时薪 元/小时（v3 唯一价格口径） */
-  pricePerHour: 0,
-  /** 每节时长 小时（落在绑定层，只影响折节展示与结算默认值） */
+  /** 每节价 元/节（D11 对外唯一价格口径；提交前折成内部 pricePerHour） */
+  lessonPrice: 0,
+  /** 每节时长 小时（落在绑定层，既是折节基准也是结算默认扣时） */
   hoursPerLesson: 1,
-  /** 记入已有账本：非空 = 只建绑定不新开本，时薪跟账本走 */
+  /** 记入已有账本：非空 = 只建绑定不新开本，计价跟账本走 */
   accountId: '',
   /** 三档输入 */
   tab: 'h' as Tab,
@@ -114,6 +154,14 @@ async function loadBooks() {
   }
 }
 
+/** 选中的已有账本（计价跟它走，每节价由「它的内部参数 × 本人每节时长」现算） */
+const pickedBook = computed(() => books.value.find((b) => b.id === form.accountId) ?? null)
+
+/** 记入已有账本时，这个学生按自己填的每节时长折出来的每节价 */
+const boundLessonPrice = computed(() =>
+  pickedBook.value ? toLessonPrice(pickedBook.value.pricePerHour, Number(form.hoursPerLesson) || 0) : null,
+)
+
 // ── 三档换算（D9）────────────────────────────────────────────────────────
 /** 每节时长基准；共享账本基准不唯一 → null，「按节」档不可用 */
 const perLesson = computed<number | null>(() => {
@@ -121,6 +169,7 @@ const perLesson = computed<number | null>(() => {
   if (!a || a.shared) return null
   return a.hoursPerLesson && a.hoursPerLesson > 0 ? a.hoursPerLesson : null
 })
+/** 内部计价参数（不上屏，只用来把金额档折成小时） */
 const pricePerHour = computed(() => props.account?.pricePerHour ?? 0)
 const canLessonTab = computed(() => perLesson.value !== null)
 const canAmountTab = computed(() => pricePerHour.value > 0)
@@ -150,11 +199,10 @@ const convText = computed(() => {
   return parts.length ? '= ' + parts.join(' = ') : ''
 })
 
+/** 折算依据：D11 口径只报「每节 X 小时 · Y 元/节」 */
 const convHint = computed(() => {
-  const bits: string[] = []
-  if (perLesson.value) bits.push(`每节 ${fmtNum(perLesson.value)} 小时`)
-  if (pricePerHour.value > 0) bits.push(`时薪 ${fmtNum(pricePerHour.value)} 元/小时`)
-  return bits.length ? '按' + bits.join(' · ') + '折算' : ''
+  const spec = priceSpecText(pricePerHour.value, perLesson.value)
+  return spec ? `按${spec}折算` : ''
 })
 
 /** 当前余额小抬头（设计稿 ③ 的 .msub） */
@@ -172,10 +220,12 @@ watch(
     if (!open) return
     formRef.value?.clearValidate()
     const a = props.account
-    // 改时薪：学科与现价从目标绑定回填（学科锁死——换学科等于挂到另一科，余额会挂错账）
+    // 改计价：学科与现价从目标绑定回填（学科锁死——换学科等于挂到另一科，余额会挂错账）
     form.subject = props.mode === 'price' ? (a?.subject ?? '') : ''
-    form.pricePerHour = props.mode === 'price' ? (a?.pricePerHour ?? 0) : 0
     form.hoursPerLesson = props.mode === 'price' ? (a?.hoursPerLesson || 1) : 1
+    // 每节价 = 内部参数 × 每节时长（233.3333 × 1.5 = 350，原样还回来）
+    form.lessonPrice =
+      props.mode === 'price' ? (toLessonPrice(a?.pricePerHour, a?.hoursPerLesson) ?? 0) : 0
     form.accountId = ''
     foldOpen.value = false
     // 默认档：共享账本折不了节 → 落回小时
@@ -183,7 +233,14 @@ watch(
     form.val = 0
     form.occurDate = todayStr()
     form.note = ''
-    if (props.mode === 'open') void loadBooks()
+    if (props.mode === 'open') {
+      void loadBooks()
+      if (selfPick.value) {
+        pickedStudentId.value = ''
+        pickedOpened.value = []
+        void loadStudents()
+      }
+    }
   },
 )
 
@@ -192,16 +249,6 @@ watch(
   () => form.tab,
   () => {
     form.val = 0
-  },
-)
-
-/** 选中已有账本 → 时薪跟账本走，本地那格只作只读回显 */
-watch(
-  () => form.accountId,
-  (id) => {
-    if (!id) return
-    const b = books.value.find((x) => x.id === id)
-    if (b) form.pricePerHour = b.pricePerHour
   },
 )
 
@@ -222,9 +269,14 @@ async function submit() {
   }
 }
 
-/** open / price：建本+绑定 或 改时薪+每节时长 */
+/** open / price：建本+绑定 或 改计价（每节时长 + 每节价） */
 async function submitBook() {
-  // price 态 subject 来自目标绑定（模板里只读展示），命中 uk = 改时薪、不动余额
+  const studentId = effStudentId.value
+  if (!studentId) {
+    ElMessage.warning('请选择学生')
+    return
+  }
+  // price 态 subject 来自目标绑定（模板里只读展示），命中 uk = 改计价、不动余额
   const subject = props.mode === 'price' ? (props.account?.subject ?? '') : form.subject
   if (!subject) {
     ElMessage.warning('缺少学科，无法保存')
@@ -236,16 +288,17 @@ async function submitBook() {
     return
   }
   await upsertAccount({
-    studentId: props.studentId,
+    studentId,
     subject,
-    // 记入已有账本时不传时薪：一本账一个时薪，跟账本走（传了会把那本账的价改掉）
-    pricePerHour: form.accountId ? undefined : Number(form.pricePerHour) || 0,
+    // 🔴 D11 换算唯一出口：每节价 ÷ 每节时长 → 内部计价参数（保 4 位，350÷1.5=233.3333）
+    // 记入已有账本时不传：一本账一个价，跟账本走（传了会把那本账的价改掉）
+    pricePerHour: form.accountId ? undefined : toPricePerHour(form.lessonPrice, hpl),
     hoursPerLesson: hpl,
     accountId: form.accountId || undefined,
   })
   ElMessage.success(
     props.mode === 'price'
-      ? '时薪已更新（不影响已扣的历史记录）'
+      ? '计价已更新（不影响已扣的历史记录）'
       : form.accountId
         ? '已记入所选账本'
         : '账户已开通',
@@ -291,6 +344,18 @@ async function submitFlow() {
   <el-dialog v-model="visible" :title="title" width="480px" append-to-body :close-on-click-modal="false">
     <el-form ref="formRef" :model="form" :rules="rules" label-width="86px">
       <template v-if="isPriceForm">
+        <!-- D12：账单页开户没有学生上下文 → 本弹窗自己选 -->
+        <el-form-item v-if="mode === 'open' && selfPick" label="学生">
+          <el-select
+            v-model="pickedStudentId"
+            filterable
+            placeholder="选择学生"
+            style="width: 100%"
+          >
+            <el-option v-for="s in students" :key="s.id" :label="s.name" :value="s.id" />
+          </el-select>
+        </el-form-item>
+
         <el-form-item v-if="mode === 'open'" label="学科" prop="subject">
           <el-select v-model="form.subject" placeholder="选择学科" style="width: 100%">
             <el-option v-for="d in SUBJECT_OPTIONS" :key="d.dictValue" :label="d.dictLabel" :value="d.dictValue" />
@@ -299,28 +364,31 @@ async function submitFlow() {
             开通即绑定该学科：系统开一本账，并把这个学生的这一科挂上去，一步完成；之后能给这科建计划、记课时课费
           </span>
         </el-form-item>
-        <!-- 改时薪：学科只读——换学科等于挂到另一科，余额会挂错账 -->
+        <!-- 改计价：学科只读——换学科等于挂到另一科，余额会挂错账 -->
         <el-form-item v-else label="学科">
           <span class="ro">{{ account?.subjectLabel || account?.subject || '—' }}</span>
         </el-form-item>
 
-        <el-form-item label="时薪">
+        <el-form-item label="每节时长">
+          <el-input-number v-model="form.hoursPerLesson" :min="0.25" :precision="2" :step="0.5" style="width: 180px" />
+          <span class="fh">小时 / 节</span>
+          <span class="fh block">与家长约定的一节课多长（如 1.5 小时）；结算默认按它扣，也是「节」的折算基准</span>
+        </el-form-item>
+
+        <el-form-item label="每节价">
           <el-input-number
-            v-model="form.pricePerHour"
+            v-model="form.lessonPrice"
             :min="0"
             :precision="2"
-            :step="10"
+            :step="50"
             :disabled="!!form.accountId"
             style="width: 180px"
           />
-          <span class="fh">元 / 小时</span>
-          <span v-if="form.accountId" class="fh block">时薪跟所选账本走，这里不改</span>
-        </el-form-item>
-
-        <el-form-item label="每节时长">
-          <el-input-number v-model="form.hoursPerLesson" :min="0.25" :precision="2" :step="0.5" style="width: 180px" />
-          <span class="fh">小时</span>
-          <span class="fh block">结算默认按它扣（如 1.5 小时/节）；只影响折节展示与扣课默认值，不动底账</span>
+          <span class="fh">元 / 节</span>
+          <span v-if="form.accountId" class="fh block">
+            价格跟所选账本走，这里不改<template v-if="boundLessonPrice !== null">
+              —— 按你填的每节时长算 = {{ fmtNum(boundLessonPrice) }} 元/节</template>
+          </span>
         </el-form-item>
 
         <el-form-item v-if="mode === 'price'" label=" ">
@@ -341,13 +409,12 @@ async function submitFlow() {
                 <el-radio v-for="b in books" :key="b.id" :value="b.id">
                   {{ b.name || b.studentNames.join('+') || '账本 #' + b.id }}
                   <i class="om" :class="{ neg: (b.hoursRemain ?? 0) < 0 }">
-                    {{ fmtNum(b.pricePerHour) }} 元/小时 ·
                     {{ (b.hoursRemain ?? 0) < 0 ? '欠' : '余' }} {{ fmtNum(Math.abs(b.hoursRemain ?? 0)) }} 小时
                   </i>
                 </el-radio>
               </el-radio-group>
               <span class="fh block">
-                选了已有账本，这个学生的课就记进那本账；时薪跟账本走，这里只填每节时长
+                选了已有账本，这个学生的课就记进那本账；价格跟账本走，这里只填每节时长
               </span>
             </template>
           </div>

@@ -9,7 +9,7 @@ import request from '@/http/request'
 // 全部端点 @SaCheckLogin，owner/create_by 由服务端登录态取，不传 body。
 //
 // 🔴 id / studentId / accountId 一律 string（雪花 19 位，JSON number 会截尾）。
-//    小时 / 金额 / 时薪是小数值，用 number 安全。
+//    小时 / 金额 / 计价参数是小数值，用 number 安全。
 // 🔴 **底账只记小时**：金额 = 小时 × pricePerHour 现场派生不落库；「节」= 小时 ÷ hoursPerLesson
 //    （每节时长在绑定层）。共享账本（bindingCount>1）多人基准不同 → 只按小时，不折节（D4 规则②）。
 // ===========================================================================
@@ -58,7 +58,10 @@ export interface TuitionAccountVO {
   subject: string
   /** 学科中文标签（BE 推导；缺省时页面回退显示 subject 码） */
   subjectLabel?: string | null
-  /** 🆕 时薪（元/小时）—— v3 唯一价格口径，一本账一个时薪 */
+  /**
+   * 🆕 内部计价参数（每小时多少元）—— 一本账一个价，共享账本「同价才能并本」的数学根基。
+   * 🔴 **D11：不上屏**。对外口径 = 每节价 = pricePerHour × hoursPerLesson（见 composables/useTuitionUnit）。
+   */
   pricePerHour: number
   /** 🆕 每节时长（小时，来自绑定 link.hours_per_lesson：俊羽 1.5 / 好好 1） */
   hoursPerLesson: number
@@ -110,16 +113,20 @@ export interface AccountBookVO {
 }
 
 /**
- * 开户 / 改绑 / 改时薪入参。
+ * 开户 / 改绑 / 改计价入参。
  * 🔄 v3：一步无感知 —— 服务端同一事务「建账本 + 建绑定」；
- *    uk(studentId, subject) 命中 = 改该绑定的每节时长 + 该账本时薪（不报错、不动余额）。
- *    传 `accountId` = 记入已有账本（换本 / 共享账本入口），此时时薪跟账本走。
+ *    uk(studentId, subject) 命中 = 改该绑定的每节时长 + 该账本计价（不报错、不动余额）。
+ *    传 `accountId` = 记入已有账本（换本 / 共享账本入口），此时计价跟账本走。
  */
 export interface AccountUpsertBo {
   studentId: string
   /** 学科字典码 */
   subject: string
-  /** 时薪（元/小时）—— v3 首选入参 */
+  /**
+   * 内部计价参数（每小时多少元）—— v3 首选入参。
+   * 🔴 **D11：FE 表单收的是「每节价」**，提交前用 `toPricePerHour(每节价, 每节时长)` 折成本字段
+   *    （保 4 位：350 ÷ 1.5 = 233.3333，砍成两位每笔差几分）。
+   */
   pricePerHour?: number
   /** 每节时长（小时），缺省 1 */
   hoursPerLesson?: number
@@ -127,7 +134,7 @@ export interface AccountUpsertBo {
   name?: string
   /** 记入已有账本：给了就只建/改绑定，不新建账本 */
   accountId?: string
-  /** @deprecated M5 兼容：元/节；pricePerHour 为空时 BE 按 hoursPerLesson 折算成时薪 */
+  /** @deprecated M5 兼容：元/节；pricePerHour 为空时 BE 按 hoursPerLesson 折算成内部计价参数 */
   lessonPrice?: number
   note?: string
 }
@@ -146,7 +153,7 @@ export interface TuitionFlowBo {
   hours?: number
   /** ② 节档（× 该绑定的每节时长；共享本多绑时 BE 不接受本档） */
   lessons?: number
-  /** ③ 金额档（÷ 账本时薪） */
+  /** ③ 金额档（÷ 账本计价参数） */
   amount?: number
   /** 实收金额（元，原样落库；不给则金额档取 amount） */
   amountPaid?: number
@@ -189,7 +196,7 @@ export interface LedgerRowVO {
   flowType: TuitionFlowType
   /** 本行小时增量（扣课为负） */
   hoursDelta: number
-  /** 本行金额（实收优先，否则按时薪派生） */
+  /** 本行金额（实收优先，否则按账本计价派生） */
   amount: number
   /** 实收金额（充值/调整行原样，AC9）；无则 null */
   amountPaid: number | null
@@ -274,7 +281,7 @@ export const listAccounts = (studentId: string) =>
 export const listMyAccountBooks = () =>
   request.get<AccountBookVO[], AccountBookVO[]>(`${BASE}/all`)
 
-/** 开户 / 改绑 / 改时薪：POST account → {id}（账本 id） */
+/** 开户 / 改绑 / 改计价：POST account → {id}（账本 id） */
 export const upsertAccount = (bo: AccountUpsertBo) =>
   request.post<IdVO, IdVO>(BASE, bo)
 

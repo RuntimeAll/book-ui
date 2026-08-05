@@ -3,7 +3,7 @@
  * PRD-015 · /m/account 课时账户（V22 / V26）→ **PRD-018 批3 改版**（v3 账本模型 + 双单位）。
  *
  * 🔄 本批改了什么（逐条对着设计稿「稿2-H5-课时账户.html」的功能点做）：
- *   FP-3  余额双单位：「N 课时 + ¥M」→「N 小时（M 节）」+ 约当金额；「单价/课时」→「时薪/小时」。
+ *   FP-3  余额双单位：「N 课时 + ¥M」→「N 小时（M 节）」+ 约当金额；价格口径 =「每节 X 小时 · Y 元/节」（D11）。
  *         🔴 折节基准 = 绑定层的 hoursPerLesson，**共享账本（shared）传 null 只按小时不折节**（D4 规则②）。
  *         欠费判定只看小时（hoursRemain<0），红显不拦截（沿用）。
  *   FP-4  顶栏「小时 / 节」全局切换（宿主在 MobileLayout，状态在 composables/useTuitionUnit）。
@@ -13,8 +13,10 @@
  *   FP-7  行三列结构/行色全沿用；shared 时行内容前补学生名（D4 规则①，纯数据驱动无开关）。
  *   FP-8/9/10 充值·调整：三档输入（小时/节/金额）实时互算，🔴 **落库只发选中那一档**（D9）；
  *         业务日期 occurDate 可回填历史（默认今天）；金额档把用户输入原样带进 amountPaid（AC9）。
- *   FP-11/12 开户：时薪 + 每节时长（撤「初始课时/初始金额」，初始额走充值）；
- *         折叠区「记入已有账本」= 学生绑已有账本（n:1），时薪跟账本走。
+ *   FP-11/12 开户：每节时长 + 每节价（撤「初始课时/初始金额」，初始额走充值）；
+ *         折叠区「记入已有账本」= 学生绑已有账本（n:1），价格跟账本走。
+ *   🔴 **D11（批5）**：用户可见面不出现按小时计价的说法；输入收「每节价」，
+ *         提交前用 `toPricePerHour` 折成内部计价参数（保 4 位：350 ÷ 1.5 = 233.3333）。
  *   FP-13 导出流水单：通道与三颗按钮**一个字节没动**。
  *
  * 🔴 三态失败分级（BUG-1 铁律）**一行未动**：loadFailed（整页失败）/ failedCount（部分失败）/
@@ -49,7 +51,8 @@ import { money } from './shared'
 
 const dict = useDictStore()
 /** d/dText = 跟随全局单位的双单位串；fmtNum/toLessons 供三档换算提示 */
-const { d, dText, fmtNum, toLessons, unit } = useTuitionUnit()
+const { d, dText, fmtNum, toLessons, unit, priceSpecText, toLessonPrice, toPricePerHour } =
+  useTuitionUnit()
 
 interface StudentAccounts {
   id: string
@@ -125,7 +128,7 @@ function isOwe(a: TuitionAccountVO): boolean {
   return (a.hoursRemain ?? 0) < 0
 }
 
-/** 约当金额 = 剩余小时 × 时薪（现场派生，不落库） */
+/** 约当金额 = 剩余小时 × 账本计价参数（现场派生，不落库） */
 function amountOf(a: TuitionAccountVO): number {
   return (a.hoursRemain ?? 0) * (a.pricePerHour ?? 0)
 }
@@ -238,7 +241,7 @@ async function openLedger(stu: StudentAccounts, a: TuitionAccountVO) {
   await loadLedgerRows(a.id)
 }
 
-// ── 写操作四态（开户 / 改时薪 / 充值 / 调整）────────────────────
+// ── 写操作四态（开户 / 改计价 / 充值 / 调整）────────────────────
 // 一个弹层壳吃四态，字段按 mode 显隐——与桌面录入弹窗一一对应。
 type EntryMode = 'open' | 'price' | 'recharge' | 'adjust'
 /** 充值/调整的输入档（D9 三档任填其一，落库只有小时） */
@@ -253,8 +256,8 @@ const foldNames = ref<string[]>([])
 const entryForm = reactive({
   studentId: '',
   subject: '',
-  /** 时薪 元/小时 */
-  pricePerHour: '',
+  /** 每节价 元/节（D11 对外唯一价格口径） */
+  lessonPrice: '',
   /** 每节时长 小时/节 */
   hoursPerLesson: '',
   /** 三档共用的那一个输入框 */
@@ -274,7 +277,7 @@ const entryTitle = computed(() => {
     case 'open':
       return '开通学科账户'
     case 'price':
-      return `改时薪 · ${s}`
+      return `改计价 · ${s}`
     case 'recharge':
       return `充值 · ${s}`
     default:
@@ -289,7 +292,7 @@ const entrySub = computed(() => {
     case 'open':
       return '开通即绑定该学科：之后能给这科建计划、记课时课费。初始额回头用「充值」记。'
     case 'price':
-      return '只改以后结算用的时薪与每节时长；已扣过的记录按当时金额留档，不回溯。'
+      return '只改以后结算用的每节时长与每节价；已扣过的记录按当时金额留档，不回溯。'
     case 'adjust':
       return `当前 ${bal}；可以填负数（扣回记错的数）`
     default:
@@ -307,11 +310,12 @@ const subjectOptions = computed(() => {
 
 // ── 三档换算（D9）：输一档，另两档实时算给老师看；落库只发选中那一档 ────────
 const curPerLesson = computed(() => (curAccount.value ? perLessonOf(curAccount.value) : null))
+/** 内部计价参数（不上屏，只用来把金额档折成小时） */
 const curPrice = computed(() => curAccount.value?.pricePerHour ?? 0)
 
 /** 「按节」档：共享账本基准不唯一 → 禁用（BE 也不接受 lessons） */
 const jieDisabled = computed(() => !curPerLesson.value)
-/** 「按金额」档：没有时薪就换算不了 */
+/** 「按金额」档：没有计价就换算不了 */
 const yuanDisabled = computed(() => !(curPrice.value > 0))
 
 /** 当前输入折成小时（**仅用于提示**，落库由 BE 按选中档换算） */
@@ -327,7 +331,7 @@ const tabUnit = computed(() =>
   entryTab.value === 'h' ? '小时' : entryTab.value === 'j' ? '节' : '元',
 )
 
-/** 「= 15 小时 = 3500 元　按每节 1.5 小时 / 时薪 ¥233.33 折算」 */
+/** 「= 15 小时 = 3500 元　按每节 1.5 小时 · 350 元/节 折算」 */
 const convHint = computed(() => {
   if (entryMode.value === 'open' || entryMode.value === 'price') return ''
   const h = entryHours.value
@@ -339,15 +343,14 @@ const convHint = computed(() => {
   }
   if (entryTab.value !== 'y' && curPrice.value > 0) parts.push(money(h * curPrice.value))
   if (!parts.length) return ''
-  const basis = curPerLesson.value
-    ? `按每节 ${fmtNum(curPerLesson.value)} 小时 / 时薪 ${money(curPrice.value)} 折算`
-    : `按时薪 ${money(curPrice.value)}/小时 折算`
+  const spec = priceSpecText(curPrice.value, curPerLesson.value)
+  const basis = spec ? `按${spec}折算` : '按本账计价折算'
   return `= ${parts.join(' = ')}　${basis}`
 })
 
 function resetEntry() {
   entryForm.subject = ''
-  entryForm.pricePerHour = ''
+  entryForm.lessonPrice = ''
   entryForm.hoursPerLesson = ''
   entryForm.val = ''
   entryForm.occurDate = todayStr()
@@ -376,7 +379,7 @@ function openEntry(mode: Exclude<EntryMode, 'open'>, stu: StudentAccounts, a: Tu
   entryForm.studentId = stu.id
   entryForm.subject = a.subject
   if (mode === 'price') {
-    entryForm.pricePerHour = String(a.pricePerHour ?? 0)
+    entryForm.lessonPrice = String(toLessonPrice(a.pricePerHour, a.hoursPerLesson) ?? 0)
     entryForm.hoursPerLesson = String(a.hoursPerLesson || 1)
   } else {
     // 默认档跟着顶栏单位走（老师正看「节」就按节记），共享账本折不了节 → 回落小时
@@ -401,7 +404,7 @@ async function submitEntry() {
   const acc = curAccount.value
 
   if (mode === 'open' || mode === 'price') {
-    // 🔴 开户与改时薪走同一个 upsertAccount：uk(studentId,subject) 命中 = 改绑定+时薪（不动余额）
+    // 🔴 开户与改计价走同一个 upsertAccount：uk(studentId,subject) 命中 = 改绑定+计价（不动余额）
     const studentId = entryForm.studentId
     const subject = mode === 'price' ? (acc?.subject ?? '') : entryForm.subject
     if (!studentId) {
@@ -417,21 +420,22 @@ async function submitEntry() {
       showToast('每节时长要大于 0（如 1 或 1.5）')
       return
     }
-    const price = num2(entryForm.pricePerHour)
-    // 记入已有账本时时薪跟账本走，本地这栏不参与校验
-    if (!entryForm.accountId && price < 0) {
-      showToast('时薪不能为负')
+    const lessonPrice = num2(entryForm.lessonPrice)
+    // 记入已有账本时价格跟账本走，本地这栏不参与校验
+    if (!entryForm.accountId && lessonPrice < 0) {
+      showToast('每节价不能为负')
       return
     }
     // 🔴 hoursPerLesson 必须每次显式带上：入参缺省时 BE 按 1 兜底，
-    //    改时薪时漏传会把俊羽的 1.5 悄悄改回 1（结算默认时长跟着错）。
+    //    改计价时漏传会把俊羽的 1.5 悄悄改回 1（结算默认时长跟着错）。
     const bo: AccountUpsertBo = { studentId, subject, hoursPerLesson: per }
     if (entryForm.accountId) bo.accountId = entryForm.accountId
-    else bo.pricePerHour = price
+    // D11 换算唯一出口：每节价 ÷ 每节时长 → 内部计价参数（保 4 位）
+    else bo.pricePerHour = toPricePerHour(lessonPrice, per)
     entrySaving.value = true
     try {
       await upsertAccount(bo)
-      showSuccessToast(mode === 'open' ? '账本已开通' : '时薪已更新')
+      showSuccessToast(mode === 'open' ? '账本已开通' : '计价已更新')
     } catch {
       return // 拦截器已提示，弹层保持打开好让老师改了重试
     } finally {
@@ -517,7 +521,8 @@ function bookTitle(b: AccountBookVO): string {
 function bookMeta(b: AccountBookVO): string {
   const h = b.hoursRemain ?? 0
   const bal = h < 0 ? `欠 ${fmtNum(-h)} 小时` : `余 ${fmtNum(h)} 小时`
-  return `${money(b.pricePerHour)}/小时 · ${bal}`
+  const spec = priceSpecText(b.pricePerHour, b.hoursPerLesson)
+  return spec ? `${spec} · ${bal}` : bal
 }
 
 // ── 学生 / 学科选择器（van-picker 底部滚轮）───────────────────
@@ -724,8 +729,8 @@ onMounted(load)
             <van-tag type="primary" plain>{{ subjectLabel(a.subject) }}</van-tag>
             <van-tag v-if="a.status === '1'" type="warning">已停用</van-tag>
             <van-tag v-if="a.shared" type="primary">共享账本</van-tag>
-            <!-- 单价 ¥X/课时 → 时薪 ¥X/小时（FP-3） -->
-            <span class="m-note" style="margin: 0">时薪 {{ money(a.pricePerHour) }}/小时</span>
+            <!-- D11：价格口径统一「每节 X 小时 · Y 元/节」，不出现按小时计价的说法 -->
+            <span class="m-note" style="margin: 0">{{ priceSpecText(a.pricePerHour, a.hoursPerLesson) }}</span>
           </span>
         </template>
         <template #value>
@@ -748,7 +753,7 @@ onMounted(load)
               充值
             </van-button>
             <van-button size="mini" @click.stop="openEntry('adjust', g, a)">调整</van-button>
-            <van-button size="mini" @click.stop="openEntry('price', g, a)">改时薪</van-button>
+            <van-button size="mini" @click.stop="openEntry('price', g, a)">改计价</van-button>
             <van-button size="mini" :loading="acting === a.id" @click.stop="toggleStatus(g, a)">
               {{ a.status === '1' ? '启用' : '停用' }}
             </van-button>
@@ -810,7 +815,7 @@ onMounted(load)
       </template>
     </MSheet>
 
-    <!-- 开户 / 改时薪 / 充值 / 调整（四态共壳）-->
+    <!-- 开户 / 改计价 / 充值 / 调整（四态共壳）-->
     <MSheet v-model="entryOpen" :title="entryTitle" :sub="entrySub">
       <!-- D9 三档：输哪档另两档实时算；落库只发选中那一档 -->
       <div v-if="entryMode === 'recharge' || entryMode === 'adjust'" class="mtabs">
@@ -855,19 +860,19 @@ onMounted(load)
 
         <template v-if="entryMode === 'open' || entryMode === 'price'">
           <van-field
-            v-model="entryForm.pricePerHour"
-            label="时薪"
-            type="number"
-            inputmode="decimal"
-            :disabled="!!entryForm.accountId"
-            :placeholder="entryForm.accountId ? '跟随所选账本' : '元 / 小时'"
-          />
-          <van-field
             v-model="entryForm.hoursPerLesson"
             label="每节时长"
             type="number"
             inputmode="decimal"
             placeholder="小时 / 节，如 1 或 1.5"
+          />
+          <van-field
+            v-model="entryForm.lessonPrice"
+            label="每节价"
+            type="number"
+            inputmode="decimal"
+            :disabled="!!entryForm.accountId"
+            :placeholder="entryForm.accountId ? '跟随所选账本' : '元 / 节，如 350'"
           />
         </template>
 
@@ -943,7 +948,7 @@ onMounted(load)
               <template #right-icon><van-radio :name="b.id" @click.stop /></template>
             </van-cell>
           </van-radio-group>
-          <p class="m-fnote">选了已有账本，这个学生的课就记进那本账；时薪跟账本走，这里只填每节时长。</p>
+          <p class="m-fnote">选了已有账本，这个学生的课就记进那本账；价格跟账本走，这里只填每节时长。</p>
         </van-collapse-item>
       </van-collapse>
 

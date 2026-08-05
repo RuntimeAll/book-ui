@@ -7,14 +7,15 @@
  * 🔴 R1a 建模：年级=gradeNo 数字码 + gradeYear（隐藏缺省当年）；学科/教材版本=字典码；
  *    显示层用 BE 推导串（VO grade/textbook/subjectLabel），本弹窗只管写原始码。
  *
- * PRD-015 bug 批 BUG-4/C「建档一体」：新建学生时可<b>顺手</b>录课时账本（学科+时薪+每节时长+初始充值，
+ * PRD-015 bug 批 BUG-4/C「建档一体」：新建学生时可<b>顺手</b>录课时账本（学科+每节时长+每节价+初始充值，
  * 可多科），保存链 = 建档成功 → 逐科 upsertAccount → 有初始小时就 addAccountFlow('1' 充值)。
  * 🔴 可跳过（拍板 C）：试听生先建档、回头再开户；学科留空的行直接忽略。
  * 🔴 只复用既有 api，不造新端点；建档已成功而开户失败 <b>不回滚建档</b>——只报哪几科没开成，
  *    让老师去学生详情补，绝不把一个已经建好的学生悄悄删掉。
  * 🔴 编辑态不重复做账户管理：只列已有账本 +「去详情管理」跳转（正本 = 学生详情 AccountPanel）。
  *
- * 🔄 PRD-018 批3：单价（元/课时）换轨成<b>时薪（元/小时）+ 每节时长</b>；初始额只填小时数，
+ * 🔄 PRD-018 批3/批5：单价（元/课时）换轨成<b>每节时长 + 每节价（元/节，D11 对外唯一价格口径）</b>；
+ *    提交前折成内部计价参数（`toPricePerHour`，保 4 位）。初始额只填小时数，
  *    实收金额选填并原样落 `amountPaid`（AC9：收 3500 就记 3500，不用派生尾差倒推）。
  */
 import { ref, reactive, watch, computed } from 'vue'
@@ -86,14 +87,14 @@ const GRADE_OPTIONS = computed(() => dict.list(DICT_EDU_GRADE))
 const SUBJECT_OPTIONS = computed(() => dict.list(DICT_EDU_SUBJECT))
 const EDITION_OPTIONS = computed(() => dict.list(DICT_EDU_EDITION))
 
-// ── PRD-015 BUG-4/C 课时账本段（PRD-018 换轨成时薪 + 每节时长）─────────────
-const { d, fmtNum, fmtMoney } = useTuitionUnit()
+// ── PRD-015 BUG-4/C 课时账本段（PRD-018 换轨成每节时长 + 每节价）──────────
+const { d, fmtMoney, priceSpecText, toPricePerHour } = useTuitionUnit()
 
 /** 建档时顺手开的账本行（学科留空=这行不开，整段可跳过） */
 interface AcctDraft {
   subject: string
-  /** 时薪 元/小时（v3 唯一价格口径） */
-  pricePerHour: number
+  /** 每节价 元/节（D11 对外唯一价格口径；提交前折成内部 pricePerHour） */
+  lessonPrice: number
   /** 每节时长 小时（落绑定层，结算默认按它扣） */
   hoursPerLesson: number
   /** 初始充值小时数（底账只记小时） */
@@ -117,7 +118,7 @@ const acctLoading = ref(false)
 const showAcct = computed(() => !isClass.value)
 
 function newAcctRow(): AcctDraft {
-  return { subject: '', pricePerHour: 0, hoursPerLesson: 1, hours: 0, amountPaid: 0 }
+  return { subject: '', lessonPrice: 0, hoursPerLesson: 1, hours: 0, amountPaid: 0 }
 }
 
 function addAcctRow() {
@@ -165,11 +166,13 @@ async function createAccounts(studentId: string): Promise<string[]> {
   for (const r of acctRows.value) {
     if (!r.subject) continue
     try {
+      const hpl = Number(r.hoursPerLesson) || 1
       const res = await upsertAccount({
         studentId,
         subject: r.subject,
-        pricePerHour: Number(r.pricePerHour) || 0,
-        hoursPerLesson: Number(r.hoursPerLesson) || 1,
+        // D11：表单收「每节价」，落库前折成内部计价参数（保 4 位，350÷1.5=233.3333）
+        pricePerHour: toPricePerHour(r.lessonPrice, hpl),
+        hoursPerLesson: hpl,
       })
       const hours = Number(r.hours) || 0
       const paid = Number(r.amountPaid) || 0
@@ -178,7 +181,7 @@ async function createAccounts(studentId: string): Promise<string[]> {
         await addAccountFlow(res.id, {
           flowType: '1',
           hours,
-          // 实收给了就原样落（AC9）；没给走「小时 × 时薪」派生
+          // 实收给了就原样落（AC9）；没给走「小时 × 账本计价」派生
           amountPaid: paid || undefined,
           occurDate: todayStr(),
           note: '建档初始',
@@ -381,16 +384,6 @@ function goDetail() {
                 />
               </el-select>
               <el-input-number
-                v-model="r.pricePerHour"
-                :min="0"
-                :precision="2"
-                :step="10"
-                :controls="false"
-                class="a-num"
-                placeholder="时薪"
-              />
-              <span class="a-u">元/小时</span>
-              <el-input-number
                 v-model="r.hoursPerLesson"
                 :min="0.25"
                 :precision="2"
@@ -400,6 +393,16 @@ function goDetail() {
                 placeholder="每节"
               />
               <span class="a-u">小时/节</span>
+              <el-input-number
+                v-model="r.lessonPrice"
+                :min="0"
+                :precision="2"
+                :step="50"
+                :controls="false"
+                class="a-num"
+                placeholder="每节价"
+              />
+              <span class="a-u">元/节</span>
               <el-input-number
                 v-model="r.hours"
                 :min="0"
@@ -436,7 +439,7 @@ function goDetail() {
           <div class="acct-block" v-loading="acctLoading">
             <div v-if="existAccounts.length" class="acct-exist">
               <span v-for="a in existAccounts" :key="a.id" class="a-tag" :class="{ off: a.status === '1' }">
-                {{ a.subjectLabel || a.subject }} · {{ fmtNum(a.pricePerHour) }}元/小时 ·
+                {{ a.subjectLabel || a.subject }} · {{ priceSpecText(a.pricePerHour, a.hoursPerLesson) }} ·
                 余 {{ d(a.hoursRemain, perLessonOf(a)).full }} · 约 {{ fmtMoney(a.amountRemain) }}
                 <i v-if="a.status === '1'">（已停用）</i>
               </span>
@@ -444,7 +447,7 @@ function goDetail() {
             <span v-else-if="!acctLoading" class="a-hint">还没有账本</span>
             <div class="acct-foot">
               <el-button size="small" text bg @click="goDetail">去详情管理</el-button>
-              <span class="a-hint">开户 / 充值 / 调整 / 改时薪 / 停用都在学生详情的「课时账户」区块</span>
+              <span class="a-hint">开户 / 充值 / 调整 / 改计价 / 停用都在学生详情的「课时账户」区块</span>
             </div>
           </div>
         </el-form-item>
@@ -489,7 +492,7 @@ function goDetail() {
 .acct-block {
   width: 100%;
 }
-/* 四个数字格（时薪/每节/初始/实收）超出一行就换行，别把弹窗撑破 */
+/* 四个数字格（每节/每节价/初始/实收）超出一行就换行，别把弹窗撑破 */
 .acct-line {
   display: flex;
   align-items: center;

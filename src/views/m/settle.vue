@@ -6,7 +6,7 @@
  *   ① 🔴 **默认实扣只认 BE**（拍板 D-a / L4）：默认小时 = `pendingRow.plannedHours`（= 绑定的每节时长，
  *      BE 用与 settleOne 同一函数算出），金额 = `plannedAmount`。**前端「默认 1 课时」的自算已删** ——
  *      场次起止时长只是日程，不参与计价（改期/拖拽/缓冲格子永不影响钱）。
- *      老师改了小时才前端重算 = 实扣小时 × 时薪。
+ *      老师改了小时才前端重算 = 实扣小时 × 账本计价参数。
  *   ② 每场可填「这节讲了什么」→ `SettleItemBo.content` → 写进 session.content，台账内容列直接显示它。
  *   ③ 🔴 **D10 拆收费硬闸**：没开本/账本停用**不再阻止勾选** —— 场次照常标「已上」，扣课跳过进
  *      「待补扣」，教学事实不被收费状态锁死。但金额列仍画「—」**绝不 ¥0**（BUG-2 铁律不动）。
@@ -42,7 +42,7 @@ import MSheet from './components/MSheet.vue'
 import { dayLabel, fmtDate, hhmm, money, todayStr, usePending } from './shared'
 
 const dict = useDictStore()
-const { d, dText } = useTuitionUnit()
+const { d, dText, priceSpecText } = useTuitionUnit()
 const { pendingList, pendingLoading, refreshPending } = usePending()
 
 // ── 收费态口径（D10 拆硬闸后只影响**钱怎么显示**，不再决定能不能勾）──────────
@@ -73,7 +73,7 @@ function plannedHoursOf(p: PendingSettlementVO): number | null {
   return p.plannedHours !== null && p.plannedHours !== undefined ? p.plannedHours : null
 }
 
-/** 时薪：优先新字段；只有 price（元/节，M5 兼容位）时按每节时长折回，不另造算法 */
+/** 内部计价参数（D11 不上屏，只用来算钱）：优先新字段；只有 price（元/节，M5 兼容位）时按每节时长折回，不另造算法 */
 function pricePerHourOf(p: PendingSettlementVO): number {
   if (p.pricePerHour !== null && p.pricePerHour !== undefined) return p.pricePerHour
   const per = perLessonOf(p)
@@ -134,7 +134,7 @@ interface SettleRow {
   sessionId: string
   name: string
   subjectLabel: string
-  /** 时薪（元/小时）；没账本为 0 → 金额列画「—」 */
+  /** 内部计价参数（每小时多少元，D11 不上屏）；没账本为 0 → 金额列画「—」 */
   pricePerHour: number
   /** 每节时长（折节基准）；没绑定为 null → 只出小时 */
   perLesson: number | null
@@ -162,7 +162,7 @@ const sheetOpen = ref(false)
 const submitting = ref(false)
 const rows = reactive<SettleRow[]>([])
 
-/** 老师改过实扣小时？（没改就用 BE 的 plannedAmount，改了才 小时 × 时薪 重算） */
+/** 老师改过实扣小时？（没改就用 BE 的 plannedAmount，改了才 小时 × 计价参数 重算） */
 function hoursChanged(r: SettleRow): boolean {
   return r.hours !== r.hours0
 }
@@ -171,7 +171,7 @@ function rowHours(r: SettleRow): number {
   return Math.max(0, parseFloat(r.hours) || 0)
 }
 
-/** 本行金额：没改就吃 BE 的 plannedAmount；改了小时才 小时 × 时薪；没账本恒 null（画「—」） */
+/** 本行金额：没改就吃 BE 的 plannedAmount；改了小时才 小时 × 计价参数；没账本恒 null（画「—」） */
 function rowFee(r: SettleRow): number | null {
   if (!r.pricePerHour) return null
   if (!hoursChanged(r) && r.plannedAmount !== null) return r.plannedAmount
@@ -499,7 +499,7 @@ onMounted(reloadAll)
     <MSheet
       v-model="sheetOpen"
       title="确认结算"
-      sub="默认实扣时长 = 与家长约定的每节时长（系统给的，不看排课时段）；改了才按「时长 × 时薪」重算。顺手记下这节讲了什么，台账里就能看到"
+      sub="默认实扣时长 = 与家长约定的每节时长（系统给的，不看排课时段）；改了才按账本计价重算。顺手记下这节讲了什么，台账里就能看到"
     >
       <van-cell-group v-for="(r, i) in rows" :key="r.sessionId" inset>
         <van-cell>
@@ -507,8 +507,9 @@ onMounted(reloadAll)
             <span class="m-rowtitle">
               <b>{{ r.name }}</b>
               <van-tag v-if="r.subjectLabel" type="primary" plain>{{ r.subjectLabel }}</van-tag>
+              <!-- D11：价格口径 =「每节 X 小时 · Y 元/节」，折不出每节时长时只报每节价算不出来 -->
               <span v-if="r.pricePerHour" class="m-note" style="margin: 0">
-                {{ money(r.pricePerHour) }}/小时
+                {{ priceSpecText(r.pricePerHour, r.perLesson) }}
               </span>
               <span v-else class="m-note" style="margin: 0">无账本 · 只标已上，暂不扣课</span>
             </span>
