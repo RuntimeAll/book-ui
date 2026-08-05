@@ -13,6 +13,10 @@
  * 🔴 **D4 规则②**：共享账本（绑定数>1）每人每节时长不同 → 折节基准不唯一，**只按小时不折节**
  *    （`ledgerPerLesson` 返 null，`dual()` 副显自动消失）。
  * 🔴 **D11**：本组件不出现按小时计价的说法；价格口径由父级用 `priceSpecText` 报「每节 X 小时 · Y 元/节」。
+ * 🔴 **D13（批6）**：导出**默认只导最近一个重置周期**（上次充值到现在）——家长要看的是「这期钱用到哪儿了」，
+ *    整本账翻出来反而找不着重点；要别的范围走「按时间范围导出」。台账**浏览**默认仍是全量（口径没动），
+ *    只多了一个「本周期 / 全部」的只读筛选。
+ * 🔴 **D14（批6）**：内容列按「｜」/「N.」拆条分行显示（规则在 `utils/lessonContent`，与 BE 导出同一套）。
  */
 import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
@@ -21,11 +25,13 @@ import {
   exportLedgerPng,
   TUITION_FLOW_TYPE_LABEL,
   type AccountBookVO,
+  type LedgerExportBo,
   type LedgerRowVO,
   type TuitionFlowType,
 } from '@/api/teacher/account'
 import { downloadArtifact } from '@/api/teacher/schedule'
 import { useTuitionUnit } from '@/composables/useTuitionUnit'
+import { parseLessonContent } from '@/utils/lessonContent'
 
 const props = withDefaults(
   defineProps<{
@@ -58,6 +64,11 @@ const pages = ref(1)
 const opening = ref(0)
 const loading = ref(false)
 const earlierLoading = ref(false)
+/** 浏览口径（D13，只读筛选）：全部 / 只看本周期。🔴 默认 all —— 台账浏览口径没被改动 */
+const viewMode = ref<'all' | 'cycle'>('all')
+/** BE 回执的实际生效口径（选了 cycle 但账本零充值 → 回落 'all'，界面据此说人话） */
+const effMode = ref<'all' | 'cycle' | 'range'>('all')
+const cycleStart = ref<string | null>(null)
 
 /** 并发守卫：快速切换账本时，旧请求回来不许覆盖新账本的台账 */
 let seq = 0
@@ -80,12 +91,17 @@ async function load() {
   pages.value = 1
   opening.value = 0
   try {
-    const res = await getAccountLedger(props.accountId, { pageSize: props.pageSize })
+    const res = await getAccountLedger(props.accountId, {
+      pageSize: props.pageSize,
+      ...(viewMode.value === 'cycle' ? { mode: 'cycle' as const } : {}),
+    })
     if (my !== seq) return
     rows.value = res?.rows ?? []
     pageNum.value = res?.pageNum ?? 1
     pages.value = res?.pages ?? 1
     opening.value = res?.openingBalance ?? 0
+    effMode.value = res?.mode ?? 'all'
+    cycleStart.value = res?.cycleStart ?? null
     book.value = res?.account ?? null
     shared.value = !!res?.shared
     emit('loaded', book.value, shared.value)
@@ -102,6 +118,13 @@ async function load() {
 
 watch(() => props.accountId, load, { immediate: true })
 
+/** 切「本周期 / 全部」= 重新拉一次（切片在服务端做，剩余值不受影响，M10） */
+function switchView(m: 'all' | 'cycle') {
+  if (m === viewMode.value) return
+  viewMode.value = m
+  void load()
+}
+
 /** 向前翻页：把更旧的一页**前置**拼上去，累积展示（不是替换 —— 老师要的是连续的一条链） */
 async function loadEarlier() {
   if (pageNum.value <= 1 || earlierLoading.value) return
@@ -111,6 +134,7 @@ async function loadEarlier() {
     const res = await getAccountLedger(props.accountId, {
       pageNum: pageNum.value - 1,
       pageSize: props.pageSize,
+      ...(viewMode.value === 'cycle' ? { mode: 'cycle' as const } : {}),
     })
     if (my !== seq) return
     rows.value = [...(res?.rows ?? []), ...rows.value]
@@ -126,8 +150,17 @@ async function loadEarlier() {
 
 const hasEarlier = computed(() => pageNum.value > 1)
 
-/** 期初行只在「前面还有没显示出来的行」或期初非零时才出——期初 0 且已到第一页时它是纯噪音 */
-const showOpening = computed(() => hasEarlier.value || Math.abs(opening.value) > 0.001)
+/**
+ * 期初行出场条件：前面还有没显示出来的行 / 期初非零 / **本周期视图**（D13）。
+ * 🔴 本周期视图哪怕期初正好是 0 也要出这一行 —— 「上期结余 0」本身就是要交代的事实
+ * （E8 家长单第一行就是它：前期课时正好用完才充的新钱），缺了它家长会以为漏记了。
+ */
+const showOpening = computed(
+  () => hasEarlier.value || Math.abs(opening.value) > 0.001 || effMode.value === 'cycle',
+)
+
+/** 本周期视图但账本一笔充值都没有 → BE 回落全量，界面照实说，别假装筛过了 */
+const cycleFellBack = computed(() => viewMode.value === 'cycle' && effMode.value !== 'cycle')
 
 const displayRows = computed<LedgerDisplayRow[]>(() => {
   if (!showOpening.value) return rows.value
@@ -176,25 +209,62 @@ function flowLabel(t: TuitionFlowType) {
   return TUITION_FLOW_TYPE_LABEL[t] ?? ''
 }
 
+/** 内容拆条（D14）：规则在 utils/lessonContent，与 BE 导出单同一套，别在这里另写 */
+function segsOf(content: string | null | undefined) {
+  return parseLessonContent(content)
+}
+
 // —— 流水单导出（发家长）——
 const exporting = ref(false)
 const pngUrl = ref('')
 const pngVisible = ref(false)
+/** 这张图是按什么口径出的（预览弹窗抬头照实写，别让老师把本周期单当成整本账发出去） */
+const pngScope = ref('')
 
-async function onExport() {
+/**
+ * 出图（D13）。
+ * @param bo 不传 = 最近重置周期（默认口径）；{mode:'all'} 整本账；{startDate,endDate} 指定区间
+ */
+async function onExport(bo: LedgerExportBo = {}) {
   if (!props.accountId) return
   exporting.value = true
   try {
-    const res = await exportLedgerPng(props.accountId)
+    const res = await exportLedgerPng(props.accountId, bo)
     const blob = await downloadArtifact(res.file)
     if (pngUrl.value) URL.revokeObjectURL(pngUrl.value)
     pngUrl.value = URL.createObjectURL(blob)
+    // 🔴 口径以 BE 回执为准：选了本周期但账本零充值时 BE 会回落全量，这里跟着说实话
+    pngScope.value =
+      res.mode === 'cycle'
+        ? `本周期（${res.cycleStart} 起至今，共 ${res.rows} 行）`
+        : res.mode === 'range'
+          ? `指定区间（共 ${res.rows} 行）`
+          : `全部记录（共 ${res.rows} 行）`
     pngVisible.value = true
   } catch {
     ElMessage.error('导出失败')
   } finally {
     exporting.value = false
   }
+}
+
+// —— 按时间范围导出 ——
+const rangeVisible = ref(false)
+const rangeVal = ref<[string, string] | null>(null)
+
+function openRange() {
+  rangeVal.value = null
+  rangeVisible.value = true
+}
+
+async function confirmRange() {
+  const v = rangeVal.value
+  if (!v || !v[0] || !v[1]) {
+    ElMessage.warning('请选择起止日期')
+    return
+  }
+  rangeVisible.value = false
+  await onExport({ startDate: v[0], endDate: v[1] })
 }
 
 function downloadPng() {
@@ -220,9 +290,31 @@ defineExpose({ reload: load })
       <span v-if="range" class="tl-range">{{ range }}</span>
       <!-- 父级自己的动作（充值/调整/转账…）挂这里，台账本体不关心 -->
       <slot name="actions" />
-      <el-button size="small" text bg type="primary" :loading="exporting" @click="onExport">
-        导出流水单
+      <!-- D13：默认一键出「本周期单」（发家长最常用的那张）；别的范围走右边那个 -->
+      <el-button size="small" text bg type="primary" :loading="exporting" @click="onExport()">
+        导出本周期
       </el-button>
+      <el-button size="small" text bg :loading="exporting" @click="openRange">
+        按时间范围导出
+      </el-button>
+    </div>
+
+    <div class="tl-tools">
+      <!-- 只读筛选（D13）：看哪一段，与导出口径互不影响 -->
+      <el-radio-group
+        :model-value="viewMode"
+        size="small"
+        @update:model-value="switchView($event as 'all' | 'cycle')"
+      >
+        <el-radio-button value="all">全部</el-radio-button>
+        <el-radio-button value="cycle">本周期</el-radio-button>
+      </el-radio-group>
+      <span v-if="viewMode === 'cycle' && effMode === 'cycle'" class="tl-scope">
+        本周期 = {{ cycleStart }} 那笔充值起至今
+      </span>
+      <span v-else-if="cycleFellBack" class="tl-scope warn">
+        这本账还没有充值记录，暂时分不出周期——先显示全部
+      </span>
     </div>
 
     <div class="tl-hint">
@@ -250,10 +342,21 @@ defineExpose({ reload: load })
       <el-table-column label="上课时间" width="104">
         <template #default="{ row }">{{ row.timeRange || '—' }}</template>
       </el-table-column>
-      <el-table-column label="内容" min-width="200">
+      <!-- D14：内容按「｜」/「N.」拆条分行；拆不出来就照原样一行，不硬套结构 -->
+      <el-table-column label="内容" min-width="220">
         <template #default="{ row }">
           <span v-if="!row.__opening" class="tl-type">{{ flowLabel(row.flowType) }}</span>
-          {{ row.content || '—' }}
+          <template v-if="!segsOf(row.content).length">—</template>
+          <span v-else-if="segsOf(row.content).length === 1 && !segsOf(row.content)[0].label">
+            {{ segsOf(row.content)[0].text }}
+          </span>
+          <span v-else class="tl-segs">
+            <span v-for="(s, i) in segsOf(row.content)" :key="i" class="tl-seg">
+              <i v-if="s.ord" class="ord">{{ s.ord }}.</i>
+              <i v-if="s.label" class="lb">{{ s.label }}</i>
+              {{ s.text }}
+            </span>
+          </span>
         </template>
       </el-table-column>
       <!-- 规则①：绑定数>1 才有学生列（单绑本每行都是同一个人，列出来是噪音） -->
@@ -281,8 +384,28 @@ defineExpose({ reload: load })
       </el-table-column>
     </el-table>
 
+    <!-- 按时间范围导出 -->
+    <el-dialog v-model="rangeVisible" title="按时间范围导出" width="420px" append-to-body>
+      <p class="tl-dlg-hint">
+        选一段日期出单（含首尾两天）。不选范围直接点「导出本周期」= 上次充值到现在的消耗。
+      </p>
+      <el-date-picker
+        v-model="rangeVal"
+        type="daterange"
+        value-format="YYYY-MM-DD"
+        start-placeholder="开始日期"
+        end-placeholder="结束日期"
+        style="width: 100%"
+      />
+      <template #footer>
+        <el-button @click="rangeVisible = false">取消</el-button>
+        <el-button type="primary" :loading="exporting" @click="confirmRange">导出</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 流水单预览 -->
     <el-dialog v-model="pngVisible" title="课时流水单" width="780px" append-to-body top="5vh">
+      <p v-if="pngScope" class="tl-dlg-hint">本张单子的范围：{{ pngScope }}</p>
       <img v-if="pngUrl" :src="pngUrl" class="tl-png" alt="课时流水单" />
       <template #footer>
         <el-button @click="pngVisible = false">关闭</el-button>
@@ -330,6 +453,50 @@ defineExpose({ reload: load })
   color: #8ba09a;
   margin-bottom: 8px;
   line-height: 1.6;
+}
+.tl-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+.tl-scope {
+  font-size: 12px;
+  color: #8ba09a;
+}
+.tl-scope.warn {
+  color: #a96f14;
+}
+.tl-dlg-hint {
+  margin: 0 0 12px;
+  font-size: 12.5px;
+  color: #8ba09a;
+  line-height: 1.6;
+}
+/* D14 内容分条：一条一行，序号浅、分类标签做成小号浅底签 —— 朴素，不抢数字的注意力 */
+.tl-segs {
+  display: inline-block;
+  vertical-align: top;
+}
+.tl-seg {
+  display: block;
+  line-height: 1.7;
+}
+.tl-seg .ord {
+  font-style: normal;
+  color: #a3b3ae;
+  margin-right: 3px;
+  font-variant-numeric: tabular-nums;
+}
+.tl-seg .lb {
+  font-style: normal;
+  font-size: 11px;
+  color: var(--bk-teal-deep);
+  background: #e8f2f0;
+  border-radius: 4px;
+  padding: 0 5px;
+  margin-right: 4px;
 }
 .tl-more {
   margin-bottom: 8px;

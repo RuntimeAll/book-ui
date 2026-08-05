@@ -313,6 +313,28 @@
   margin-right: 4px;
 }
 /**
+ * PRD-018 D14 · 上课内容分条（手机屏更窄，挤成一坨最难读）：
+ * 一条一行，序号浅灰、分类标签小号浅底签。规则在 utils/lessonContent（与桌面/导出同源）。
+ */
+.m-app .m-lrow .lc .seg {
+  display: block;
+  line-height: 1.65;
+}
+.m-app .m-lrow .lc .seg .ord {
+  font-style: normal;
+  color: var(--van-text-color-3);
+  margin-right: 3px;
+}
+.m-app .m-lrow .lc .seg .lb {
+  font-style: normal;
+  font-size: 11px;
+  color: var(--van-primary-color);
+  background: rgba(15, 118, 110, 0.09);
+  border-radius: 4px;
+  padding: 0 5px;
+  margin-right: 4px;
+}
+/**
  * PRD-018 M10 · 台账两条特殊行（都复用 .m-lrow 的三列骨架，只改底色/字重）：
  *   .opening  = 期初结余（本页第一行之前的累计，区间/翻页视图必带，否则剩余列读不懂）
  *   .fold-row = 「加载更早」（正序 + 默认末页 ⟹ 向前翻页，不是向后滚）

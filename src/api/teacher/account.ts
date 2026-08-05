@@ -214,6 +214,15 @@ export interface LedgerRowVO {
 }
 
 /**
+ * 台账/导出的切片口径（D13）。
+ * - `cycle` = **最近一个重置周期**：台账排序后的最后一笔充值行起（含该行）到最新一行；
+ * - `all`   = 整本账；
+ * - `range` = 服务端对「给了 startDate/endDate」的回执（不作为入参传）。
+ * 🔴 **导出默认 cycle**（家长要看的是「这期钱用到哪儿了」）；**台账浏览默认 all**（口径没变）。
+ */
+export type LedgerMode = 'all' | 'cycle' | 'range'
+
+/**
  * 台账返回体。
  * 🔴 `pageNum` 不传 = **最后一页**（最近的行）——正序 + 第 1 页会让老师首屏永远是最旧记录。
  *    「加载更早」= 用返回的 pageNum-1 向前翻。
@@ -227,6 +236,10 @@ export interface LedgerResultVO {
   /** 期初余额（本页第一行之前的累计小时），页内首行前渲染一条期初行 */
   openingBalance: number
   openingAmount: number
+  /** 🆕 本次**实际生效**的口径（传 cycle 但账本一笔充值都没有 → 回落 'all'） */
+  mode: LedgerMode
+  /** 🆕 本周期起始日（mode='cycle' 才有值） */
+  cycleStart: string | null
   account: AccountBookVO
   shared: boolean
 }
@@ -249,6 +262,26 @@ export interface LedgerQueryParams extends PageQuery {
   startDate?: string
   /** 结束日期 YYYY-MM-DD（含） */
   endDate?: string
+  /**
+   * 切片口径（D13）：`cycle` = 只看最近一个重置周期。
+   * 🔴 **不传 = 全量**（台账浏览默认口径未变）；给了 startDate/endDate 则本参数失效。
+   */
+  mode?: 'all' | 'cycle'
+}
+
+/** 导出入参（D13）：**全不传 = 最近重置周期**。 */
+export interface LedgerExportBo {
+  /** 传 'all' 导整本账；不传 = cycle */
+  mode?: 'all' | 'cycle'
+  startDate?: string
+  endDate?: string
+}
+
+/** 导出返回（在 FileUrlVO 基础上带回执：实际生效口径 / 周期起始日 / 出图行数）。 */
+export interface LedgerExportVO extends FileUrlVO {
+  mode: LedgerMode
+  cycleStart: string | null
+  rows: number
 }
 
 /** 通用 {id} 返回。 */
@@ -299,16 +332,20 @@ export const transferAccount = (bo: AccountTransferBo) =>
 /**
  * 台账：GET account/{id}/ledger（充值 + 扣课统一时间线，正序 + 实时推导剩余）。
  * 🔴 **不传 pageNum = 默认最后一页**（最近的行）。别硬传 1，那在正序口径下是最旧的一页。
+ * 🔴 **不传 mode = 全量**（浏览口径）；只有导出默认吃 cycle（D13）。
  */
 export const getAccountLedger = (accountId: string, query: LedgerQueryParams = {}) =>
   request.get<LedgerResultVO, LedgerResultVO>(`${BASE}/${accountId}/ledger`, { params: query })
 
 /**
- * 台账长图导出：POST account/{id}/export-ledger-png → {file,url}（发家长）。
+ * 台账长图导出：POST account/{id}/export-ledger-png → {file,url,mode,cycleStart,rows}（发家长）。
  * 取流复用 /teacher/schedule/artifact 的 blob 通道（见 api/teacher/schedule.ts#downloadArtifact）。
+ *
+ * 🔴 **D13：不传参 = 最近一个重置周期**（上次充值到现在的消耗）——家长要看的就是这一段，
+ *    整本账翻出来反而找不着重点。要别的范围传 {startDate,endDate}，要整本传 {mode:'all'}。
  */
-export const exportLedgerPng = (accountId: string) =>
-  request.post<FileUrlVO, FileUrlVO>(`${BASE}/${accountId}/export-ledger-png`)
+export const exportLedgerPng = (accountId: string, bo: LedgerExportBo = {}) =>
+  request.post<LedgerExportVO, LedgerExportVO>(`${BASE}/${accountId}/export-ledger-png`, bo)
 
 /**
  * 停用 / 启用账本：POST account/{id}/status。

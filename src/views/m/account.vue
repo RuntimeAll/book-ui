@@ -19,6 +19,11 @@
  *         提交前用 `toPricePerHour` 折成内部计价参数（保 4 位：350 ÷ 1.5 = 233.3333）。
  *   FP-13 导出流水单：通道与三颗按钮**一个字节没动**。
  *
+ * 🔴 **D13（批6）导出口径**：出图默认 = **最近一个重置周期**（上次充值到现在的消耗，家长要看的就是这段）；
+ *    「换个范围」用 van-calendar 选区间。台账**浏览**默认仍是全量，只多了一个「本周期 / 全部」筛选。
+ * 🔴 **D14（批6）内容分条**：台账行内容按「｜」/「N.」拆条分行（规则在 `utils/lessonContent`，
+ *    与桌面、与 BE 导出单同一套；三处若各写一套，同一串内容会在三个地方长得不一样）。
+ *
  * 🔴 三态失败分级（BUG-1 铁律）**一行未动**：loadFailed（整页失败）/ failedCount（部分失败）/
  *    trulyEmpty（真没开户）—— 接口坏了就说接口坏了，绝不把故障演成「还没有账户」。
  * 🔴 只发 '1' 充值 / '4' 调整两种手工流水；'2' 扣课 / '3' 冲正由结算链服务端产生，前端无入口。
@@ -39,6 +44,7 @@ import {
   upsertAccount,
   type AccountBookVO,
   type AccountUpsertBo,
+  type LedgerExportBo,
   type LedgerRowVO,
   type TuitionAccountVO,
   type TuitionFlowBo,
@@ -46,6 +52,7 @@ import {
 import { downloadArtifact, pageTargets, type TargetCardVO } from '@/api/teacher/schedule'
 import { DICT_EDU_SUBJECT, useDictStore } from '@/store/dict'
 import { todayStr, useTuitionUnit } from '@/composables/useTuitionUnit'
+import { parseLessonContent } from '@/utils/lessonContent'
 import MSheet from './components/MSheet.vue'
 import { money } from './shared'
 
@@ -155,6 +162,11 @@ const ledgerBook = ref<AccountBookVO | null>(null)
 const ledgerShared = ref(false)
 const curAccount = ref<TuitionAccountVO | null>(null)
 const curStudentName = ref('')
+/** 浏览口径（D13，只读筛选）：🔴 默认 all，台账浏览口径未被改动 */
+const ledgerView = ref<'all' | 'cycle'>('all')
+/** BE 回执的实际生效口径（零充值账本选 cycle 会回落 all） */
+const ledgerMode = ref<'all' | 'cycle' | 'range'>('all')
+const ledgerCycleStart = ref<string | null>(null)
 
 /** 台账内的折节基准：共享账本不折节（与卡片行同一条规则） */
 const ledgerPerLesson = computed<number | null>(() => {
@@ -177,10 +189,23 @@ const ledgerTitle = computed(() =>
     : '课时消耗记录',
 )
 
-/** 期初行只在「前面确实还有账」时出：翻过页 或 期初非零 */
+/**
+ * 期初行出场条件：翻过页 / 期初非零 / **本周期视图**（D13）。
+ * 🔴 本周期视图哪怕期初正好是 0 也要出这行 —— 「上期结余 0」本身就是要交代的事实（E8 家长单首行）。
+ */
 const showOpening = computed(
-  () => !!ledgerRows.value.length && (ledgerPageNum.value > 1 || Math.abs(ledgerOpening.value) > 1e-6),
+  () =>
+    !!ledgerRows.value.length &&
+    (ledgerPageNum.value > 1 || Math.abs(ledgerOpening.value) > 1e-6 || ledgerMode.value === 'cycle'),
 )
+
+/** 选了本周期但账本零充值 → BE 回落全量，界面照实说 */
+const cycleFellBack = computed(() => ledgerView.value === 'cycle' && ledgerMode.value !== 'cycle')
+
+/** 内容拆条（D14）：与桌面/导出同一套规则 */
+function segsOf(content: string | null | undefined) {
+  return parseLessonContent(content)
+}
 
 /** 流水类型 → 台账行样式：'1' 充值 / '4' 调整走绿，'3' 冲正走红，'2' 扣课普通 */
 function rowClass(t: string): string {
@@ -195,10 +220,15 @@ async function loadLedgerRows(accountId: string) {
   try {
     // 🔴 **不传 pageNum** = BE 默认最后一页（最近的行）。
     //    正序口径下硬传 pageNum:1 是最旧的一页 —— 老师点开台账只会看到几个月前的账。
-    const res = await getAccountLedger(accountId, { pageSize: LEDGER_PAGE })
+    const res = await getAccountLedger(accountId, {
+      pageSize: LEDGER_PAGE,
+      ...(ledgerView.value === 'cycle' ? { mode: 'cycle' as const } : {}),
+    })
     ledgerRows.value = res?.rows ?? []
     ledgerPageNum.value = res?.pageNum ?? 1
     ledgerOpening.value = res?.openingBalance ?? 0
+    ledgerMode.value = res?.mode ?? 'all'
+    ledgerCycleStart.value = res?.cycleStart ?? null
     ledgerBook.value = res?.account ?? null
     ledgerShared.value = !!res?.shared
   } catch (e) {
@@ -213,6 +243,14 @@ async function loadLedgerRows(accountId: string) {
   }
 }
 
+/** 切「全部 / 本周期」（D13）：切片在服务端做，剩余值不受影响 */
+async function switchLedgerView(m: 'all' | 'cycle') {
+  const a = curAccount.value
+  if (!a || m === ledgerView.value) return
+  ledgerView.value = m
+  await loadLedgerRows(a.id)
+}
+
 /** 向**前**翻一页（更早的行前置拼进来）：正序 + 默认末页 ⟹ 累积翻页方向与常规列表相反 */
 async function loadEarlier() {
   const a = curAccount.value
@@ -222,6 +260,7 @@ async function loadEarlier() {
     const res = await getAccountLedger(a.id, {
       pageNum: ledgerPageNum.value - 1,
       pageSize: LEDGER_PAGE,
+      ...(ledgerView.value === 'cycle' ? { mode: 'cycle' as const } : {}),
     })
     ledgerRows.value = [...(res?.rows ?? []), ...ledgerRows.value]
     ledgerPageNum.value = res?.pageNum ?? ledgerPageNum.value - 1
@@ -238,6 +277,7 @@ async function openLedger(stu: StudentAccounts, a: TuitionAccountVO) {
   curAccount.value = a
   curStudentName.value = stu.name
   ledgerOpen.value = true
+  ledgerView.value = 'all'      // 每次点进来都从全量看起（与桌面同口径）
   await loadLedgerRows(a.id)
 }
 
@@ -597,10 +637,16 @@ async function toggleStatus(stu: StudentAccounts, a: TuitionAccountVO) {
   }
 }
 
-// ── 流水导出（D16 / V26）──────────────────────────────────────
+// ── 流水导出（D16 / V26；D13 加周期与区间口径）──────────────────
 const expOpen = ref(false)
 const expLoading = ref(false)
 const expUrl = ref('')
+/** 这张图的范围（照 BE 回执写，别让老师把本周期单当整本账发出去） */
+const expScope = ref('')
+/** 区间选择（van-calendar 范围选择） */
+const calOpen = ref(false)
+const calMin = new Date(new Date().getFullYear() - 3, 0, 1)
+const calMax = new Date()
 
 function revokeExp() {
   if (expUrl.value) {
@@ -609,16 +655,31 @@ function revokeExp() {
   }
 }
 
-/** 出图：POST export-ledger-png → 带鉴权 blob 通道取流 → objectURL 预览 */
-async function buildLedgerPng(): Promise<boolean> {
+function ymd(d: Date): string {
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${d.getFullYear()}-${m}-${day}`
+}
+
+/**
+ * 出图（D13）：POST export-ledger-png → 带鉴权 blob 通道取流 → objectURL 预览。
+ * @param bo 不传 = 最近重置周期（默认）；{mode:'all'} 整本账；{startDate,endDate} 指定区间
+ */
+async function buildLedgerPng(bo: LedgerExportBo = {}): Promise<boolean> {
   const a = curAccount.value
   if (!a) return false
   expLoading.value = true
   try {
-    const res = await exportLedgerPng(a.id)
+    const res = await exportLedgerPng(a.id, bo)
     const blob = await downloadArtifact(res.file)
     revokeExp()
     expUrl.value = URL.createObjectURL(blob)
+    expScope.value =
+      res.mode === 'cycle'
+        ? `本周期 · ${res.cycleStart} 起至今 · ${res.rows} 行`
+        : res.mode === 'range'
+          ? `指定区间 · ${res.rows} 行`
+          : `全部记录 · ${res.rows} 行`
     return true
   } catch {
     showFailToast('流水单生成失败')
@@ -628,11 +689,26 @@ async function buildLedgerPng(): Promise<boolean> {
   }
 }
 
+/** 台账底部「导出流水」→ 默认出本周期单 */
 async function openExport() {
   ledgerOpen.value = false
   expOpen.value = true
   revokeExp()
+  expScope.value = ''
   await buildLedgerPng()
+}
+
+/** 预览里换口径：整本账 */
+async function exportAll() {
+  await buildLedgerPng({ mode: 'all' })
+}
+
+/** 预览里换口径：选一段日期 */
+async function onPickRange(dates: Date[]) {
+  calOpen.value = false
+  if (!dates?.length) return
+  const [a, b] = dates
+  await buildLedgerPng({ startDate: ymd(a), endDate: ymd(b ?? a) })
 }
 
 function downloadLedgerPng() {
@@ -768,6 +844,22 @@ onMounted(load)
       :title="ledgerTitle"
       sub="日期 · 上课时间 · 内容 · 消耗 · 剩余——按上课先后排列，剩余随每行连续变化"
     >
+      <!-- D13 只读筛选：看全部 还是 只看本周期（与导出口径互不影响） -->
+      <div class="mtabs">
+        <button type="button" :class="{ on: ledgerView === 'all' }" @click="switchLedgerView('all')">
+          全部
+        </button>
+        <button type="button" :class="{ on: ledgerView === 'cycle' }" @click="switchLedgerView('cycle')">
+          本周期
+        </button>
+      </div>
+      <p v-if="ledgerView === 'cycle' && ledgerMode === 'cycle'" class="m-fnote">
+        本周期 = {{ ledgerCycleStart }} 那笔充值起至今
+      </p>
+      <p v-else-if="cycleFellBack" class="m-fnote">
+        这本账还没有充值记录，暂时分不出周期——先显示全部
+      </p>
+
       <van-loading v-if="ledgerLoading" class="m-note" size="18">加载中…</van-loading>
       <van-empty v-else-if="!ledgerRows.length" image="search" image-size="70" description="暂无记录" />
       <template v-else>
@@ -796,7 +888,18 @@ onMounted(load)
           </div>
           <div class="lc">
             <!-- D4 规则①：共享账本才显学生名（这行是谁的课），纯数据驱动无开关 -->
-            <b v-if="f.studentName" class="stu">{{ f.studentName }}</b>{{ f.content || '—' }}
+            <b v-if="f.studentName" class="stu">{{ f.studentName }}</b>
+            <!-- D14：内容按「｜」/「N.」拆条分行；拆不出来照原样一行 -->
+            <template v-if="!segsOf(f.content).length">—</template>
+            <template v-else-if="segsOf(f.content).length === 1 && !segsOf(f.content)[0].label">
+              {{ segsOf(f.content)[0].text }}
+            </template>
+            <span v-else>
+              <span v-for="(s, si) in segsOf(f.content)" :key="si" class="seg">
+                <i v-if="s.ord" class="ord">{{ s.ord }}.</i>
+                <i v-if="s.label" class="lb">{{ s.label }}</i>{{ s.text }}
+              </span>
+            </span>
           </div>
           <div class="ln">
             <div class="delta">{{ d(f.hoursDelta, ledgerPerLesson, true).main }}</div>
@@ -992,12 +1095,18 @@ onMounted(load)
       />
     </van-popup>
 
-    <!-- 流水单导出预览 -->
+    <!-- 流水单导出预览（D13：默认本周期，可换全部 / 选区间） -->
     <MSheet
       v-model="expOpen"
       title="导出流水单"
-      sub="Excel 风格格式化版式 · 下载 PNG 或让机器人发到你的飞书，转发家长自便"
+      sub="默认导出最近一个重置周期（上次充值到现在）· 下载 PNG 或让机器人发到你的飞书"
     >
+      <div class="mtabs">
+        <button type="button" :disabled="expLoading" @click="buildLedgerPng()">本周期</button>
+        <button type="button" :disabled="expLoading" @click="exportAll">全部记录</button>
+        <button type="button" :disabled="expLoading" @click="calOpen = true">选时间范围</button>
+      </div>
+      <p v-if="expScope" class="m-fnote">本张单子的范围：{{ expScope }}</p>
       <div class="m-png">
         <div v-if="expLoading" class="loading">流水单生成中…</div>
         <img v-else-if="expUrl" :src="expUrl" alt="课时流水单" />
@@ -1011,5 +1120,16 @@ onMounted(load)
         </van-button>
       </template>
     </MSheet>
+
+    <!-- 导出时间范围（含首尾两天） -->
+    <van-calendar
+      v-model:show="calOpen"
+      type="range"
+      :min-date="calMin"
+      :max-date="calMax"
+      :allow-same-day="true"
+      confirm-text="按这段导出"
+      @confirm="onPickRange"
+    />
   </section>
 </template>
