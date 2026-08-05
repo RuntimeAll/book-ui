@@ -17,6 +17,7 @@
 import { computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/store/user'
+import { useTuitionUnit } from '@/composables/useTuitionUnit'
 import { M_THEME_VARS, usePending } from './shared'
 import './mobile.css'
 
@@ -24,6 +25,8 @@ const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
 const { pendingList, refreshPending } = usePending()
+// PRD-018 D8：单位偏好是模块级单例（桌面/H5 共用），这里只是开关的一个宿主
+const { unit, setUnit } = useTuitionUnit()
 
 const TITLES: Record<string, string> = {
   '/m/schedule': '课表总览',
@@ -34,6 +37,15 @@ const TITLES: Record<string, string> = {
 
 const title = computed(() => TITLES[route.path] || '教务速办')
 const pendingCount = computed(() => pendingList.value.length)
+
+/**
+ * PRD-018 D8 单位切换（小时 ⇄ 节）的出场页。
+ * 🔴 只在**真的印着课时数**的两页出：账户（余额/台账）与待结算（实扣时长）。
+ *    课表/反馈页没有一个课时数字，挂个切换钮只是噪音——开关本身是全局的，
+ *    在这两页切一次，另一页（含桌面端）跟着变。
+ */
+const UNIT_PAGES = ['/m/account', '/m/settle']
+const showUnitSwitch = computed(() => UNIT_PAGES.includes(route.path))
 
 // 会话中途掉登录态 → 回登录页（带 redirect 回原页）
 watch(
@@ -51,7 +63,29 @@ onMounted(() => {
 
 <template>
   <van-config-provider :theme-vars="M_THEME_VARS" theme-vars-scope="global" class="m-app">
-    <van-nav-bar class="m-navbar" :title="`备课帮 · ${title}`" />
+    <van-nav-bar class="m-navbar" :title="`备课帮 · ${title}`">
+      <!-- D8：小时 / 节 全局切换（账户页与待结算页各自的双单位展示同步翻） -->
+      <template v-if="showUnitSwitch" #right>
+        <span class="m-unitseg" role="group" aria-label="课时显示单位">
+          <button
+            type="button"
+            :class="{ on: unit === 'h' }"
+            :aria-pressed="unit === 'h'"
+            @click="setUnit('h')"
+          >
+            小时
+          </button>
+          <button
+            type="button"
+            :class="{ on: unit === 'j' }"
+            :aria-pressed="unit === 'j'"
+            @click="setUnit('j')"
+          >
+            节
+          </button>
+        </span>
+      </template>
+    </van-nav-bar>
 
     <main class="m-main">
       <RouterView />

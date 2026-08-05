@@ -5,12 +5,16 @@
  *      下一课行（日期时间 + 课次 + prep pill）· 绑定计划(FP13) · 家长电话掩码。
  * 归档卡置灰。点击 → 选中进详情。
  *
- * 🔴 PRD-015 学科线（V9）：一个学生可同时上多科 —— 顶部多科 chips 带「剩余课时」角标
+ * 🔴 PRD-015 学科线（V9）：一个学生可同时上多科 —— 顶部多科 chips 带「剩余」角标
  *   （负数=欠费红显），计划进度按 planBindings 每科一行，互不覆盖；
  *   两个字段都是 additive，缺省时回退到旧的单学科 / 单计划渲染，老数据不炸。
+ * 🔴 PRD-018 D1 v2.1/D8：角标改双单位（跟随全局单位开关），口径改时薪；
+ *   共享账本（shared）多人每节时长不同 → 折不出统一的「节」，只报小时（D4 规则②）。
  */
 import { computed } from 'vue'
 import { TARGET_TYPE_LABEL, type TargetCardVO } from '@/api/teacher/schedule'
+import type { TuitionAccountVO } from '@/api/teacher/account'
+import { useTuitionUnit } from '@/composables/useTuitionUnit'
 import {
   avatarChar,
   shortDate,
@@ -46,9 +50,18 @@ const next = computed(() => props.card.nextSession || null)
 
 // —— PRD-015 多科 chips（学生卡；账户 = 学生×学科绑定的物理载体）——
 const accounts = computed(() => props.card.accounts ?? [])
-function hoursText(v: number | null | undefined) {
-  if (v === null || v === undefined) return '—'
-  return String(Number(v))
+
+const { d, fmtNum, fmtMoney } = useTuitionUnit()
+
+/** 折节基准；共享账本基准不唯一 → null（D4 规则②，dual 自动只出小时） */
+function perLessonOf(a: TuitionAccountVO): number | null {
+  if (a.shared) return null
+  return a.hoursPerLesson && a.hoursPerLesson > 0 ? a.hoursPerLesson : null
+}
+
+/** 角标 hover 全文：双单位 + 约当金额（金额是派生量，所以写「约」）+ 时薪 */
+function accountTitle(a: TuitionAccountVO) {
+  return `剩余 ${d(a.hoursRemain, perLessonOf(a)).full} · 约 ${fmtMoney(a.amountRemain)} · 时薪 ${fmtNum(a.pricePerHour)} 元/小时`
 }
 
 // —— PRD-015 多计划进度（按学科分行；无 planBindings 回退旧单计划字段）——
@@ -99,17 +112,18 @@ const bindings = computed(() => {
       <span v-else>请假 <b>{{ card.leaveCount ?? 0 }}</b></span>
     </div>
 
-    <!-- PRD-015 V9：多科 chips + 每科剩余课时角标（欠费红） -->
+    <!-- PRD-015 V9 + PRD-018 D8：多科 chips + 每科剩余双单位角标（欠费红，不拦截） -->
     <div v-if="accounts.length" class="subj-chips">
       <span
         v-for="a in accounts"
         :key="a.id"
         class="subj-chip"
         :class="{ owe: (a.hoursRemain ?? 0) < 0 }"
-        :title="`剩余 ${hoursText(a.hoursRemain)} 课时 · ${hoursText(a.amountRemain)} 元`"
+        :title="accountTitle(a)"
       >
         {{ a.subjectLabel || a.subject }}
-        <b>{{ hoursText(a.hoursRemain) }}</b>
+        <b>{{ d(a.hoursRemain, perLessonOf(a)).main }}</b>
+        <i v-if="d(a.hoursRemain, perLessonOf(a)).sub">（{{ d(a.hoursRemain, perLessonOf(a)).sub }}）</i>
       </span>
     </div>
 
@@ -252,6 +266,12 @@ const bindings = computed(() => {
 .subj-chip b {
   font-variant-numeric: tabular-nums;
   margin-left: 3px;
+}
+.subj-chip i {
+  font-style: normal;
+  font-size: 10px;
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
 }
 .subj-chip.owe {
   color: #be123c;

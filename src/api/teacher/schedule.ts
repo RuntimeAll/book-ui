@@ -393,6 +393,12 @@ export interface PlanVO {
   lessons?: PlanLessonVO[]
   /** page 实时聚合课次数（无 total_lessons 列） */
   lessonCount?: number
+  /**
+   * 🆕 PRD-018 M8：**尚未排课的课次数**（GET plan/{id} 才有）。
+   * 接住原「顺延 overflow」提示位 —— 请假/取消会把课次释放回池（plan_lesson_id 置空），
+   * 计划详情据此提示「有 N 个课次尚未排课」，老师去补排。
+   */
+  unscheduledLessons?: number
   createTime?: string
   updateTime?: string
 }
@@ -471,6 +477,8 @@ export interface SessionVO {
   lessonLocked: string
   externalTitle?: string
   note?: string
+  /** 🆕 PRD-018 ③：这节课**实际讲了什么**（≤200 字）。台账「内容」列优先取它（content→课次标题→「正课」） */
+  content?: string | null
   createTime?: string
   updateTime?: string
   // PRD-015 教务域：场次结算态（'0' 未结 / '1' 已结 / '2' 已冲正；旧数据/未开账户可空）
@@ -546,17 +554,30 @@ export interface SessionUpdateBo {
   start?: string
   end?: string
   note?: string
+  /** 🆕 PRD-018 ③：这节课实际讲了什么（≤200 字），写进 session.content */
+  content?: string
   /** 改绑课次（只改本场） */
   planLessonId?: string
 }
 
-/** 顺延返回（leave/cancel 触发；overflow=末位悬空需补排提示） */
+/**
+ * 请假 / 取消返回。
+ * 🔄 **PRD-018 D6：顺延逻辑已删**（标题错位事故元凶）——`deferred`/`overflow` 恒空数组，
+ *    留作契约兼容位，各端跟随后可删。取而代之：
+ *    - `freedLessonId`（M8）= 本场释放回池的课次 id，FE 提示「课次已释放，可重新排课」；
+ *    - 计划详情的 `unscheduledLessons` 接住原 overflow 提示。
+ */
 export interface DeferResult {
+  /** @deprecated D6 顺延已删，恒空 */
   deferred: { sessionId: string; newLessonId: string }[]
+  /** @deprecated D6 顺延已删，恒空 */
   overflow: string[]
+  /** 🆕 M8：本场释放回池的课次 id（可被重新排到）；本场原本没绑课次则为 null */
+  freedLessonId?: string | null
   /**
    * PRD-015 AC6：该场已结算时的自动冲正明细（未结算为 null）。
-   * hours/amount = 按该场<b>实扣数</b>返还；deletedShells=删掉的空反馈壳数，keptShells=有内容保留数。
+   * hours/amount = 按该场<b>实扣数</b>返还。
+   * 🔄 PRD-018 D10：结算不再建反馈壳 → deletedShells/keptShells 恒 0（兼容位）。
    */
   reversal?: {
     hours: number
@@ -564,6 +585,22 @@ export interface DeferResult {
     deletedShells: number
     keptShells: number
   } | null
+}
+
+/**
+ * 销假返回（POST session/{id}/revoke-leave，PRD-018 AC5/G5）。
+ * 请假/取消场次一键恢复「已上 + 未结」+ 删掉该场 '2' 扣课与 '3' 冲正流水对 → 可正常重新结算。
+ * 🔴 **不还原课次绑定**：请假时 plan_lesson_id 已释放回池（M8），可能已被排给别的场次，
+ *    需要时老师手工改绑（返回体带 planLessonId 供提示）。
+ */
+export interface RevokeLeaveResult {
+  sessionId: string
+  sessionStatus: string
+  settleStatus: string
+  /** 删掉的流水行数（'2'+'3' 一对 = 2；从没结算过 = 0） */
+  removedFlows?: number
+  /** 请假前绑的课次 id（已释放回池，不自动还原）；无则 null */
+  planLessonId?: string | null
 }
 
 // —— PRD-015 场次结算（教务域：已上未结场次 → 批量扣课时/扣款）——
@@ -586,31 +623,52 @@ export interface PendingSettlementVO {
   /** 绑定计划课次标题（未绑课次为 null） */
   planLessonTitle: string | null
   /**
-   * 结算时点账户单价（元/课时）。
-   * 🔴 null = 该生该科<b>未开户或账户已停用</b>——照常列出但不能结算，FE 按 accountStatus 提示（BE 会 skipped）。
+   * @deprecated M5 过渡兼容：元/节派生值 = pricePerHour × hoursPerLesson。新码用 pricePerHour。
+   * 🔴 null = 该生该科<b>未开本或账本已停用</b>——照常列出（D10：教学事实不被收费状态锁死），
+   *    结算时 BE 跳过扣课进「待补扣」。
    */
   price: number | null
+  /** 🆕 时薪（元/小时）；无账本为 null */
+  pricePerHour?: number | null
+  /** 🆕 每节时长（小时，来自绑定）；无绑定为 null */
+  hoursPerLesson?: number | null
   /**
-   * 账户状态（additive，bug 批 BUG-3/A）：`null` 没开户 / `'0'` 在用 / `'1'` 已停用。
-   * price=null 的两种成因靠它区分——别对已停用的账户劝人「去开户」。
+   * 🆕 **默认实扣小时**（拍板 D-a）= `link.hours_per_lesson`，BE 与 settleOne 走同一函数算出。
+   * 🔴 FE 默认值**只认它**，不再自算（场次起止时长只是日程，不参与计价）。
+   */
+  plannedHours?: number | null
+  /** 🆕 默认实扣金额 = plannedHours × pricePerHour；无账本为 null */
+  plannedAmount?: number | null
+  /** 🆕 该生该科绑定的账本 id（无则 null）——结算页跳台账用 */
+  accountId?: string | null
+  /**
+   * 账本状态（additive，bug 批 BUG-3/A）：`null` 没开本 / `'0'` 在用 / `'1'` 已停用。
+   * price=null 的两种成因靠它区分——别对已停用的账本劝人「去开户」。
    */
   accountStatus?: '0' | '1' | null
+  /**
+   * 🆕 场次状态：`'0'` 已排（未上，过点了）/ `'1'` **已上待补扣**（D10 拆收费硬闸后，
+   * 没账本也照常标已上，钱留着后补）。FE 在待结算列表里把两种态分开展示。
+   */
+  sessionStatus?: string | null
 }
 
-// PRD-015 结算单项（hours 缺省 = 1 课时；timeNote = 实际上课时间备注，覆盖排课起止）
+/** PRD-015 结算单项（hours 缺省 = 该绑定的每节时长 plannedHours；timeNote = 实际上课时间备注） */
 export interface SettleItemBo {
   sessionId: string
-  /** 实扣课时，缺省 1 */
+  /** 实扣小时；不传 = BE 的 plannedHours（人工覆盖用） */
   hours?: number
   /** 实际上课时间备注（如 09:05-10:40） */
   timeNote?: string
+  /** 🆕 PRD-018 ③：这节课实际讲了什么（≤200 字）→ 写进 session.content，台账「内容」列显示它 */
+  content?: string
 }
 
 // PRD-015 结算返回（字段全可选，随 BE 同批落地对齐；调用方按需取）
 export interface SettleResultVO {
   /** 实际结算成功的场次数 */
   settled?: number
-  /** genFeedback=true 时联动生成的反馈单 id（雪花 string） */
+  /** @deprecated PRD-018 D10：结算不再建反馈壳，恒空数组（兼容位） */
   feedbackSheetIds?: string[]
   /**
    * 逐场独立事务下被跳过的场次（批3 BE 落地补）：未开户 / 已结算（uk 幂等）/ 已冲正 / 班课 / 外部占位。
@@ -833,13 +891,21 @@ export const pageSessions = (params: SessionPageParams = {}) =>
 export const updateSession = (id: string, bo: SessionUpdateBo) =>
   request.put<void, void>(`${BASE}/session/${id}`, bo)
 
-/** 请假：POST session/{id}/leave → 触发顺延 {deferred,overflow} */
+/** 请假：POST session/{id}/leave → {freedLessonId, reversal}（🔄 D6 顺延已删） */
 export const sessionLeave = (id: string) =>
   request.post<DeferResult, DeferResult>(`${BASE}/session/${id}/leave`)
 
-/** 取消：POST session/{id}/cancel → 触发顺延 {deferred,overflow} */
+/** 取消：POST session/{id}/cancel → {freedLessonId, reversal}（🔄 D6 顺延已删） */
 export const sessionCancel = (id: string) =>
   request.post<DeferResult, DeferResult>(`${BASE}/session/${id}/cancel`)
+
+/**
+ * 销假（PRD-018 AC5）：POST session/{id}/revoke-leave。
+ * 请假/取消场次 → 恢复「已上 + 未结」+ 删该场扣课/冲正流水对（净额为零，余额不变）→ 可重新结算。
+ * 🔴 只对请假('2')/取消('3')场次放行；已结算未冲正（有 '2' 无 '3'）BE 返 400，防凭空还钱。
+ */
+export const sessionRevokeLeave = (id: string) =>
+  request.post<RevokeLeaveResult, RevokeLeaveResult>(`${BASE}/session/${id}/revoke-leave`)
 
 /** 标已上：POST session/{id}/mark-done */
 export const sessionMarkDone = (id: string) =>
@@ -859,8 +925,12 @@ export const sessionUnlock = (id: string) =>
 export const getPendingSettlements = () =>
   request.get<PendingSettlementVO[], PendingSettlementVO[]>(`${BASE}/settle/pending`)
 
-// PRD-015 批量结算：POST settle（扣课时/扣款 + 写场次结算态；genFeedback=true 顺带建反馈单）
-export const settleSessions = (bo: { items: SettleItemBo[]; genFeedback: boolean }) =>
+/**
+ * 批量结算：POST settle（扣小时/扣款 + 写场次结算态 + 顺手记 content）。
+ * 🔄 **PRD-018 D10**：结算只做「扣课 + 标已上」两件事，**不再副作用式建反馈壳**（反馈单独立建单）。
+ *    `genFeedback` 入参已废弃：BE 收但忽略，各端跟随后可删。
+ */
+export const settleSessions = (bo: { items: SettleItemBo[]; genFeedback?: boolean }) =>
   request.post<SettleResultVO, SettleResultVO>(`${BASE}/settle`, bo)
 
 // —— 备课包 ——

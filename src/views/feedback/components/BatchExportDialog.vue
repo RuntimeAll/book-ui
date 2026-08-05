@@ -3,11 +3,15 @@
  * PRD-015 D13/D8 · 按计划导出反馈图弹窗（骨架照抄 desk/plans/components/ParentExportDialog.vue）。
  *
  * 单图 / 长图双模式：
- * - single（缺省）= 该计划最新一单（序号最大）单张；long = 全量按序号升序拼长图；
+ * - single（缺省）= 该计划**上课日期最晚**的一单单张；long = 全量按上课日期升序拼长图；
  * - 🔴 模式记住最后一次选择（localStorage，接口无状态）；
  * - 出口 = 下载图片 + 机器人发到我的飞书（D8：一律推老师本人，无「发送家长」）。
  *
  * 契约：POST /teacher/feedback/export-plan-png {planId, mode} → {file,url,mode,sheetCount}。
+ *
+ * 🔄 **PRD-018 G9③（2026-08-05）**：排序口径由 `lesson_seq` 列换成 `(lesson_date, id)` 升序，
+ *    与列表页/黄条序号严格同源 —— 乱序补录（先建 7 月再补 4 月）后，拼图顺序与序号一起顺移，
+ *    不会再出现「长图里 4 月的单排在 7 月后面」。文案随之改口「按上课日期」，不再说「按序号」。
  */
 import { ref, watch, computed } from 'vue'
 import { ElMessage } from 'element-plus'
@@ -126,7 +130,8 @@ async function sendToBot() {
         </el-button>
       </div>
       <p class="be-hint">
-        单图 = 该计划最新一份反馈；长图 = 该计划全部反馈按序号依次拼接，一次性发出去。
+        单图 = 该计划<b>上课日期最晚</b>的一份反馈；长图 = 该计划全部反馈<b>按上课日期</b>依次拼接，
+        一次性发出去（补录的旧课会自动排回它该在的位置）。
       </p>
 
       <div v-if="exporting" class="be-loading">正在生成…</div>
@@ -176,6 +181,11 @@ async function sendToBot() {
   font-size: 12px;
   color: #8ba09a;
   margin: 0;
+  line-height: 1.7;
+}
+.be-hint b {
+  color: #6b8580;
+  font-weight: 700;
 }
 .be-loading {
   font-size: 13px;

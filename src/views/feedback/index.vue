@@ -6,6 +6,14 @@
  *
  * PRD-015 批4：筛选栏加学生/计划下拉（BE page 支持 targetId/planId），表格加计划/序号列，
  * 工具栏「按计划导出」→ BatchExportDialog（单图/长图，D13）。
+ *
+ * 🔴 PRD-018 D10 域间解耦（2026-08-05 批3）：
+ * - 结算链已撤 `createFeedbackShell`（结算只管扣课+标已上）→ **反馈单一律独立建**，
+ *   本页「＋ 新建反馈单」就是主入口，点击时把当前筛选的学生/计划带成 query 给编辑页预填；
+ * - 序号语义换轨（G9③）：`lessonSeq` = BE 读取时按 `(lesson_date, id)` 实时排出的名次，
+ *   补录一单其后各单自动顺移。**前端只展示不重编号**；
+ * - BE `page` 排序随之改成 `(lesson_date, id)` **升序**（那是序号推导口径），
+ *   本页在**展示层**倒过来保住「最新在前」的列表手感 —— 见 `displayRows`。
  */
 import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
@@ -44,6 +52,17 @@ const selectedPlan = computed(() => {
   const p = plans.value.find((x) => String(x.id) === String(filterPlanId.value))
   return p ? { id: p.id, name: p.name } : null
 })
+
+/**
+ * 🔴 展示用行序 —— 这里有**两层不同口径**，别合并成一层：
+ * ① BE `page` 返回 `(lesson_date, id)` **升序**：那是 PRD-018 G9③ 的**序号推导口径**
+ *    （第 n 行 = 序号 n），乱序补录后序号与「按计划导出」的拼图顺序全都自洽；
+ * ② 列表页 UX 要「最新在上」（老师进来先看最近这节），所以在**展示层**倒过来。
+ * 🔴 序号列照旧显示 BE 给的 `lessonSeq`，前端绝不按行号重编号 ——
+ *    倒序只改「看的顺序」，不改序号语义。
+ * BE 该端点不分页（一次返全量），倒序不存在跨页错位问题。
+ */
+const displayRows = computed(() => rows.value.slice().reverse())
 
 // —— 按计划导出弹窗 ——
 const exportVisible = ref(false)
@@ -110,8 +129,16 @@ async function load() {
   }
 }
 
+/**
+ * 🔴 D10 独立建单入口：结算不再自动建反馈壳，反馈单从这里建。
+ * 把当前筛选的学生/计划带成 query 给编辑页预填（key 名 = 与编辑页约定的契约，别改名）；
+ * 没筛选就空着进 —— 编辑页照常能从零建单（弱依赖，不做任何前置校验/拦截）。
+ */
 function goCreate() {
-  router.push('/desk/feedback/edit')
+  const query: Record<string, string> = {}
+  if (filterTargetId.value) query.targetId = filterTargetId.value
+  if (filterPlanId.value) query.planId = filterPlanId.value
+  router.push({ path: '/desk/feedback/edit', query })
 }
 
 function goEdit(id: string) {
@@ -195,10 +222,17 @@ onMounted(async () => {
       />
       <el-button @click="load">查询</el-button>
       <el-button @click="openPlanExport">按计划导出</el-button>
+      <!-- 🔴 D10 主入口：反馈单独立建（结算已不再自动生单），带筛选条件进编辑页 -->
       <el-button type="primary" @click="goCreate">＋ 新建反馈单</el-button>
     </div>
 
-    <el-table v-loading="loading" :data="rows" empty-text="暂无反馈单，点右上角新建" border>
+    <p class="fb-tip">
+      反馈单<b>独立建单</b>：结算不再自动生成，上完课点右上角「＋ 新建反馈单」，
+      选好计划与课次后主题会自动带进来。列表按<b>上课日期</b>倒序（最新在上），
+      序号则按上课日期实时排。
+    </p>
+
+    <el-table v-loading="loading" :data="displayRows" empty-text="暂无反馈单，点右上角新建" border>
       <el-table-column label="标题" min-width="240">
         <template #default="{ row }">
           <a class="fb-link" @click="goEdit(row.id)">{{ row.title || '未命名反馈单' }}</a>
@@ -212,7 +246,16 @@ onMounted(async () => {
           {{ row.planId ? planNameMap.get(String(row.planId)) || '（其他计划）' : '—' }}
         </template>
       </el-table-column>
-      <el-table-column label="序号" width="70" align="center">
+      <el-table-column label="序号" width="76" align="center">
+        <!-- 🔴 G9③：序号 = 服务端读取时按「上课日期」实时排出的名次，不是建单时定格的 max+1 -->
+        <template #header>
+          <el-tooltip
+            placement="top"
+            content="计划内序号：按「上课日期」实时排出（补录一单，其后各单自动顺移），不在建单时定格"
+          >
+            <span class="fb-th-tip">序号</span>
+          </el-tooltip>
+        </template>
         <template #default="{ row }">{{ row.lessonSeq ?? '—' }}</template>
       </el-table-column>
       <el-table-column label="上课日期" width="120">
@@ -252,6 +295,9 @@ onMounted(async () => {
 .fb-filter { width: 140px; margin-left: auto; }
 .fb-filter.wide { width: 190px; margin-left: 0; }
 .fb-search { width: 170px; }
+.fb-tip { font-size: 12px; color: #8aa09b; line-height: 1.7; margin: -6px 0 12px; }
+.fb-tip b { color: #6b8580; font-weight: 700; }
+.fb-th-tip { border-bottom: 1px dashed #b6c6c2; cursor: help; }
 .fb-link { color: #0e9285; cursor: pointer; font-weight: 600; }
 .fb-link:hover { text-decoration: underline; }
 .fb-png-preview { text-align: center; max-height: 60vh; overflow: auto; background: #f4f7f7; padding: 12px; border-radius: 8px; }

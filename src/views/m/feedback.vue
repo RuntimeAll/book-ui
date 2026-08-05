@@ -1,11 +1,16 @@
 <script setup lang="ts">
 /**
- * PRD-015 · /m/feedback 课后反馈（V23）—— **Vant 4 版**。
+ * PRD-015 · /m/feedback 课后反馈（V23）—— **Vant 4 版**（PRD-018 批3：D10 独立建单）。
  *
  * 顶部学生 chips：「今天上课」的学生（当日 getCalendar 有场次）前置高亮，其余排后；切学生 = 切该生
- * 计划的反馈列表（pageSheets(planId)，D6 反馈绑计划/场次）。结算自动生成的壳（title 为空 = 未填内容，
- * D7「反馈壳标题存 NULL」）标「待补内容」，点开逐条填五列内容保存（updateSheet）。
+ * 计划的反馈列表（pageSheets(planId)，D6 反馈绑计划/场次）。没填内容的单（rows 为空）标「待补内容」，
+ * 点开逐条填五列内容保存（updateSheet）。
  * 导出：exportPlanPng 单图 / 长图双模式，默认单图=最新一单，模式记 localStorage（D13）。
+ *
+ * 🔴 **PRD-018 D10 域间解耦**：结算**不再副作用式建反馈壳**了 —— 反馈单从此**独立建**。
+ *    所以本页必须自带「建单」入口（否则手机上一张反馈单都新建不出来，结算页那句
+ *    「去反馈页单独建」就成了死路）。建单时**代码从课程计划拉课次主题做默认填充**
+ *    （拉不到照样能建，绝不因为没计划/没排课就挡住建单——这正是 D10 的点）。
  *
  * 🔴 家长可见物红线：卷面文案零内部词——序号只出「{seq} · 日期」，不写"第几次/第 N 节课"（D7）。
  * 🔴 seq 由服务端按计划自动递增，前端只读展示不回写。
@@ -18,6 +23,7 @@ import { computed, onMounted, ref } from 'vue'
 import { showFailToast, showSuccessToast, showToast } from 'vant'
 import 'vant/es/toast/style'
 import {
+  createSheet,
   downloadArtifact,
   exportPlanPng,
   getSheet,
@@ -27,7 +33,13 @@ import {
   type FeedbackSheetBrief,
   type FeedbackSheetDetail,
 } from '@/api/teacher/feedback'
-import { getCalendar, pageTargets, type TargetCardVO } from '@/api/teacher/schedule'
+import {
+  getCalendar,
+  getPlan,
+  pageTargets,
+  type PlanLessonVO,
+  type TargetCardVO,
+} from '@/api/teacher/schedule'
 import MSheet from './components/MSheet.vue'
 import { todayStr } from './shared'
 
@@ -131,15 +143,18 @@ function selectStudent(id: string) {
   void loadSheets()
 }
 
-/** 结算自动建的壳 = 一条内容都没填（探针已定性用条数，未定性时回落 title 启发式） */
+/**
+ * 空单 = 一条内容都没填（探针已定性用条数，未定性时回落 title 启发式）。
+ * 🔄 D10 之后不再有「结算自动生成的壳」这回事，但**建了还没填**的单仍是这个态。
+ */
 function isShell(row: FeedbackSheetBrief): boolean {
   const n = rowCounts.value[row.id]
   return n === undefined ? !row.title : n === 0
 }
 
-/** 列表副标题：有标题出标题，没标题但已填内容出条数，纯壳出引导语 */
+/** 列表副标题：有标题出标题，没标题但已填内容出条数，空单出引导语 */
 function previewOf(row: FeedbackSheetBrief): string {
-  if (isShell(row)) return '结算自动生成的占位壳——点开补内容'
+  if (isShell(row)) return '还没填内容——点开补'
   if (row.title) return row.title
   const n = rowCounts.value[row.id]
   return n ? `已填 ${n} 条内容` : '已填内容'
@@ -148,6 +163,107 @@ function previewOf(row: FeedbackSheetBrief): string {
 function rowTitle(row: FeedbackSheetBrief): string {
   const seq = row.lessonSeq ? `${row.lessonSeq} · ` : ''
   return `${seq}${row.lessonDate || '未填日期'}`
+}
+
+// ── 新建反馈单（PRD-018 D10：结算不再建壳，这里是唯一入口）──────────────
+const newOpen = ref(false)
+const newDate = ref(todayStr())
+const newLessonId = ref('')
+const creating = ref(false)
+/** 该生计划的课次（只为「代码填充默认内容」，拉不到不挡建单） */
+const planLessons = ref<PlanLessonVO[]>([])
+const lessonsLoading = ref(false)
+const datePickerOpen = ref(false)
+const datePicked = ref<string[]>([])
+const lessonPickerOpen = ref(false)
+const dateMin = new Date(new Date().getFullYear() - 3, 0, 1)
+const dateMax = new Date()
+
+const lessonColumns = computed(() => [
+  { text: '不选（自己写）', value: '' },
+  ...planLessons.value.map((l) => ({ text: `${l.lessonSeq}. ${l.title}`, value: l.id })),
+])
+
+const newLessonTitle = computed(
+  () => planLessons.value.find((l) => l.id === newLessonId.value)?.title || '',
+)
+
+/** 拉计划课次做默认填充；🔴 失败/没计划都只是「没得填」，绝不阻断建单（D10 弱引用） */
+async function loadPlanLessons() {
+  const s = selStudent.value
+  planLessons.value = []
+  if (!s?.planId) return
+  lessonsLoading.value = true
+  try {
+    const p = await getPlan(s.planId)
+    planLessons.value = p?.lessons ?? []
+  } catch (e) {
+    console.warn('[m/feedback] 计划课次拉取失败（不影响建单）', e)
+  } finally {
+    lessonsLoading.value = false
+  }
+}
+
+function openNew() {
+  if (!selStudent.value) {
+    showToast('先选一个学生')
+    return
+  }
+  newDate.value = todayStr()
+  newLessonId.value = ''
+  newOpen.value = true
+  void loadPlanLessons()
+}
+
+function openDatePicker() {
+  const [y, m, dd] = (newDate.value || todayStr()).split('-')
+  datePicked.value = [y, m, dd]
+  datePickerOpen.value = true
+}
+
+function onPickDate() {
+  const [y, m, dd] = datePicked.value
+  if (y && m && dd) newDate.value = `${y}-${m}-${dd}`
+  datePickerOpen.value = false
+}
+
+function onPickLesson({ selectedOptions }: { selectedOptions: { value?: string | number }[] }) {
+  const v = selectedOptions[0]?.value
+  newLessonId.value = v == null ? '' : String(v)
+  lessonPickerOpen.value = false
+}
+
+async function submitNew() {
+  const s = selStudent.value
+  if (!s || creating.value) return
+  if (!newDate.value) {
+    showToast('请选择上课日期')
+    return
+  }
+  creating.value = true
+  try {
+    // 代码填充：选了课次就把课次主题带进「学习内容」，没选就建个空单自己写
+    const title = newLessonTitle.value
+    const rows: FeedbackRow[] = title
+      ? [{ seq: 1, module: '', content: title, mastery: '', weakness: '' }]
+      : []
+    const res = await createSheet({
+      targetId: s.id,
+      title: '',
+      lessonDate: newDate.value,
+      rows,
+      // 🔴 弱引用：有计划就挂上（序号按 lesson_date 读取时实时排），没有照样建得出来
+      ...(s.planId ? { planId: s.planId } : {}),
+    })
+    newOpen.value = false
+    showSuccessToast('反馈单已建，接着填内容')
+    await loadSheets()
+    if (res?.id) await openEdit(res.id)
+  } catch {
+    // 拦截器已提示
+  } finally {
+    creating.value = false
+  }
 }
 
 // ── 逐条填写 ───────────────────────────────────────────────────
@@ -163,13 +279,13 @@ function emptyRow(): FeedbackRow {
   return { module: '', content: '', mastery: '', weakness: '' }
 }
 
-async function openEdit(row: FeedbackSheetBrief) {
+async function openEdit(sheetId: string) {
   editOpen.value = true
   editLoading.value = true
   editDetail.value = null
   editRows.value = []
   try {
-    const d = await getSheet(row.id)
+    const d = await getSheet(sheetId)
     editDetail.value = d
     rowCounts.value = { ...rowCounts.value, [d.id]: (d.rows || []).length }
     editRows.value = (d.rows && d.rows.length ? d.rows : [emptyRow()]).map((r) => ({
@@ -351,10 +467,20 @@ onMounted(async () => {
       </div>
 
       <van-cell-group inset :title="planTitle">
+        <!-- D10：结算不再建壳 → 建单入口挂在这（点得到才算数） -->
+        <van-cell title="课后反馈单" label="结算不再自动建单，这里手动建">
+          <template #value>
+            <van-button size="small" type="primary" plain icon="plus" @click="openNew">
+              新建反馈单
+            </van-button>
+          </template>
+        </van-cell>
         <van-loading v-if="sheetsLoading" class="m-note" size="18">加载中…</van-loading>
-        <van-empty v-else-if="!sheets.length" image="search" image-size="70" description="该学生还没有反馈" />
+        <van-empty v-else-if="!sheets.length" image="search" image-size="70" description="该学生还没有反馈">
+          <van-button round type="primary" icon="plus" @click="openNew">建第一张</van-button>
+        </van-empty>
         <template v-else>
-          <van-cell v-for="f in sheets" :key="f.id" clickable is-link @click="openEdit(f)">
+          <van-cell v-for="f in sheets" :key="f.id" clickable is-link @click="openEdit(f.id)">
             <template #title>
               <span class="m-rowtitle">
                 <van-tag :type="isShell(f) ? 'warning' : 'primary'" round size="medium">
@@ -373,6 +499,72 @@ onMounted(async () => {
         <van-button type="primary" block icon="photo-o" @click="openExport">导出反馈</van-button>
       </div>
     </template>
+
+    <!-- 新建反馈单（D10 独立建单：日期必填，课次只用来带出默认内容） -->
+    <MSheet
+      v-model="newOpen"
+      title="新建反馈单"
+      sub="选上课日期即可建单；挑一个课次会把课次主题带进「学习内容」，没有计划也照样能建"
+    >
+      <van-cell-group inset>
+        <van-field
+          :model-value="selStudent?.name || ''"
+          label="学生"
+          readonly
+          placeholder="先在上面选学生"
+        />
+        <van-field
+          :model-value="newDate"
+          label="上课日期"
+          placeholder="选择日期"
+          readonly
+          is-link
+          @click="openDatePicker"
+        >
+          <template v-if="newDate === todayStr()" #button>
+            <van-tag type="primary" plain>今天</van-tag>
+          </template>
+        </van-field>
+        <van-field
+          :model-value="newLessonTitle"
+          label="课次主题"
+          :placeholder="
+            lessonsLoading ? '正在读计划…' : planLessons.length ? '可选，用来带出默认内容' : '该生没有计划课次，直接建'
+          "
+          readonly
+          :is-link="!!planLessons.length"
+          @click="planLessons.length && (lessonPickerOpen = true)"
+        />
+      </van-cell-group>
+      <template #acts>
+        <van-button block @click="newOpen = false">取消</van-button>
+        <van-button block type="primary" :loading="creating" loading-text="创建中…" @click="submitNew">
+          建单并填内容
+        </van-button>
+      </template>
+    </MSheet>
+
+    <!-- 上课日期 -->
+    <van-popup v-model:show="datePickerOpen" position="bottom" round>
+      <van-date-picker
+        v-model="datePicked"
+        title="上课日期"
+        :min-date="dateMin"
+        :max-date="dateMax"
+        @confirm="onPickDate"
+        @cancel="datePickerOpen = false"
+      />
+    </van-popup>
+
+    <!-- 课次（只为默认填充，可不选） -->
+    <van-popup v-model:show="lessonPickerOpen" position="bottom" round>
+      <van-picker
+        title="选择课次"
+        :columns="lessonColumns"
+        @confirm="onPickLesson"
+        @cancel="lessonPickerOpen = false"
+      />
+    </van-popup>
 
     <!-- 逐条填写 -->
     <MSheet v-model="editOpen" :title="editTitle" sub="五列简化为逐条卡片，手机上顺手填">

@@ -45,6 +45,33 @@
   z-index: 20;
 }
 
+/**
+ * PRD-018 D8 · 顶栏右侧「小时 / 节」分段控件（Vant 4 无 Segmented 件，自留最小构件）。
+ * 只在展示课时数的页（账户 / 待结算）出；状态在 composables/useTuitionUnit 的模块级 ref，切一处全站生效。
+ */
+.m-app .m-unitseg {
+  display: inline-flex;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 999px;
+  padding: 2px;
+}
+.m-app .m-unitseg button {
+  height: 21px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 11px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+}
+.m-app .m-unitseg button.on {
+  background: #fff;
+  color: var(--van-primary-color);
+}
+
 .m-app .m-main {
   flex: 1;
   padding: 12px 12px 96px;
@@ -278,6 +305,86 @@
 .m-app .m-lrow.reverse .delta,
 .m-app .m-lrow.reverse .lc {
   color: var(--m-danger);
+}
+/* PRD-018 D4 规则①：共享账本的行前挂学生名（谁的课），数据驱动无开关 */
+.m-app .m-lrow .lc .stu {
+  color: var(--van-text-color);
+  font-weight: 600;
+  margin-right: 4px;
+}
+/**
+ * PRD-018 M10 · 台账两条特殊行（都复用 .m-lrow 的三列骨架，只改底色/字重）：
+ *   .opening  = 期初结余（本页第一行之前的累计，区间/翻页视图必带，否则剩余列读不懂）
+ *   .fold-row = 「加载更早」（正序 + 默认末页 ⟹ 向前翻页，不是向后滚）
+ */
+.m-app .m-lrow.opening {
+  background: var(--van-background);
+  color: var(--van-text-color-2);
+}
+.m-app .m-lrow.opening .lc {
+  font-weight: 600;
+}
+.m-app .m-lrow.fold-row {
+  justify-content: center;
+  background: var(--van-background);
+  color: var(--van-text-color-3);
+  font-size: 12px;
+}
+
+/* PRD-018 D1 v2.1 · 双单位副显（「1.5 小时」后跟的「（1 节）」），跟主显同排不换行 */
+.m-app .m-subu {
+  font-size: 11px;
+  font-weight: 400;
+  font-style: normal;
+  color: var(--van-text-color-3);
+}
+.m-app .m-owe .m-subu {
+  color: inherit;
+}
+
+/**
+ * PRD-018 D9 · 充值三档分段（按小时 / 按节 / 按金额）。
+ * Vant 的 tabs 是页签语义（带 ink bar），这里要的是「输哪档」的单选开关，自留最小构件。
+ */
+.m-app .mtabs {
+  display: flex;
+  background: var(--van-background);
+  border-radius: 8px;
+  padding: 3px;
+  margin: 6px 16px 9px;
+}
+.m-app .mtabs button {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  font-size: 12.5px;
+  color: var(--van-text-color-2);
+  padding: 6px 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.m-app .mtabs button.on {
+  background: #fff;
+  color: var(--van-primary-color);
+  font-weight: 700;
+  box-shadow: 0 1px 3px rgba(29, 42, 38, 0.08);
+}
+.m-app .mtabs button:disabled {
+  color: var(--van-text-color-3);
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* 表单下方的换算/说明小字（三档互算、折算基准） */
+.m-app .m-fnote {
+  font-size: 11.5px;
+  color: var(--van-text-color-3);
+  line-height: 1.5;
+  margin: 7px 20px 0;
+}
+.m-app .m-fnote b {
+  color: var(--van-primary-color);
 }
 
 /* ── 导出预览（PNG 出图面，恒浅色）──────────────────────────── */

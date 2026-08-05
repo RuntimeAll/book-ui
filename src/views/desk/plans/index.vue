@@ -556,6 +556,36 @@ function openFeedbackExport() {
   feedbackExportVisible.value = true
 }
 
+// ── PRD-018 M8 · 未排课课次提示 ─────────────────────────────────────────────
+/**
+ * 🔴 D6 删了顺延后，请假/取消会把本场绑的课次「释放回池」（plan_lesson_id 置空）——
+ * 课次不会自己找位置，得老师去补排。本提示条接住原来「顺延 overflow」的提示位。
+ * 数据源 = GET plan/{id} 的 unscheduledLessons（列表接口没有，只有详情才出）。
+ */
+const unscheduledCount = computed(() => planDetail.value?.unscheduledLessons ?? 0)
+
+function goSchedule() {
+  const tid = planDetail.value?.targetId
+  router.push({ path: '/desk/schedule', query: tid ? { targetId: String(tid) } : {} })
+}
+
+// ── PRD-018 D10 · 反馈单独立建单入口 ────────────────────────────────────────
+/**
+ * D10 域间解耦：结算不再副作用式建反馈壳，反馈单改为**独立建单**。
+ * 本页只负责把上下文以 query 发出去（三个 key 定死：targetId / planId / lessonId），
+ * 反馈编辑页据此从计划详情拉课次主题做默认填充——拉不到照样能建（弱引用，不阻断）。
+ *
+ * @param lesson 传了 = 从某个课次建（带 lessonId）；不传 = 计划级建单，课次让老师在反馈页选
+ */
+function goCreateFeedback(lesson?: PlanLessonVO) {
+  const p = planDetail.value
+  if (!p) return
+  const query: Record<string, string> = { planId: String(p.id) }
+  if (p.targetId) query.targetId = String(p.targetId)
+  if (lesson) query.lessonId = String(lesson.id)
+  router.push({ path: '/desk/feedback/edit', query })
+}
+
 // ── 展示辅助 ────────────────────────────────────────────────────────────────
 function planTermLabel(p: PlanVO): string {
   const parts = [p.termTag, p.year != null ? String(p.year) : ''].filter(Boolean)
@@ -702,9 +732,20 @@ onMounted(async () => {
           <div class="acts">
             <el-button size="small" @click="openParentExport">家长版课表</el-button>
             <el-button size="small" @click="openFeedbackExport">导出反馈合集</el-button>
+            <!-- PRD-018 D10：反馈单独立建单（结算不再自动建壳），带计划上下文过去 -->
+            <el-button size="small" @click="goCreateFeedback()">+ 新建反馈单</el-button>
             <el-button size="small" @click="doCopyPlan(planDetail)">复制计划</el-button>
             <el-button size="small" type="primary" @click="openNewLesson">+ 添加课次</el-button>
           </div>
+        </div>
+
+        <!-- 🔴 PRD-018 M8：接住原「顺延 overflow」提示位——请假/取消释放回池的课次要老师去补排 -->
+        <div v-if="unscheduledCount > 0" class="unsched-banner">
+          <span class="ub-txt">
+            <b>有 {{ unscheduledCount }} 个课次尚未排课。</b>
+            请假 / 取消会把当时绑的课次释放回池，它不会自己找位置——去「排课总览」把这些课次重新排上。
+          </span>
+          <el-button size="small" type="primary" plain @click="goSchedule">去排课</el-button>
         </div>
 
         <!-- FP21 细备窗口说明 -->
@@ -814,6 +855,8 @@ onMounted(async () => {
               <!-- 动作区 -->
               <div class="lrow-foot">
                 <el-button size="small" @click="openEditLesson(lesson)">编辑课次</el-button>
+                <!-- PRD-018 D10：从本课次直接建反馈单（带 lessonId，反馈页据此默认填课次主题） -->
+                <el-button size="small" @click="goCreateFeedback(lesson)">建反馈单</el-button>
                 <el-button size="small" :disabled="idx === 0" @click="moveLesson(idx, -1)">上移</el-button>
                 <el-button size="small" :disabled="idx === lessons.length - 1" @click="moveLesson(idx, 1)">下移</el-button>
                 <el-button size="small" type="danger" plain @click="removeLesson(lesson)">删除</el-button>
@@ -961,6 +1004,15 @@ onMounted(async () => {
   border: 1px solid #f0dcc0; font-size: 12.5px; color: var(--amber); line-height: 1.6;
 }
 .win-banner b { font-weight: 700; }
+
+/* PRD-018 M8：未排课课次提示条（比细备窗口更紧急，用警示色 + 直达按钮） */
+.unsched-banner {
+  margin: 14px 16px 0; padding: 10px 14px; border-radius: 10px; background: var(--warn-soft);
+  border: 1px solid #f0cdc7; font-size: 12.5px; color: var(--warn); line-height: 1.6;
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+}
+.unsched-banner .ub-txt { flex: 1; min-width: 220px; }
+.unsched-banner b { font-weight: 700; }
 
 /* 课次行 */
 .lesson-list { padding: 14px 16px 18px; display: flex; flex-direction: column; gap: 10px; }

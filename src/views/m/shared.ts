@@ -4,6 +4,12 @@
  * 只放「跨页复用」的纯函数 + 待结算清单的模块级缓存（tabbar 角标与 settle 页同一份数据源，
  * 避免两处各拉一次导致角标与列表打架）。业务请求一律走 api/teacher/** 契约层，本文件不发明端点。
  * 🔴 雪花 id 全链路 string；课时/金额是小数，用 number。
+ *
+ * 🔴 **双单位（小时 ⇄ 节）不在本文件实现**（PRD-018 D1 v2.1 / D8）：
+ *    唯一底座 = `@/composables/useTuitionUnit`（`dual`/`dText`/`toLessons` + 模块级单位开关，
+ *    桌面与 H5 共用同一个 ref，切一处全站生效）。本文件的 `money()`/`fmtHours()` 只是**纯数字**
+ *    格式化，很多老页面在用，保留原样；**别在这里再长一套换算或单位文案**——
+ *    同一笔钱两处算法不同就是事故的开始。
  */
 import { ref } from 'vue'
 import { getPendingSettlements, type PendingSettlementVO } from '@/api/teacher/schedule'

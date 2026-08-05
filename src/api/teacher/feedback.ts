@@ -29,7 +29,11 @@ export interface FeedbackSheetBo {
   // 🔴 传 sessionId 未传 planId → BE 从场次回填 planId
   sessionId?: string | null
   planId?: string | null
-  /** 计划内序号：🔴 不传 = BE 自动取该计划下 max+1（D7），FE 只读展示不回传 */
+  /**
+   * 计划内序号。
+   * 🔄 **PRD-018 G9③（2026-08-05）**：序号已改**读取时**按 `(lesson_date, id)` 实时排出（1..N），
+   *    列值不再决定展示。FE 一律不传、只读展示 —— 补录一单，其后所有单的序号自动顺移。
+   */
   lessonSeq?: number | null
 }
 
@@ -45,8 +49,14 @@ export interface FeedbackSheetBrief {
   // PRD-015 教务域：绑定的场次 / 课程计划（旧单为空）
   sessionId?: string
   planId?: string
-  // PRD-015 计划内课次序号（按 planId 聚合出计划长图时排序用；未绑计划为空）
+  /**
+   * 计划内展示序号。
+   * 🔄 **PRD-018 G9③**：BE 读取时按 `(lesson_date, id)` 实时排出 1..N —— 乱序补录后序号自洽。
+   *    未绑计划（散单）为空。
+   */
   lessonSeq?: number
+  /** 🆕 原始 lesson_seq 列值（写入时定格的旧值，仅排查用，页面不展示） */
+  lessonSeqRaw?: number | null
 }
 
 /** 详情（含 rows）。 */
@@ -99,7 +109,8 @@ export interface PlanExportVO extends FileUrlVO {
 }
 
 // PRD-015 按课程计划导出反馈图 → {file,url,mode,sheetCount}
-// mode='single'（缺省）= 该计划最新一单（lessonSeq 最大）单张 / 'long' = 全部反馈单按序号升序拼长图
+// mode='single'（缺省）= 该计划**业务日期最晚**的一单单张 / 'long' = 全部反馈单拼长图
+// 🔄 PRD-018 G9③：排序与黄条序号都按 (lesson_date, id) 读取时实时排，与页面列表严格一致
 // 🔴 黄条标题 = 「序号 · 上课日期（· 备注）」，无「第几次」字样（D7）
 export const exportPlanPng = (planId: string, mode: 'single' | 'long' = 'single') =>
   request.post<PlanExportVO, PlanExportVO>(`${BASE}/export-plan-png`, { planId, mode })

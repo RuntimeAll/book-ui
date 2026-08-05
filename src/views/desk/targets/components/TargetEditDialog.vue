@@ -7,12 +7,15 @@
  * 🔴 R1a 建模：年级=gradeNo 数字码 + gradeYear（隐藏缺省当年）；学科/教材版本=字典码；
  *    显示层用 BE 推导串（VO grade/textbook/subjectLabel），本弹窗只管写原始码。
  *
- * PRD-015 bug 批 BUG-4/C「建档一体」：新建学生时可<b>顺手</b>录课时账户（学科+单价+初始课时/金额，
- * 可多科），保存链 = 建档成功 → 逐科 upsertAccount → 有初始数就 addAccountFlow('1' 充值)。
+ * PRD-015 bug 批 BUG-4/C「建档一体」：新建学生时可<b>顺手</b>录课时账本（学科+时薪+每节时长+初始充值，
+ * 可多科），保存链 = 建档成功 → 逐科 upsertAccount → 有初始小时就 addAccountFlow('1' 充值)。
  * 🔴 可跳过（拍板 C）：试听生先建档、回头再开户；学科留空的行直接忽略。
  * 🔴 只复用既有 api，不造新端点；建档已成功而开户失败 <b>不回滚建档</b>——只报哪几科没开成，
  *    让老师去学生详情补，绝不把一个已经建好的学生悄悄删掉。
- * 🔴 编辑态不重复做账户管理：只列已有账户 +「去详情管理」跳转（正本 = 学生详情 AccountPanel）。
+ * 🔴 编辑态不重复做账户管理：只列已有账本 +「去详情管理」跳转（正本 = 学生详情 AccountPanel）。
+ *
+ * 🔄 PRD-018 批3：单价（元/课时）换轨成<b>时薪（元/小时）+ 每节时长</b>；初始额只填小时数，
+ *    实收金额选填并原样落 `amountPaid`（AC9：收 3500 就记 3500，不用派生尾差倒推）。
  */
 import { ref, reactive, watch, computed } from 'vue'
 import { ElMessage } from 'element-plus'
@@ -28,6 +31,7 @@ import {
 } from '@/api/teacher/schedule'
 import { listAccounts, upsertAccount, addAccountFlow, type TuitionAccountVO } from '@/api/teacher/account'
 import { useDictStore, DICT_EDU_GRADE, DICT_EDU_SUBJECT, DICT_EDU_EDITION } from '@/store/dict'
+import { useTuitionUnit, todayStr } from '@/composables/useTuitionUnit'
 
 const props = defineProps<{
   modelValue: boolean
@@ -82,13 +86,26 @@ const GRADE_OPTIONS = computed(() => dict.list(DICT_EDU_GRADE))
 const SUBJECT_OPTIONS = computed(() => dict.list(DICT_EDU_SUBJECT))
 const EDITION_OPTIONS = computed(() => dict.list(DICT_EDU_EDITION))
 
-// ── PRD-015 BUG-4/C 课时账户段 ───────────────────────────────────────────
-/** 建档时顺手开的账户行（学科留空=这行不开，整段可跳过） */
+// ── PRD-015 BUG-4/C 课时账本段（PRD-018 换轨成时薪 + 每节时长）─────────────
+const { d, fmtNum, fmtMoney } = useTuitionUnit()
+
+/** 建档时顺手开的账本行（学科留空=这行不开，整段可跳过） */
 interface AcctDraft {
   subject: string
-  lessonPrice: number
+  /** 时薪 元/小时（v3 唯一价格口径） */
+  pricePerHour: number
+  /** 每节时长 小时（落绑定层，结算默认按它扣） */
+  hoursPerLesson: number
+  /** 初始充值小时数（底账只记小时） */
   hours: number
-  amount: number
+  /** 实收金额，选填；给了就原样落库（AC9） */
+  amountPaid: number
+}
+
+/** 折节基准；共享账本基准不唯一 → null（D4 规则②） */
+function perLessonOf(a: TuitionAccountVO): number | null {
+  if (a.shared) return null
+  return a.hoursPerLesson && a.hoursPerLesson > 0 ? a.hoursPerLesson : null
 }
 
 const acctRows = ref<AcctDraft[]>([])
@@ -100,7 +117,7 @@ const acctLoading = ref(false)
 const showAcct = computed(() => !isClass.value)
 
 function newAcctRow(): AcctDraft {
-  return { subject: '', lessonPrice: 0, hours: 0, amount: 0 }
+  return { subject: '', pricePerHour: 0, hoursPerLesson: 1, hours: 0, amountPaid: 0 }
 }
 
 function addAcctRow() {
@@ -151,16 +168,19 @@ async function createAccounts(studentId: string): Promise<string[]> {
       const res = await upsertAccount({
         studentId,
         subject: r.subject,
-        lessonPrice: Number(r.lessonPrice) || 0,
+        pricePerHour: Number(r.pricePerHour) || 0,
+        hoursPerLesson: Number(r.hoursPerLesson) || 1,
       })
       const hours = Number(r.hours) || 0
-      const amount = Number(r.amount) || 0
-      // 初始课时/金额 = 一笔充值流水（余额只能经流水产生，D1 铁律；不裸改余额列）
-      if (hours || amount) {
+      const paid = Number(r.amountPaid) || 0
+      // 初始额 = 一笔充值流水（余额只能经流水产生，D1 铁律；不裸改余额列）
+      if (hours) {
         await addAccountFlow(res.id, {
           flowType: '1',
-          hoursDelta: hours,
-          amountDelta: amount,
+          hours,
+          // 实收给了就原样落（AC9）；没给走「小时 × 时薪」派生
+          amountPaid: paid || undefined,
+          occurDate: todayStr(),
           note: '建档初始',
         })
       }
@@ -346,30 +366,40 @@ function goDetail() {
           />
         </el-select>
       </el-form-item>
-      <!-- PRD-015 BUG-4/C 课时账户（学生专有；可跳过） -->
+      <!-- PRD-015 BUG-4/C 课时账本（学生专有；可跳过） -->
       <template v-if="showAcct">
-        <!-- 新建：顺手开户 + 首充，可加多科 -->
-        <el-form-item v-if="mode === 'create'" label="课时账户">
+        <!-- 新建：顺手开本 + 首充，可加多科 -->
+        <el-form-item v-if="mode === 'create'" label="课时账本">
           <div class="acct-block">
             <div v-for="(r, i) in acctRows" :key="i" class="acct-line">
               <el-select v-model="r.subject" clearable placeholder="学科" class="a-subj">
                 <el-option
-                  v-for="d in subjectOptionsFor(i)"
-                  :key="d.dictValue"
-                  :label="d.dictLabel"
-                  :value="d.dictValue"
+                  v-for="s in subjectOptionsFor(i)"
+                  :key="s.dictValue"
+                  :label="s.dictLabel"
+                  :value="s.dictValue"
                 />
               </el-select>
               <el-input-number
-                v-model="r.lessonPrice"
+                v-model="r.pricePerHour"
                 :min="0"
                 :precision="2"
                 :step="10"
                 :controls="false"
                 class="a-num"
-                placeholder="单价"
+                placeholder="时薪"
               />
-              <span class="a-u">元/课时</span>
+              <span class="a-u">元/小时</span>
+              <el-input-number
+                v-model="r.hoursPerLesson"
+                :min="0.25"
+                :precision="2"
+                :step="0.5"
+                :controls="false"
+                class="a-num"
+                placeholder="每节"
+              />
+              <span class="a-u">小时/节</span>
               <el-input-number
                 v-model="r.hours"
                 :min="0"
@@ -377,41 +407,44 @@ function goDetail() {
                 :step="1"
                 :controls="false"
                 class="a-num"
-                placeholder="课时"
+                placeholder="初始"
               />
-              <span class="a-u">课时</span>
+              <span class="a-u">小时</span>
               <el-input-number
-                v-model="r.amount"
+                v-model="r.amountPaid"
                 :min="0"
                 :precision="2"
                 :step="100"
                 :controls="false"
                 class="a-num"
-                placeholder="金额"
+                placeholder="实收"
               />
               <span class="a-u">元</span>
               <el-button v-if="acctRows.length > 1" size="small" text @click="removeAcctRow(i)">删</el-button>
             </div>
             <div class="acct-foot">
               <el-button size="small" text bg @click="addAcctRow">＋ 再加一科</el-button>
-              <span class="a-hint">不填学科就跳过，回头在学生详情「课时账户」里开也一样</span>
+              <span class="a-hint">
+                不填学科就跳过，回头在学生详情「课时账户」里开也一样；实收金额选填，填了台账就按这个数显示
+              </span>
             </div>
           </div>
         </el-form-item>
 
-        <!-- 编辑：只列已有账户，管理去详情面板（不在这儿重复做一套） -->
-        <el-form-item v-else label="课时账户">
+        <!-- 编辑：只列已有账本，管理去详情面板（不在这儿重复做一套） -->
+        <el-form-item v-else label="课时账本">
           <div class="acct-block" v-loading="acctLoading">
             <div v-if="existAccounts.length" class="acct-exist">
               <span v-for="a in existAccounts" :key="a.id" class="a-tag" :class="{ off: a.status === '1' }">
-                {{ a.subjectLabel || a.subject }} · {{ a.lessonPrice }}元/课时 · 余 {{ a.hoursRemain }}课时
+                {{ a.subjectLabel || a.subject }} · {{ fmtNum(a.pricePerHour) }}元/小时 ·
+                余 {{ d(a.hoursRemain, perLessonOf(a)).full }} · 约 {{ fmtMoney(a.amountRemain) }}
                 <i v-if="a.status === '1'">（已停用）</i>
               </span>
             </div>
-            <span v-else-if="!acctLoading" class="a-hint">还没有账户</span>
+            <span v-else-if="!acctLoading" class="a-hint">还没有账本</span>
             <div class="acct-foot">
               <el-button size="small" text bg @click="goDetail">去详情管理</el-button>
-              <span class="a-hint">开户 / 充值 / 调整 / 改单价 / 停用都在学生详情的「课时账户」区块</span>
+              <span class="a-hint">开户 / 充值 / 调整 / 改时薪 / 停用都在学生详情的「课时账户」区块</span>
             </div>
           </div>
         </el-form-item>
@@ -456,18 +489,20 @@ function goDetail() {
 .acct-block {
   width: 100%;
 }
+/* 四个数字格（时薪/每节/初始/实收）超出一行就换行，别把弹窗撑破 */
 .acct-line {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-wrap: wrap;
   margin-bottom: 8px;
 }
 .acct-line .a-subj {
-  width: 96px;
+  width: 90px;
   flex: none;
 }
 .acct-line :deep(.a-num) {
-  width: 76px;
+  width: 68px;
   flex: none;
 }
 .acct-line :deep(.a-num .el-input__inner) {

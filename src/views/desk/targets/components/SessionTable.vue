@@ -3,16 +3,22 @@
  * PRD-C-213 FP14 · 场次表 + 行操作。
  * 场次列：# / 日期 / 时间 / 绑定课次 / 状态 pill / 备课态 pill / 操作。
  * 行操作：改期(sessionUpdate date/start/end) · 请假(sessionLeave) · 取消(sessionCancel) ·
- *         结算这节课(SettleDialog 单场版) · 锁定/解锁内容(sessionLock/Unlock) · 改绑课次(sessionUpdate planLessonId)。
- * 请假/取消返回 {deferred,overflow} → message 提示顺延明细。
+ *         销假(sessionRevokeLeave) · 记上课内容(sessionUpdate content) · 结算这节课(SettleDialog
+ *         单场版) · 锁定/解锁内容(sessionLock/Unlock) · 改绑课次(sessionUpdate planLessonId)。
  *
  * 🔴 PRD-015 D9/AC11：回收线（逐题判对错→肖像）已下线——本表不再有「回收/已回收」按钮，
  *    也不再引用 ReviewDialog；组件文件与既有回收数据保留（物理清理另立小卡）。
  * 🔴 PRD-015 修复批（钱线漏口）：原「标记已上」直调 sessionMarkDone = 绕过结算的旁路——
  *    场次被标已上后 settle_status 仍 '0'，却因 pending 清单口径（session_status='0'）从待结算
- *    清单消失，钱永远扣不上。现改为与详情抽屉同语义的<b>单场结算确认</b>（SettleDialog 单行版）：
- *    实扣课时可改 + 实际上课时间备注 + 生成反馈壳，一次完成 扣费 + 标已上 + 建壳。
+ *    清单消失，钱永远扣不上。现改为与详情抽屉同语义的<b>单场结算确认</b>（SettleDialog 单行版）。
  *    存量/漏网场次（已上但未结）在下拉里出「补结算」，是本表与抽屉共用的唯一补救路径。
+ *
+ * 🔴 PRD-018 批3 三处改造：
+ *  ① **顺延已死**（D6）：`deferred`/`overflow` 恒空，读它们的分支整段删除；请假/取消只改本场
+ *     状态并把本场课次释放回池（`freedLessonId` → 提示「课次已释放，可重新排课」）。
+ *  ② **销假**（AC5/G5）：请假/取消/已冲正的场次一键恢复「已上 · 未结」+ 删掉该场扣课/冲正
+ *     流水对 → 可重新结算。🔴 不还原课次绑定（课次已释放，可能被别的场次排走，需要时手工改绑）。
+ *  ③ **上课内容**：表内展示 `session.content` 并可就地编辑（updateSession content）。
  */
 import { ref, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -22,6 +28,7 @@ import {
   sessionCancel,
   sessionLock,
   sessionUnlock,
+  sessionRevokeLeave,
   updateSession,
   getPendingSettlements,
   type SessionVO,
@@ -122,21 +129,25 @@ const busyId = ref<string>('')
 //    场次表只留 备课/改期/改绑/标记已上/锁定/请假/取消 这一条教务主线；
 //    回收数据与 GET review 接口保留可读（下线≠坏档），ReviewDialog.vue 文件保留不删。
 
+/**
+ * 请假/取消成功提示。
+ * 🔄 PRD-018 D6：**顺延已删** —— `deferred`/`overflow` 恒空，读它们的分支整段移除。
+ *    改报 `freedLessonId`（M8）：本场课次已释放回池，可以重新排给别的场次。
+ */
 function showDefer(res: DeferResult, verb: string) {
   const parts: string[] = [`已${verb}`]
-  if (res.deferred?.length) parts.push(`后续 ${res.deferred.length} 次课已顺延`)
-  if (res.overflow?.length) parts.push(`⚠ 需补排：${res.overflow.join('；')}`)
-  ElMessage({
-    type: res.overflow?.length ? 'warning' : 'success',
-    message: parts.join('，'),
-    duration: res.overflow?.length ? 6000 : 3000,
-  })
+  if (res.reversal) parts.push(`返还 ${res.reversal.hours} 小时 / ¥${res.reversal.amount}`)
+  if (res.freedLessonId) parts.push('课次已释放，可重新排课')
+  ElMessage.success(parts.join('，'))
 }
 
 async function onLeave(s: SessionVO) {
-  await ElMessageBox.confirm(`确认将该场次（${shortDate(s.sessionDate)}）标记为请假？后续课次将自动顺延。`, '请假', {
-    type: 'warning',
-  }).catch(() => Promise.reject('cancel'))
+  // D6：只改本场状态，其余场次的课次绑定一律不动；本场课次释放回池
+  await ElMessageBox.confirm(
+    `确认将该场次（${shortDate(s.sessionDate)}）标记为请假？只影响本场，其它课的安排不动；本场绑定的课次会释放回池，可重新排给别的场次。`,
+    '请假',
+    { type: 'warning' },
+  ).catch(() => Promise.reject('cancel'))
   busyId.value = s.id
   try {
     const res = await sessionLeave(s.id)
@@ -148,9 +159,11 @@ async function onLeave(s: SessionVO) {
 }
 
 async function onCancel(s: SessionVO) {
-  await ElMessageBox.confirm(`确认取消该场次（${shortDate(s.sessionDate)}）？后续课次将自动顺延。`, '取消场次', {
-    type: 'warning',
-  }).catch(() => Promise.reject('cancel'))
+  await ElMessageBox.confirm(
+    `确认取消该场次（${shortDate(s.sessionDate)}）？只影响本场，其它课的安排不动；本场绑定的课次会释放回池，可重新排给别的场次。`,
+    '取消场次',
+    { type: 'warning' },
+  ).catch(() => Promise.reject('cancel'))
   busyId.value = s.id
   try {
     const res = await sessionCancel(s.id)
@@ -158,6 +171,65 @@ async function onCancel(s: SessionVO) {
     emit('refresh')
   } finally {
     busyId.value = ''
+  }
+}
+
+/**
+ * PRD-018 AC5/G5 · 销假：请假('2') / 取消('3') / 已冲正（settleStatus='2'）的场次可用。
+ * 🔴 BE 守卫（已结算未冲正 → 400）**前端不预判**：BE 原文由 http 拦截器直接弹给老师。
+ */
+function canRevoke(s: SessionVO): boolean {
+  return s.sessionStatus === '2' || s.sessionStatus === '3' || s.settleStatus === '2'
+}
+
+async function onRevokeLeave(s: SessionVO) {
+  await ElMessageBox.confirm(
+    '销假后这节课恢复成「已上 · 未结」，并<b>删除该场的冲正 / 扣课流水对</b>（净额为零、余额不变），之后可以重新结算。<br />' +
+      '🔴 <b>课次绑定不会还原</b>——请假时课次已经释放回池，可能已经排给别的场次了，需要时手工改绑。',
+    '销假并恢复为已上',
+    {
+      type: 'warning',
+      dangerouslyUseHTMLString: true,
+      confirmButtonText: '确认销假',
+      cancelButtonText: '再想想',
+    },
+  ).catch(() => Promise.reject('cancel'))
+  busyId.value = s.id
+  try {
+    const r = await sessionRevokeLeave(s.id)
+    const parts = ['已销假，恢复为「已上 · 未结」']
+    if (r?.removedFlows) parts.push(`清掉 ${r.removedFlows} 条课时流水`)
+    parts.push(r?.planLessonId ? '课次需要时手工改绑' : '本场原本没绑课次')
+    ElMessage.success(parts.join('；'))
+    emit('refresh')
+  } finally {
+    busyId.value = ''
+  }
+}
+
+// —— PRD-018 ③ 上课内容（这节实际讲了什么）——
+const ctVisible = ref(false)
+const ctSaving = ref(false)
+const ctTarget = ref<SessionVO | null>(null)
+const ctText = ref('')
+
+function openContent(s: SessionVO) {
+  ctTarget.value = s
+  ctText.value = s.content || ''
+  ctVisible.value = true
+}
+
+async function saveContent() {
+  const s = ctTarget.value
+  if (!s) return
+  ctSaving.value = true
+  try {
+    await updateSession(s.id, { content: ctText.value.trim() })
+    ElMessage.success('已保存上课内容')
+    ctVisible.value = false
+    emit('refresh')
+  } finally {
+    ctSaving.value = false
   }
 }
 
@@ -223,7 +295,8 @@ async function onToggleLock(s: SessionVO) {
       ElMessage.success('已解锁内容')
     } else {
       await sessionLock(s.id)
-      ElMessage.success('已锁定内容（顺延时保持原课次）')
+      // 🔄 PRD-018 D6：原文案「顺延时保持原课次」已失真（顺延已删），只陈述动作本身
+      ElMessage.success('已锁定内容')
     }
     emit('refresh')
   } finally {
@@ -234,8 +307,10 @@ async function onToggleLock(s: SessionVO) {
 function onCommand(cmd: string, s: SessionVO) {
   if (cmd === 'reschedule') openReschedule(s)
   else if (cmd === 'rebind') openRebind(s)
+  else if (cmd === 'content') openContent(s)
   else if (cmd === 'leave') onLeave(s).catch(() => {})
   else if (cmd === 'cancel') onCancel(s).catch(() => {})
+  else if (cmd === 'revoke') onRevokeLeave(s).catch(() => {})
   else if (cmd === 'settle') openSettle(s)
   else if (cmd === 'lock') onToggleLock(s)
 }
@@ -344,6 +419,15 @@ async function saveRebind() {
               {{ lessonLabel(s) }}
             </span>
             <el-tag v-if="s.lessonLocked === '1'" size="small" type="info" class="lock-tag">锁定</el-tag>
+            <!-- PRD-018 ③：这节实际讲了什么（台账「内容」列取的就是它）；点一下就地改 -->
+            <span
+              v-if="s.content"
+              class="content-txt"
+              :title="s.content + '（点击修改）'"
+              @click="openContent(s)"
+            >
+              📝 {{ s.content }}
+            </span>
           </td>
           <td>
             <span class="pill" :class="'pill-' + sessionStatusPill(s.sessionStatus).tone">
@@ -384,6 +468,10 @@ async function saveRebind() {
                 <el-dropdown-menu>
                   <el-dropdown-item command="reschedule" :disabled="isVoided(s)">改期</el-dropdown-item>
                   <el-dropdown-item command="rebind">改绑课次</el-dropdown-item>
+                  <!-- PRD-018 ③：记这节实际讲了什么（台账/流水单的「内容」列） -->
+                  <el-dropdown-item command="content">
+                    {{ s.content ? '改上课内容' : '记上课内容' }}
+                  </el-dropdown-item>
                   <!-- PRD-015 修复批：原「标记已上」（裸 markDone，绕过扣费）→ 单场结算确认 -->
                   <el-dropdown-item v-if="settleLabel(s)" command="settle">
                     {{ settleLabel(s) }}
@@ -393,6 +481,8 @@ async function saveRebind() {
                   </el-dropdown-item>
                   <el-dropdown-item command="leave" divided :disabled="isVoided(s)">请假</el-dropdown-item>
                   <el-dropdown-item command="cancel" :disabled="isVoided(s)">取消场次</el-dropdown-item>
+                  <!-- PRD-018 AC5/G5：销假 —— 请假/取消/已冲正的场次恢复「已上 · 未结」 -->
+                  <el-dropdown-item v-if="canRevoke(s)" command="revoke">销假（恢复为已上）</el-dropdown-item>
                 </el-dropdown-menu>
               </template>
             </el-dropdown>
@@ -403,7 +493,11 @@ async function saveRebind() {
         </tr>
       </tbody>
     </table>
-    <p class="sess-foot">请假 / 改期后，后续课次内容自动顺延（锁定的场次保持原课次）</p>
+    <!-- 🔄 PRD-018 D6：顺延已删，原「后续课次自动顺延」的说法是错的，按现行语义重写 -->
+    <p class="sess-foot">
+      请假 / 取消只改本场，其它课的安排不动；本场绑定的课次会释放回池，可在「排课总览」重新排。
+      点错了用「销假」恢复为已上，之后可以重新结算。
+    </p>
 
     <!-- 改期弹窗 -->
     <el-dialog v-model="rsVisible" title="改期" width="380px" append-to-body>
@@ -438,7 +532,8 @@ async function saveRebind() {
             style="width: 100%"
           />
         </div>
-        <p class="rs-hint">改期只改时间，不改场次状态、不触发顺延。</p>
+        <!-- 🔴 PRD-018 D-a：时段=日程，不参与计价；已结算场次改期也不动余额 -->
+        <p class="rs-hint">改期只改时间，不改场次状态；时段不参与算钱，已结算的场次改期余额也不变。</p>
       </div>
       <template #footer>
         <el-button @click="rsVisible = false">取消</el-button>
@@ -460,6 +555,25 @@ async function saveRebind() {
       <template #footer>
         <el-button @click="rbVisible = false">取消</el-button>
         <el-button type="primary" :loading="rbSaving" @click="saveRebind">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- PRD-018 ③ 上课内容弹窗（这节实际讲了什么 → session.content） -->
+    <el-dialog v-model="ctVisible" title="这节讲了什么" width="480px" append-to-body>
+      <p class="ct-hint">
+        排课时带的是计划标题，上完课改成<b>实际讲的内容</b>；台账 / 流水单 / 导出的「内容」列取的就是这一栏，留空则退回课次标题。
+      </p>
+      <el-input
+        v-model="ctText"
+        type="textarea"
+        :autosize="{ minRows: 4, maxRows: 8 }"
+        maxlength="200"
+        show-word-limit
+        placeholder="如：思维题 · 等差数列应用｜同步 · 平行与垂直"
+      />
+      <template #footer>
+        <el-button @click="ctVisible = false">取消</el-button>
+        <el-button type="primary" :loading="ctSaving" @click="saveContent">保存</el-button>
       </template>
     </el-dialog>
 
@@ -561,6 +675,21 @@ tr.row-next td {
 .lock-tag {
   margin-left: 6px;
 }
+/* PRD-018 ③：上课内容第二行（点一下开编辑弹窗） */
+.content-txt {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: #7d8f8b;
+  cursor: pointer;
+}
+.content-txt:hover {
+  color: var(--bk-teal-deep);
+}
 .ops {
   display: flex;
   gap: 6px;
@@ -654,12 +783,15 @@ tr.row-next td {
   color: #5f716d;
 }
 .rs-hint,
-.rb-hint {
+.rb-hint,
+.ct-hint {
   font-size: 12px;
   color: #8ba09a;
   margin: 4px 0 0;
 }
-.rb-hint {
+.rb-hint,
+.ct-hint {
   margin: 0 0 12px;
+  line-height: 1.65;
 }
 </style>
