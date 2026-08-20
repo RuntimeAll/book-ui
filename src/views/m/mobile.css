@@ -478,3 +478,13 @@
 .m-app .m-login .pad {
   padding: 0 16px;
 }
+
+/* ── 批量录入的解析预览：一行一条，长内容换行不撑破卡片 ────────────── */
+.m-app .m-bulkline {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  flex-wrap: wrap;
+  line-height: 1.7;
+  word-break: break-all;
+}

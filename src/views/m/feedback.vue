@@ -311,6 +311,69 @@ function delRow(i: number) {
   editRows.value.splice(i, 1)
 }
 
+// ── 批量录入（老师实际就是一次打一坨文本，不是一格一格点）──────────────
+// 逐条卡片录 5 条 = 5 次「加一条」+ 20 次切焦点；而老师手上本来就是
+// 「1.同类项 / 2.合并同类项 / …」这样一段现成文本。这里就是把那段文本一键铺成行。
+const bulkOpen = ref(false)
+const bulkText = ref('')
+
+/** 「1. xxx」式编号行；行首若有「乐乐第十次课:」这类前缀，从冒号后切开 */
+const BULK_ITEM = /^\s*(\d{1,2})\s*[.、．：:）)]?\s*(\S.*?)\s*$/
+
+/** 「所属模块 | 学习内容」；不带竖线则模块留空 —— 🔴 绝不猜模块，猜错是挂在家长卷面上 */
+function splitModule(s: string): { module: string; content: string } {
+  for (const sep of ['|', '｜']) {
+    const i = s.indexOf(sep)
+    if (i > 0) {
+      const module = s.slice(0, i).trim()
+      const content = s.slice(i + 1).trim()
+      if (module && content) return { module, content }
+    }
+  }
+  return { module: '', content: s }
+}
+
+/**
+ * 解析粘贴的文本 → 行。
+ * 优先吃编号行；整段一个编号都没有时，退化成「一行一条」（手机上很多人懒得打序号）。
+ */
+function parseBulk(text: string): FeedbackRow[] {
+  const numbered: { n: number; body: string }[] = []
+  const plain: string[] = []
+  for (const raw of (text || '').split(/\r?\n/)) {
+    const seg = raw.trim().replace(/^.*?[:：]\s*(?=\d)/, '')
+    if (!seg) continue
+    const m = BULK_ITEM.exec(seg)
+    if (m) numbered.push({ n: Number(m[1]), body: m[2].replace(/^[.、\s]+|[.、\s]+$/g, '') })
+    else plain.push(seg)
+  }
+  const picked = numbered.length
+    ? [...new Map(numbered.map((x) => [x.n, x])).values()]
+        .sort((a, b) => a.n - b.n)
+        .map((x) => x.body)
+    : plain
+  return picked
+    .filter(Boolean)
+    .map((s) => ({ ...splitModule(s), mastery: '', weakness: '', kp_id: null }))
+}
+
+const bulkPreview = computed(() => parseBulk(bulkText.value))
+
+function applyBulk(mode: 'replace' | 'append') {
+  const rows = bulkPreview.value
+  if (!rows.length) {
+    showToast('没解析出条目')
+    return
+  }
+  // 覆盖时若原来只有一条空行（新建单的默认态），本来就该被顶掉
+  editRows.value = mode === 'replace' ? rows : [...editRows.value.filter(
+    (r) => r.module || r.content || r.mastery || r.weakness,
+  ), ...rows]
+  bulkText.value = ''
+  bulkOpen.value = false
+  showSuccessToast(`已铺成 ${rows.length} 条，可逐条微调`)
+}
+
 async function saveEdit() {
   const d = editDetail.value
   if (!d) return
@@ -570,6 +633,53 @@ onMounted(async () => {
     <MSheet v-model="editOpen" :title="editTitle" sub="五列简化为逐条卡片，手机上顺手填">
       <van-loading v-if="editLoading" class="m-note" size="18">加载中…</van-loading>
       <template v-else>
+        <!-- 批量录入：老师手上本来就是一坨文本，先给它一个入口，别逼着一格格点 -->
+        <van-cell-group inset>
+          <van-cell
+            title="批量录入"
+            :label="bulkOpen ? '粘贴后点「铺成条目」' : '把「1.同类项 2.合并同类项…」整段贴进来'"
+            is-link
+            :arrow-direction="bulkOpen ? 'up' : 'down'"
+            @click="bulkOpen = !bulkOpen"
+          />
+          <template v-if="bulkOpen">
+            <van-field
+              v-model="bulkText"
+              type="textarea"
+              rows="5"
+              autosize
+              maxlength="2000"
+              show-word-limit
+              placeholder="1.同类项&#10;2.合并同类项&#10;3.整式的加减 | 去括号&#10;&#10;带竖线的话，竖线前会填进「所属模块」；没有序号就一行算一条。"
+            />
+            <van-cell v-if="bulkText.trim()" :title="`解析出 ${bulkPreview.length} 条`">
+              <template #label>
+                <div v-for="(r, i) in bulkPreview" :key="i" class="m-bulkline">
+                  {{ i + 1 }}.
+                  <van-tag v-if="r.module" type="primary" plain size="medium">{{ r.module }}</van-tag>
+                  {{ r.content }}
+                </div>
+              </template>
+            </van-cell>
+            <van-cell>
+              <template #value>
+                <van-button size="small" plain :disabled="!bulkPreview.length" @click="applyBulk('append')">
+                  追加
+                </van-button>
+                <van-button
+                  size="small"
+                  type="primary"
+                  style="margin-left: 8px"
+                  :disabled="!bulkPreview.length"
+                  @click="applyBulk('replace')"
+                >
+                  铺成条目（覆盖）
+                </van-button>
+              </template>
+            </van-cell>
+          </template>
+        </van-cell-group>
+
         <van-cell-group v-for="(r, i) in editRows" :key="i" inset :title="`第 ${i + 1} 条`">
           <van-field v-model="r.module" label="所属模块" placeholder="如：分数应用题" />
           <van-field v-model="r.content" label="学习内容" placeholder="这节讲了什么" type="textarea" rows="1" autosize />
