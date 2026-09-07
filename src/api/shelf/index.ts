@@ -235,6 +235,56 @@ export interface ShelfStructureVO extends ShelfBookVO {
   tree: ShelfNodeVO[]
 }
 
+/** Navigation only: no question IDs, overrides or item bodies. */
+export interface ShelfOutlineNode extends Omit<ShelfNodeVO, 'items' | 'children' | 'meta' | 'kpId'> {
+  itemCount: number
+  questionCount: number
+  children: ShelfOutlineNode[]
+}
+
+export interface ShelfOutlineVO extends Pick<
+  ShelfBookVO,
+  'id' | 'title' | 'bookType' | 'subjectId' | 'ownerId' | 'grade' | 'edition' | 'isPublic'
+> {
+  tree: ShelfOutlineNode[]
+}
+
+/** Content projection; deliberately excludes tags, DNA and knowledge associations. */
+export interface ShelfReadingQuestion {
+  id: string
+  questionType: number | null
+  difficult: number | null
+  subjectId?: string | null
+  stemText?: string | null
+  stemTextContent?: string | null
+  stemImg: string | null
+  blockJson?: string | null
+  answerTextContent?: string | null
+  analyzeTextContent?: string | null
+  answerImg?: string | null
+  explainImg?: string | null
+  answerBlockJson?: string | null
+  analyzeBlockJson?: string | null
+}
+
+export interface ShelfReadingItem extends ShelfItemVO {
+  content?: Record<string, unknown> | null
+  sourcePage?: number | null
+  originalStemText?: string | null
+  /** Effective book-instance content, resolved server-side using the shared snapshot codec. */
+  question: ShelfReadingQuestion | null
+  questionMissing: boolean
+}
+
+export interface ShelfItemPage {
+  node: Omit<ShelfNodeVO, 'items' | 'children'>
+  rows: ShelfReadingItem[]
+  total: number
+  pageNum: number
+  pageSize: number
+  hasMore: boolean
+}
+
 /** 建/改书入参 */
 export interface ShelfBookBo {
   title: string
@@ -307,6 +357,21 @@ export const getBook = (id: string) =>
 /** 书结构整树（目录树 + 节点内容项，一次可渲染） */
 export const getBookStructure = (id: string) =>
   request.get<ShelfStructureVO, ShelfStructureVO>(`${BASE}/book/${id}/structure`)
+
+export const getBookOutline = (id: string, signal?: AbortSignal) =>
+  request.get<ShelfOutlineVO, ShelfOutlineVO>(`${BASE}/book/${id}/outline`, { signal })
+
+/** Direct-node contents, stable seq/id ordering. The server caps pageSize at 100. */
+export const getNodeItems = (
+  bookId: string,
+  nodeId: string,
+  params: { pageNum: number; pageSize: number },
+  signal?: AbortSignal,
+) =>
+  request.get<ShelfItemPage, ShelfItemPage>(`${BASE}/book/${bookId}/node/${nodeId}/items`, {
+    params,
+    signal,
+  })
 
 /** 删书（级联节点 + 内容项） */
 export const deleteBook = (id: string) =>

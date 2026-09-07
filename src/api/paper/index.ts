@@ -1,29 +1,48 @@
 import request from '@/http/request'
-import type { AxiosRequestConfig } from 'axios'
-import type { PaperDetailVo } from '@/api/question/index'
+import { isAxiosError, type AxiosRequestConfig } from 'axios'
+import { getPaperDetail, type PaperDetailVo } from '@/api/question/index'
+import type { SelectionReference } from '@/api/questionBasket'
+import { normalizeQuestionScore, scoreValue } from '@/api/questionBasket/numeric'
+
+export function normalizePaperDetail(detail: PaperDetailVo): PaperDetailVo {
+  return {
+    ...detail,
+    score: scoreValue(detail.score),
+    sections: detail.sections.map((section) => ({
+      ...section,
+      questions: section.questions.map((question) => ({
+        ...normalizeQuestionScore(question),
+        pqScore: question.pqScore == null ? question.pqScore : scoreValue(question.pqScore),
+      })),
+    })),
+  }
+}
+
+export const getExamPaperDetail = async (paperId: string, config?: AxiosRequestConfig) =>
+  normalizePaperDetail(await getPaperDetail(paperId, config))
 
 // ── 类型定义（misikt 真响应字节级对齐，证据：smoke/02-lazyTree-resp.json + 03-page-3001-resp.json）
 // ────────────────────────────────────────────────────────────────────────
 
 // lazyTree 节点（misikt 返整棵 97 节点树，children 嵌套；叶节点不返 children 字段）
 export interface PaperTreeNode {
-  id: string                  // 4-15 位数字编码（VARCHAR）
-  parentId: string            // '0' 或 '1'（3001 特殊）或父 id
-  title: string               // 节点名（misikt 真实字段 — 不是 name）
+  id: string // 4-15 位数字编码（VARCHAR）
+  parentId: string // '0' 或 '1'（3001 特殊）或父 id
+  title: string // 节点名（misikt 真实字段 — 不是 name）
   sort: number
   hasChildren: boolean
-  key: string                 // = id（element-plus tree 用）
-  value: string               // = id
-  level: number | null        // misikt 没填，固定 null
-  nodeDataSum: number | null  // misikt 没填，固定 null
+  key: string // = id（element-plus tree 用）
+  value: string // = id
+  level: number | null // misikt 没填，固定 null
+  nodeDataSum: number | null // misikt 没填，固定 null
   // ── 结构化维度（2026-07-01 字典化，语义下沉每节点；字典码，配 useDictStore 渲染，不再解析 title）──
-  subject?: number | null     // biz_edu_subject
-  stage?: number | null       // biz_edu_stage
-  grade?: number | null       // biz_edu_grade（中考/资料库=null）
-  volume?: number | null      // biz_edu_volume（九年级/中考=null）
-  paperType?: number | null   // biz_paper_type
-  nodeKind?: string | null    // root/grade/ptype/exam/chapter/year/misc
-  children?: PaperTreeNode[]  // 叶节点不返该字段
+  subject?: number | null // biz_edu_subject
+  stage?: number | null // biz_edu_stage
+  grade?: number | null // biz_edu_grade（中考/资料库=null）
+  volume?: number | null // biz_edu_volume（九年级/中考=null）
+  paperType?: number | null // biz_paper_type
+  nodeKind?: string | null // root/grade/ptype/exam/chapter/year/misc
+  children?: PaperTreeNode[] // 叶节点不返该字段
 }
 
 // page list 元素（misikt 字节级对齐 — 见 02-be-summary §4.2；PRD-B-013 已删 hgScore/directoryName/frameTextContentId）
@@ -32,15 +51,18 @@ export interface PaperListItem {
   id: string
   name: string
   questionCount: number
-  score: number               // Integer，BE CAST 自 DECIMAL 已去 .00
+  score: number // 卷内总分，保留小数。
   suggestTime: number | null
-  createTime: string          // 'YYYY-MM-DD' 字符串（不是 ms timestamp）
+  createTime: string // 'YYYY-MM-DD' 字符串（不是 ms timestamp）
   finishTime: string | null
   createUser: string
+  canManage?: boolean
+  published?: boolean
+  canChangeVisibility?: boolean
   subjectId: string
-  paperType: 1 | 2 | 6        // 1=日常 / 2=月考 / 6=专题
-  status: 1                   // 已发布
-  sort: number                // 通常 = id
+  paperType: 1 | 2 | 6 // 1=日常 / 2=月考 / 6=专题
+  status: 0 | 1 // 未发布 / 已发布，不等于私人卷的公开权限。
+  sort: number // 通常 = id
 }
 
 // misikt PageHelper 18 字段标准响应（顺序对齐 02-be-summary §4.3）
@@ -69,11 +91,11 @@ export interface MisiktPageVo<T> {
 export interface PaperPageParams {
   name?: string
   subjectId?: string
-  pageIndex: number           // 1-based
+  pageIndex: number // 1-based
   pageSize: number
   /**
    * scope 新契约（后端按此分流）：
-   *   'public' — 取 is_share=1 的共享卷
+   *   'public' — 按后端内容归属规则读取官方普通卷
    *   'mine'   — 按当前登录用户 userId 过滤（服务端识别，前端无需传 createBy）
    * 未传 = 后端默认行为（兼容旧调用方）
    */
@@ -90,12 +112,6 @@ export interface PaperPageParams {
   createBy?: string
 }
 
-// lazyTree 入参（BE 忽略，发哪个值都一样；保持 misikt 真站行为）
-export interface PaperLazyTreeParams {
-  type: number                // 固定 2
-  version: number             // 固定 1010
-}
-
 // ── API 函数 ─────────────────────────────────────────────────────────────
 
 /**
@@ -103,39 +119,47 @@ export interface PaperLazyTreeParams {
  * POST /teacher/exam/paper/lazyTree
  * envelope 由拦截器自动拆，业务拿到的就是 PaperTreeNode[]
  */
-export const getPaperLazyTree = (params: PaperLazyTreeParams = { type: 2, version: 1010 }) =>
-  request.post<PaperTreeNode[], PaperTreeNode[]>('/teacher/exam/paper/lazyTree', params)
+export const getPaperLazyTree = () =>
+  request.post<PaperTreeNode[], PaperTreeNode[]>('/teacher/exam/paper/lazyTree')
+
+export const setPaperVisibility = (paperId: string, published: boolean) =>
+  request.post<void, void>('/teacher/exam/paper/visibility', { paperId, published })
 
 /**
- * 试卷分页列表 — name LIKE / subjectId prefix-match / sort DESC
+ * 试卷分页列表 — name LIKE / subjectId prefix-match / create_time DESC, id DESC
  * POST /teacher/exam/paper/page
  *
  * PRD-A-013 T5 M-10：可选 config 透传 axios 选项（主要为 signal —— 列表竞态防护）。
  */
-export const getPaperPage = (
-  params: PaperPageParams,
-  config?: AxiosRequestConfig,
-) =>
-  request.post<MisiktPageVo<PaperListItem>, MisiktPageVo<PaperListItem>>(
+export const getPaperPage = async (params: PaperPageParams, config?: AxiosRequestConfig) => {
+  const result = await request.post<MisiktPageVo<PaperListItem>, MisiktPageVo<PaperListItem>>(
     '/teacher/exam/paper/page',
     params,
     config,
   )
+  return {
+    ...result,
+    list: result.list.map((paper) => ({ ...paper, score: scoreValue(paper.score) })),
+  }
+}
 
 // ── Q 卡段① 创建试卷 ────────────────────────────────────────────────────
 
 // PRD-A-013 T2 — questionIds 雪花 string[]；paperCategoryId 是分类 code 本身就 string。
 export interface CreateExamPaperParams {
   name: string
-  questionIds: string[]
+  questionIds?: string[]
+  requestId?: string
+  questions?: CreatePaperQuestion[]
+  suggestTime?: number
   paperCategoryId?: string | null
-  /**
-   * PRD-B-101 备课语境·课次 id（本批只定义，B2b 组卷创建时传）。
-   * 🔴 与 slotSeq 必须同现（只传一个 → BE 400）；同现时卷 paper_kind='2' 且自动绑该卷位。不传 → 普通卷。
-   */
-  lessonId?: string
-  /** PRD-B-101 备课语境·卷位序号（与 lessonId 必须同现，本批只定义） */
-  slotSeq?: number
+}
+
+export interface CreatePaperQuestion extends SelectionReference {
+  basketNamespace?: string
+  basketEntryId?: string
+  sort: number
+  score: number
 }
 
 // PRD-A-013 T2 — paperId 雪花 string
@@ -144,26 +168,38 @@ export interface CreateExamPaperResult {
   questionCount: number
 }
 
+export class PaperCreateRejectedError extends Error {}
+
 /**
  * 创建试卷 — 工作台 → 输入名称 + 选定题目列表 → 落库（status='1' 即发布）。
  * BE 自动建默认 section（"题目"），所有题挂下面。
  * POST /teacher/exam/paper/create
  */
-export const createExamPaper = (params: CreateExamPaperParams) =>
-  request.post<CreateExamPaperResult, CreateExamPaperResult>(
-    '/teacher/exam/paper/create',
-    params,
-  )
+export const createExamPaper = async (params: CreateExamPaperParams) => {
+  try {
+    return await request.post<CreateExamPaperResult, CreateExamPaperResult>(
+      '/teacher/exam/paper/create',
+      params,
+    )
+  } catch (error) {
+    // Only explicit input/auth rejections prove no commit. Unknown/5xx/409 outcomes retain requestId.
+    const code = isAxiosError(error)
+      ? error.response?.status
+      : (error as { businessCode?: number } | null)?.businessCode
+    if (error instanceof Error && code !== undefined && [400, 401, 403, 404, 422].includes(code)) {
+      throw new PaperCreateRejectedError(error.message)
+    }
+    throw error
+  }
+}
 
 // ── PRD-A-005 T4 试卷编辑（重排/删/增题保存）────────────────────────────
 
 /** 编辑保存时单题条目（契约 manual：questionId / sectionId / sort / score）*/
 // PRD-A-013 T2 — questionId / sectionId 雪花 string；sort / score 业务字段 number。
-export interface UpdatePaperQuestion {
-  questionId: string
+export interface UpdatePaperQuestion extends CreatePaperQuestion {
+  paperQuestionId?: string
   sectionId: string
-  sort: number
-  score: number
 }
 
 /**
@@ -199,8 +235,10 @@ export interface UpdateExamPaperParams {
  * POST /teacher/exam/paper/update
  * envelope 由拦截器自动拆，业务拿到的就是 PaperDetailVo。
  */
-export const updateExamPaper = (params: UpdateExamPaperParams) =>
-  request.post<PaperDetailVo, PaperDetailVo>('/teacher/exam/paper/update', params)
+export const updateExamPaper = async (params: UpdateExamPaperParams) =>
+  normalizePaperDetail(
+    await request.post<PaperDetailVo, PaperDetailVo>('/teacher/exam/paper/update', params),
+  )
 
 // ── PRD-A-005 收尾（A-试卷删除）─────────────────────────────────────────
 /**

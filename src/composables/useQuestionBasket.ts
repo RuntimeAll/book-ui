@@ -1,467 +1,366 @@
-/**
- * useQuestionBasket — 试题栏全局共享状态 composable
- *
- * ╔══ PRD-A-010 T3 合并审查标记（🔴 本卡仅标记重叠、不真合）═══════════════════╗
- * ║ basket 三件套职责与重叠边界：                                              ║
- * ║  • useQuestionBasket（本文件，题级 / 试题栏）                              ║
- * ║  • usePaperBasket（卷级 / 试卷篮）  ← 与本文件【高度重叠】                  ║
- * ║  • useBasketWorkbench（工作台数据层）← usePaperBasket 的【消费者】，职责正交 ║
- * ║                                                                            ║
- * ║ 【重叠边界】本文件 与 usePaperBasket 是同一套 module-singleton + LS 双 key  ║
- * ║   + 乐观更新模式的镜像复刻。逐一对称的部分（合并时可抽 createBasket<T> 泛型   ║
- * ║   工厂消重）：                                                              ║
- * ║     readBasketIdsFromStorage / writeBasketIdsToStorage                      ║
- * ║     readBasketCacheFromStorage / writeBasketCacheToStorage                  ║
- * ║     _basketIds / _cache / _togglingIds / _dialogVisible / _count / _items   ║
- * ║     syncToStorage / syncFromServer / add / remove / clear / isLoading       ║
- * ║     openDialog / closeDialog（签名仅实体泛型 QuestionItem↔PaperListItem 不同）║
- * ║   本文件【独有】：addMany（批量加入）、composeAndDownload（一键组卷跳转）。  ║
- * ║   usePaperBasket【独有】：BASKET_MAX=20 上限自查、跨 tab storage 事件同步、   ║
- * ║     refreshFromServer（BE 为准刷新）、apiEmpty/cancel。                      ║
- * ║                                                                            ║
- * ║ 【为什么本卡不合】二者都在生产路径使用（题库/详情/FAB ↔ 卷库/FAB/dialog），  ║
- * ║   非死代码。贸然抽泛型工厂会触动两条独立业务流的回归面（PRD-A-001 删旧组件   ║
- * ║   漏隐性职责返工的同类风险）。真合需单独立卡：先抽 createBasket<T,EmptyItem> ║
- * ║   工厂收敛 LS/state/CRUD，再让两 composable 各自注入差异（上限/跨tab/端点/   ║
- * ║   addMany/compose），配 book-test 双篮回归绿后切换。                        ║
- * ╚════════════════════════════════════════════════════════════════════════════╝
- *
- * 设计：module-scoped singleton（state 在模块顶层声明，多页面调 useQuestionBasket()
- * 返回同一份 reactive 引用）→ 题库列表页 / 详情页 / 全局 FAB 实时联动。
- *
- * 持久化：localStorage 双 key
- *   - LS_BASKET_IDS: number[]                   (Set<number> serialize)
- *   - LS_BASKET_CACHE: [number, QuestionItem][] (Map<number, QuestionItem> serialize)
- *
- * 网络：addBasket / removeBasket / basketNum / genExamData
- *   - 乐观更新：本地 state 先更新 + toast，API 失败仅 console.warn 不回滚
- *   - togglingIds 防连点
- *
- * 抽离自第十二波前的 src/views/question/index.vue（行 32-72 持久化、行 253-410 state + actions）。
- */
-import { ref, computed, type Ref, type ComputedRef } from 'vue'
+import { computed, onScopeDispose, ref, shallowRef, watch } from 'vue'
+import { defineStore, storeToRefs } from 'pinia'
 import { ElMessage } from 'element-plus'
-import router from '@/router/index'
+import { useUserStore } from '@/store/user'
+import type { QuestionItem } from '@/api/question'
 import {
-  basketNum,
-  addBasket as apiAddBasket,
-  removeBasket as apiRemoveBasket,
-  genExamData,
-  questionListByIds,
-  type QuestionItem,
-} from '@/api/question/index'
+  addBasketEntries,
+  basketQuestion,
+  BASKET_BATCH_SIZE,
+  BASKET_MAX_SIZE,
+  BASKET_PAGE_SIZE,
+  emptyBasketEntries,
+  getBasketEntries,
+  getBasketKeys,
+  removeBasketEntries,
+  removeBasketEntryVersions,
+  selectionKey,
+  selectionReference,
+  type BasketQuestion,
+  type BasketEntryReference,
+} from '@/api/questionBasket'
 
-// ── localStorage keys（PRD-B-101 分仓：命名空间后缀）──────────
-//   default（日常仓）= 无后缀，与历史键完全兼容（老用户日常篮不丢）；
-//   语境仓（备课）= `:lesson:{id}:slot{n}` 后缀，与日常仓物理隔离。
-const LS_BASKET_IDS = 'book-ui:basket-ids'
-const LS_BASKET_CACHE = 'book-ui:basket-cache'
+const SYNC_KEY = 'book-ui:question-basket:v2:changed'
 
-// 当前命名空间（'default' | 'lesson:{id}:slot{n}'）——备课语境 store 通过 switchNamespace 切换。
-const _ns = ref('default')
-function idsKey(ns: string = _ns.value): string {
-  return ns === 'default' ? LS_BASKET_IDS : `${LS_BASKET_IDS}:${ns}`
-}
-function cacheKey(ns: string = _ns.value): string {
-  return ns === 'default' ? LS_BASKET_CACHE : `${LS_BASKET_CACHE}:${ns}`
-}
-
-// PRD-A-013 T2 — id 雪花全工程 string；LS 旧数据可能是 number 数组，
-// 解析时统一 String(...) 规范化保兼容（用户旧版升新版不丢篮）。
-// PRD-B-101 — 读写按传入 key（分仓）；缺省 = 当前命名空间。
-function readBasketIdsFromStorage(key: string = idsKey()): Set<string> {
-  try {
-    const raw = localStorage.getItem(key)
-    if (!raw) return new Set()
-    const arr: unknown[] = JSON.parse(raw)
-    return new Set(Array.isArray(arr) ? arr.map((x) => String(x)) : [])
-  } catch {
-    return new Set()
-  }
-}
-
-function writeBasketIdsToStorage(ids: Set<string>, key: string = idsKey()) {
-  try {
-    localStorage.setItem(key, JSON.stringify([...ids]))
-  } catch (e) {
-    console.warn('[basket] localStorage write ids failed', e)
-  }
-}
-
-function readBasketCacheFromStorage(key: string = cacheKey()): Map<string, QuestionItem> {
-  try {
-    const raw = localStorage.getItem(key)
-    if (!raw) return new Map()
-    const arr: [unknown, QuestionItem][] = JSON.parse(raw)
-    if (!Array.isArray(arr)) return new Map()
-    // 旧 LS key 可能是 number，统一 String 规范化
-    return new Map(arr.map(([k, v]) => [String(k), { ...v, id: String(v.id) }]))
-  } catch {
-    return new Map()
-  }
-}
-
-function writeBasketCacheToStorage(cache: Map<string, QuestionItem>, key: string = cacheKey()) {
-  try {
-    localStorage.setItem(key, JSON.stringify([...cache.entries()]))
-  } catch (e) {
-    console.warn('[basket] localStorage write cache failed', e)
-  }
-}
-
-// ── module-scoped singleton state ───────────────────────────
-// PRD-A-013 T2 — Set/Map key 改 string（雪花 ID）
-// PRD-B-101 — 模块加载读 default 仓；语境切换后由 switchNamespace 重新水合。
-const _basketIds = ref<Set<string>>(readBasketIdsFromStorage())
-const _cache = new Map<string, QuestionItem>(readBasketCacheFromStorage())
-const _togglingIds: Set<string> = new Set()
-const _dialogVisible = ref(false)
-let _initialized = false
-
-/**
- * 切换命名空间仓（PRD-B-101 分仓）。备课语境 store 调用：
- *   开启/切卷位 → switchNamespace(`lesson:{id}:slot{n}`)；退出/完成/跨天 → switchNamespace('default')。
- * 语义：把内存 state 重新水合成目标仓的 LS 内容（各仓 add/remove 独立持久，互不污染）。
- * 幂等：切到当前仓 = no-op。当前仓的数据在 add/remove 时已持续 syncToStorage，切走不丢。
- */
-function switchNamespace(ns: string) {
-  const target = ns || 'default'
-  if (_ns.value === target) return
-  _ns.value = target
-  _basketIds.value = readBasketIdsFromStorage(idsKey(target))
-  _cache.clear()
-  readBasketCacheFromStorage(cacheKey(target)).forEach((v, k) => _cache.set(k, v))
-}
-
-// ── 派生 ─────────────────────────────────────────────────────
-const _count = computed(() => _basketIds.value.size)
-const _items = computed<QuestionItem[]>(() => {
-  const items: QuestionItem[] = []
-  _basketIds.value.forEach((id) => {
-    const q = _cache.get(id)
-    if (q) {
-      items.push(q)
-    } else {
-      items.push({
-        id,
-        questionType: 1,
-        difficult: null,
-        stemImg: null,
-        stemText: `题目 ID: ${id}（题干数据加载中）`,
-      } as QuestionItem)
-    }
-  })
-  return items
-})
-
-// ── PRD-011 bug轮 · 题面补水（存量自愈） ─────────────────────
-// 历史入口（书架挑题旧版映射 / 老 LS 缓存）进栏的对象可能缺 blockJson/stemImg →
-// 渲染端只剩纯文本（「看图列式（瓶）」图丢）。打开试题栏/工作台消费 items 前调本方法：
-// 批量补拉缺 blockJson 的题并回写 cache + LS（只补空字段不覆盖 override 面），一次会话内不重复拉。
-const _hydratedIds = new Set<string>()
-async function hydrateMissingBlockJson(): Promise<void> {
-  const missing = [..._basketIds.value].filter((id) => {
-    const q = _cache.get(id)
-    return !_hydratedIds.has(id) && (!q || q.blockJson == null || q.blockJson === '')
-  })
-  if (missing.length === 0) return
-  missing.forEach((id) => _hydratedIds.add(id)) // 先标记，失败也不无限重试
-  try {
-    const fulls = await questionListByIds(missing)
-    for (const full of fulls || []) {
-      const id = String(full.id)
-      const old = _cache.get(id)
-      _cache.set(id, {
-        ...(old ?? {}),
-        ...{
-          questionType: old?.questionType ?? full.questionType,
-          difficult: old?.difficult ?? full.difficult,
-        },
-        id,
-        blockJson: full.blockJson ?? old?.blockJson ?? null,
-        stemImg: old?.stemImg ?? full.stemImg ?? null,
-        stemText: old?.stemText ?? full.stemText ?? null,
-        stemTextContent: old?.stemTextContent ?? full.stemTextContent ?? null,
-      } as QuestionItem)
-    }
-    // _cache 非响应式：重建 ids Set 触发 _items 重算 + 落盘
-    _basketIds.value = new Set(_basketIds.value)
-    syncToStorage()
-  } catch (e) {
-    console.warn('[basket] hydrateMissingBlockJson failed', e)
-  }
-}
-
-// ── 持久化 helper（每次 ids 变化触发） ───────────────────────
-function syncToStorage() {
-  // PRD-B-101 — 写当前命名空间仓（idsKey/cacheKey 缺省取 _ns）
-  writeBasketIdsToStorage(_basketIds.value)
-  // 只保留 basket 内的题目 cache（避免无限增长）
-  // PRD-A-013 T2 — Map key string（雪花）
-  const filtered = new Map<string, QuestionItem>()
-  _basketIds.value.forEach((id) => {
-    const q = _cache.get(id)
-    if (q) filtered.set(id, q)
-  })
-  writeBasketCacheToStorage(filtered)
-}
-
-// ── 同步 server 角标（启动 + 可主动调） ─────────────────────
-async function syncFromServer() {
-  try {
-    const res = await basketNum()
-    let serverCount = 0
-    if (typeof res === 'number') {
-      serverCount = res
-    } else if (res && typeof res === 'object') {
-      const r = res as Record<string, unknown>
-      serverCount = Number(r['count'] ?? r['basketNum'] ?? 0)
-    }
-    // 当前实现：信任本地 ids（misikt basketNum 只返数字无 id 列表）
-    // 仅 console 用于调试
-    if (serverCount !== _basketIds.value.size) {
-      console.info('[basket] server count', serverCount, 'local size', _basketIds.value.size)
-    }
-  } catch (e) {
-    console.warn('[basket] syncFromServer failed', e)
-  }
-}
-
-// ── actions ──────────────────────────────────────────────────
-/**
- * 加入试题栏。
- * @param opts.silent 抑制默认「已加入试题栏」toast（PRD-C-014 T2：举一反三透明入库要自定义
- *   文案「已收录并加入试题篮」/「已加入试题篮」，由调用方自行 toast；篮 API 失败需调用方感知
- *   → silent 模式下 await BE add 并在失败时 throw，调用方据此「篮不计数 + 报错气泡」）。
- */
-async function add(q: QuestionItem, opts?: { silent?: boolean }): Promise<void> {
-  if (_togglingIds.has(q.id)) return
-  if (_basketIds.value.has(q.id)) return
-  _togglingIds.add(q.id)
-  try {
-    if (opts?.silent) {
-      // 透明入库（T2）：先 await BE add，成功才本地计数 + 由调用方自定义 toast；失败 throw 回调用方。
-      await apiAddBasket(q.id)
-      const newSet = new Set(_basketIds.value)
-      newSet.add(q.id)
-      _basketIds.value = newSet
-      _cache.set(q.id, q)
-      syncToStorage()
-      return
-    }
-    const newSet = new Set(_basketIds.value)
-    newSet.add(q.id)
-    _basketIds.value = newSet
-    _cache.set(q.id, q)
-    syncToStorage()
-    ElMessage.success('已加入试题栏')
-    apiAddBasket(q.id).catch((e) =>
-      console.warn('[basket] addBasket notify failed (local state OK):', e),
-    )
-  } finally {
-    _togglingIds.delete(q.id)
-  }
-}
-
-/**
- * 批量加入（PRD-001 回归补丁 — 快速组卷 / 中栏"全部加入"复用）。
- * 过滤掉已在篮内的，单条汇总 toast（避免 N 条刷屏），返回实际新增数。
- */
-async function addMany(questions: QuestionItem[]): Promise<number> {
-  const toAdd = questions.filter((q) => !_basketIds.value.has(q.id))
-  if (toAdd.length === 0) {
-    ElMessage.info('所选题目均已在试题栏中')
-    return 0
-  }
-  const newSet = new Set(_basketIds.value)
-  toAdd.forEach((q) => {
-    newSet.add(q.id)
-    _cache.set(q.id, q)
-  })
-  _basketIds.value = newSet
-  syncToStorage()
-  ElMessage.success(`已加入 ${toAdd.length} 题到试题栏`)
-  toAdd.forEach((q) =>
-    apiAddBasket(q.id).catch((e) =>
-      console.warn('[basket] addBasket notify failed (local state OK):', e),
-    ),
+const useQuestionBasketStore = defineStore('question-basket-v2', () => {
+  const user = useUserStore()
+  const currentNamespace = ref('default')
+  const items = shallowRef<BasketQuestion[]>([])
+  const count = ref(0)
+  const pageIndex = ref(1)
+  const loading = ref(false)
+  const error = ref('')
+  const dialogVisible = ref(false)
+  const togglingIds = ref(new Set<string>())
+  const knownKeys = ref(new Set<string>())
+  const revision = ref(0)
+  const identity = computed(() => `${user.accessToken}\n${user.userInfo?.id ?? ''}`)
+  let generation = 0
+  let readSequence = 0
+  let controller: AbortController | undefined
+  let queue: Promise<unknown> = Promise.resolve()
+  const basketIds = computed(
+    () =>
+      new Set(
+        [...knownKeys.value].flatMap((key) => (key.startsWith('q:') ? [key, key.slice(2)] : [key])),
+      ),
   )
-  return toAdd.length
-}
 
-/**
- * 批量移除（PRD-001 回归补丁 — 快速组卷 / 中栏"全部移除"复用）。
- * 只移除在篮内的，单条汇总 toast，返回实际移除数。
- */
-// PRD-A-013 T2 — ids 雪花 string[]
-async function removeMany(ids: string[]): Promise<number> {
-  const toRemove = ids.filter((id) => _basketIds.value.has(id))
-  if (toRemove.length === 0) {
-    ElMessage.info('这些题目不在试题栏中')
-    return 0
+  function context() {
+    if (!user.isLoggedIn || !user.userInfo?.id) throw new Error('请先登录后使用试题栏')
+    return { generation, namespace: currentNamespace.value, userId: user.userInfo.id }
   }
-  const newSet = new Set(_basketIds.value)
-  toRemove.forEach((id) => newSet.delete(id))
-  _basketIds.value = newSet
-  syncToStorage()
-  ElMessage.success(`已从试题栏移除 ${toRemove.length} 题`)
-  toRemove.forEach((id) =>
-    apiRemoveBasket(id).catch((e) =>
-      console.warn('[basket] removeBasket notify failed (local state OK):', e),
-    ),
-  )
-  return toRemove.length
-}
 
-// PRD-A-013 T2 — id 雪花 string
-async function remove(id: string): Promise<void> {
-  if (_togglingIds.has(id)) return
-  if (!_basketIds.value.has(id)) return
-  _togglingIds.add(id)
-  try {
-    const newSet = new Set(_basketIds.value)
-    newSet.delete(id)
-    _basketIds.value = newSet
-    syncToStorage()
-    ElMessage.success('已从试题栏移除')
-    apiRemoveBasket(id).catch((e) =>
-      console.warn('[basket] removeBasket notify failed (local state OK):', e),
-    )
-  } finally {
-    _togglingIds.delete(id)
-  }
-}
-
-/**
- * 重排试题栏顺序（PRD-A-017 批2e 拖拽重排）。
- *   _items 按 _basketIds（Set）的插入序渲染 → 拖拽后传入「拖后全量 id 序列」，按它重建 Set
- *   并落 LS（顺序持久），渲染序随之更新。纯本地动作（不耗 token、无 BE 顺序契约），不通知后端。
- *   入参须是当前篮内 id 的一个排列；非法（含未知 id / 缺 id）则忽略，避免拖坏数据。
- */
-function reorder(orderedIds: string[]): void {
-  const cur = _basketIds.value
-  // 校验：长度一致 + 集合等价（每个 id 恰出现一次且都在篮内），否则放弃（让 Vue 按原序重渲）
-  if (orderedIds.length !== cur.size) return
-  const seen = new Set<string>()
-  for (const id of orderedIds) {
-    if (!cur.has(id) || seen.has(id)) return
-    seen.add(id)
-  }
-  _basketIds.value = new Set(orderedIds)
-  syncToStorage()
-}
-
-async function clear(): Promise<void> {
-  _basketIds.value = new Set()
-  _cache.clear()
-  // PRD-B-101 — 只清当前命名空间仓（缺省 key = _ns），不波及其它仓
-  writeBasketIdsToStorage(new Set())
-  writeBasketCacheToStorage(new Map())
-  ElMessage.success('已清空试题栏')
-}
-
-// PRD-A-013 T2 — id 雪花 string
-function isLoading(id: string): boolean {
-  return _togglingIds.has(id)
-}
-
-function openDialog() {
-  _dialogVisible.value = true
-}
-
-function closeDialog() {
-  _dialogVisible.value = false
-}
-
-// ── composeAndDownload — 一键组卷，调 genExamData，存草稿，跳 /papers/edit ──
-async function composeAndDownload(): Promise<void> {
-  if (_items.value.length === 0) {
-    ElMessage.warning('试题栏为空，请先加题')
-    return
-  }
-  try {
-    let examData: unknown = null
+  function notifyChanged(ctx: ReturnType<typeof context>) {
+    const value = { userId: ctx.userId, namespace: ctx.namespace, nonce: crypto.randomUUID() }
+    channel?.postMessage(value)
     try {
-      examData = await genExamData()
-    } catch (e) {
-      console.warn('[compose] genExamData failed, using local basket data', e)
+      localStorage.setItem(SYNC_KEY, JSON.stringify(value))
+    } catch {
+      // 只发失效通知，服务端已保存；无存储权限时由焦点刷新兜底。
     }
-    const paperDraft = {
-      questions: _items.value.map((q) => ({ ...q, score: 0 })),
-      examData,
-      createdAt: new Date().toISOString(),
-    }
-    localStorage.setItem('paperDraft', JSON.stringify(paperDraft))
-    _dialogVisible.value = false
-    // PRD-B-101 — 直跳组卷工作台（/papers/edit 本就 redirect→workbench）。备课语境（若激活）
-    //   由全局 usePrepContextStore 承载、跨导航保持；工作台「创建试卷」按当前语境自动带
-    //   lessonId+slotSeq 并绑卷位。无语境时=日常组卷，行为不变。
-    router.push('/papers/workbench')
-  } catch (e) {
-    console.warn('[compose] composeAndDownload failed', e)
   }
-}
 
-// ── 暴露接口 ────────────────────────────────────────────────
-// PRD-A-013 T2 — 雪花 ID 全工程 string；Set / Map key + 函数签名联动改 string。
-export interface UseQuestionBasket {
-  basketIds: Readonly<Ref<Set<string>>>
-  count: ComputedRef<number>
-  items: ComputedRef<QuestionItem[]>
-  add: (q: QuestionItem, opts?: { silent?: boolean }) => Promise<void>
-  /** 批量加入（过滤已在篮 + 单条汇总 toast），返回实际新增数 */
-  addMany: (questions: QuestionItem[]) => Promise<number>
-  /** 批量移除（只移在篮内 + 单条汇总 toast），返回实际移除数 */
-  removeMany: (ids: string[]) => Promise<number>
-  remove: (id: string) => Promise<void>
-  /** 拖拽重排：传拖后全量 id 序列，按它重建顺序并落 LS（纯本地，不通知后端） */
-  reorder: (orderedIds: string[]) => void
-  clear: () => Promise<void>
-  togglingIds: Set<string>
-  isLoading: (id: string) => boolean
-  dialogVisible: Ref<boolean>
-  openDialog: () => void
-  closeDialog: () => void
-  syncFromServer: () => Promise<void>
-  /** PRD-011 题面补水：批量补拉缺 blockJson 的项回写 cache（试题栏/工作台消费前调，幂等） */
-  hydrateMissingBlockJson: () => Promise<void>
-  composeAndDownload: () => Promise<void>
-  /** PRD-B-101 当前命名空间仓（'default' | 'lesson:{id}:slot{n}'），只读 */
-  currentNamespace: Readonly<Ref<string>>
-  /** PRD-B-101 切换命名空间仓（备课语境 store 专用；幂等，切走不丢当前仓） */
-  switchNamespace: (ns: string) => void
-}
+  async function syncFromServer(page = pageIndex.value): Promise<void> {
+    if (!user.isLoggedIn || !user.userInfo?.id) return
+    const ctx = context()
+    const seq = ++readSequence
+    controller?.abort()
+    controller = new AbortController()
+    loading.value = true
+    error.value = ''
+    try {
+      const [result, keys] = await Promise.all([
+        getBasketEntries(ctx.namespace, page, controller.signal),
+        getBasketKeys(ctx.namespace, controller.signal),
+      ])
+      if (ctx.generation !== generation || seq !== readSequence) return
+      if (page > 1 && result.list.length === 0 && result.total > 0) {
+        await syncFromServer(Math.ceil(result.total / BASKET_PAGE_SIZE))
+        return
+      }
+      items.value = result.list.map((entry) => ({
+        ...basketQuestion(entry),
+        basketNamespace: ctx.namespace,
+      }))
+      count.value = result.total
+      pageIndex.value = result.total === 0 ? 1 : page
+      // 成员键独立于正文分页，每次替换而非累积，才能识别其他页的加入和移除。
+      knownKeys.value = new Set(keys)
+    } catch (e) {
+      if (ctx.generation !== generation || seq !== readSequence) return
+      error.value = e instanceof Error ? e.message : '试题栏加载失败'
+      throw e
+    } finally {
+      if (ctx.generation === generation && seq === readSequence) loading.value = false
+    }
+  }
 
-export function useQuestionBasket(): UseQuestionBasket {
-  // J 卡 段① 选项 1：不再启动自动 sync BE — 信任本地 LS 为准。
-  // 原因（详 PRD/2026-05-22-J-page-response-optimize/PRD.md §0.1）：
-  //   - 用户反馈：第二波部署后 FAB 角标"刚开始 4，过几秒变 12"，
-  //     原因是历史脏数据使 BE basket 跟本地 LS 不一致
-  //   - 架构上 add/remove 已经是乐观更新（本地优先），sync 反过来"以 BE 为准"是架构矛盾
-  //   - 跨设备真同步不在 V0 范围 — 未来要做立专门卡（带冲突解决 + 版本号）
-  // syncFromServer 函数保留供 caller 手动 explicit 触发（如未来"刷新 basket"按钮）
-  if (!_initialized) {
-    _initialized = true
+  function reloadQuietly() {
+    void syncFromServer().catch(() => {
+      /* error 由面板展示，焦点刷新不重复弹窗。 */
+    })
+  }
+
+  function invalidate() {
+    revision.value++
+    reloadQuietly()
+  }
+
+  function receiveChange(value: unknown) {
+    if (!value || typeof value !== 'object') return
+    const event = value as { userId?: unknown; namespace?: unknown }
+    if (event.userId === user.userInfo?.id && event.namespace === currentNamespace.value)
+      invalidate()
+  }
+
+  const channel =
+    typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('question-basket-v2') : undefined
+  if (channel) channel.onmessage = (event) => receiveChange(event.data)
+  function onStorage(event: StorageEvent) {
+    if (event.key === 'book-ui:auth') {
+      // 跨标签切账号后同步重建 auth 内存和请求拦截器。
+      window.location.reload()
+    } else if (!channel && event.key === SYNC_KEY && event.newValue) {
+      try {
+        receiveChange(JSON.parse(event.newValue))
+      } catch {
+        /* 非法通知不影响业务数据。 */
+      }
+    }
+  }
+  window.addEventListener('storage', onStorage)
+  window.addEventListener('focus', invalidate)
+  onScopeDispose(() => {
+    controller?.abort()
+    channel?.close()
+    window.removeEventListener('storage', onStorage)
+    window.removeEventListener('focus', invalidate)
+  })
+
+  watch(
+    [identity, currentNamespace],
+    () => {
+      generation++
+      readSequence++
+      controller?.abort()
+      items.value = []
+      knownKeys.value = new Set()
+      togglingIds.value = new Set()
+      count.value = 0
+      pageIndex.value = 1
+      error.value = ''
+      loading.value = false
+      revision.value++
+      reloadQuietly()
+    },
+    { immediate: true, flush: 'sync' },
+  )
+
+  async function mutate<T>(
+    keys: string[],
+    action: (namespace: string, assertCurrent: () => void) => Promise<T>,
+  ): Promise<T> {
+    const ctx = context()
+    const assertCurrent = () => {
+      if (ctx.generation !== generation) throw new Error('账号或试题栏已切换，请重试')
+    }
+    const execute = async () => {
+      assertCurrent()
+      togglingIds.value = new Set([...togglingIds.value, ...keys])
+      try {
+        const result = await action(ctx.namespace, assertCurrent)
+        notifyChanged(ctx)
+        if (ctx.generation !== generation) throw new Error('操作已保存，当前账号或试题栏已切换')
+        revision.value++
+        try {
+          await syncFromServer()
+        } catch {
+          ElMessage.warning('操作已保存，试题栏刷新失败，请点击重试重新读取')
+        }
+        return result
+      } catch (e) {
+        if (ctx.generation === generation) {
+          notifyChanged(ctx)
+          revision.value++
+          error.value = e instanceof Error ? e.message : '试题栏操作失败'
+          ElMessage.error(error.value)
+          reloadQuietly()
+        }
+        throw e
+      } finally {
+        if (ctx.generation === generation) {
+          togglingIds.value = new Set([...togglingIds.value].filter((key) => !keys.includes(key)))
+        }
+      }
+    }
+    const pending = queue.then(execute, execute)
+    queue = pending.catch(() => undefined)
+    return pending
+  }
+
+  async function addMany(questions: QuestionItem[], silent = false): Promise<number> {
+    const unique = [...new Map(questions.map((q) => [selectionKey(q), q])).values()]
+    if (unique.length > BASKET_MAX_SIZE) throw new Error(`试题栏最多 ${BASKET_MAX_SIZE} 题`)
+    if (!unique.length) return 0
+    const added = await mutate(unique.map(selectionKey), async (ns, assertCurrent) => {
+      let addedCount = 0
+      try {
+        for (let offset = 0; offset < unique.length; offset += BASKET_BATCH_SIZE) {
+          assertCurrent()
+          const batch = unique.slice(offset, offset + BASKET_BATCH_SIZE).map(selectionReference)
+          addedCount += (await addBasketEntries(ns, batch)).addedCount
+        }
+      } catch (e) {
+        const reason = e instanceof Error ? e.message : '请求失败'
+        throw new Error(
+          `已确认新增 ${addedCount} 题，其余批次未确认：${reason}。正在重读服务端状态，可安全重试未完成选择。`,
+        )
+      }
+      return addedCount
+    })
+    if (!silent) {
+      if (added) ElMessage.success(`已加入 ${added} 题到试题栏`)
+      else ElMessage.info('所选题目已在试题栏中')
+    }
+    return added
+  }
+
+  async function add(q: QuestionItem, opts?: { silent?: boolean }): Promise<void> {
+    await addMany([q], opts?.silent)
+  }
+
+  async function removeMany(ids: string[], silent = false): Promise<number> {
+    const keys = [...new Set(ids.map((id) => (id.includes(':') ? id : `q:${id}`)))]
+    if (!keys.length) return 0
+    await mutate(keys, async (ns, assertCurrent) => {
+      for (let offset = 0; offset < keys.length; offset += BASKET_BATCH_SIZE) {
+        assertCurrent()
+        await removeBasketEntries(ns, keys.slice(offset, offset + BASKET_BATCH_SIZE))
+      }
+    })
+    if (!silent) ElMessage.success('已从试题栏移除')
+    return keys.length
+  }
+
+  async function remove(id: string): Promise<void> {
+    await removeMany([id])
+  }
+
+  async function removeSubmittedEntries(entries: BasketEntryReference[]): Promise<void> {
+    if (!entries.length) return
+    if (entries.length > BASKET_MAX_SIZE || entries.some((entry) => !entry.basketEntryId))
+      throw new Error('试题栏记录版本缺失，未清理已提交题目')
+    await mutate(entries.map((entry) => entry.entryKey), async (ns, assertCurrent) => {
+      for (let offset = 0; offset < entries.length; offset += BASKET_BATCH_SIZE) {
+        assertCurrent()
+        await removeBasketEntryVersions(ns, entries.slice(offset, offset + BASKET_BATCH_SIZE))
+      }
+    })
+  }
+
+  async function clear(): Promise<void> {
+    await mutate(['*'], emptyBasketEntries)
+    ElMessage.success('已清空试题栏')
+  }
+
+  // 仅显式组卷操作读取完整有界集合；面板始终消费服务端当前页。
+  async function loadForComposition(): Promise<BasketQuestion[]> {
+    const ctx = context()
+    const result: BasketQuestion[] = []
+    let total: number | undefined
+    for (let page = 1; page <= Math.ceil(BASKET_MAX_SIZE / BASKET_PAGE_SIZE); page++) {
+      const data = await getBasketEntries(ctx.namespace, page)
+      if (ctx.generation !== generation) throw new Error('账号或试题栏已切换，请重试')
+      if (data.total > BASKET_MAX_SIZE || (total !== undefined && data.total !== total)) {
+        throw new Error('试题栏已变化，请重新载入')
+      }
+      total = data.total
+      result.push(
+        ...data.list.map((entry) => ({ ...basketQuestion(entry), basketNamespace: ctx.namespace })),
+      )
+      if (result.length >= total) break
+      if (!data.list.length) throw new Error('试题栏数据不完整，请重新载入')
+    }
+    if (result.length !== total || new Set(result.map((q) => q.entryKey)).size !== result.length) {
+      throw new Error('试题栏已变化，请重新载入')
+    }
+    return result
+  }
+
+  function has(q: QuestionItem): boolean {
+    return knownKeys.value.has(selectionKey(q))
+  }
+  function isLoading(id: string): boolean {
+    return (
+      togglingIds.value.has('*') || togglingIds.value.has(id) || togglingIds.value.has(`q:${id}`)
+    )
+  }
+  function switchNamespace(ns: string) {
+    currentNamespace.value = ns || 'default'
+  }
+  function openDialog() {
+    dialogVisible.value = true
+    reloadQuietly()
+  }
+  function closeDialog() {
+    dialogVisible.value = false
   }
   return {
-    basketIds: _basketIds as Readonly<Ref<Set<string>>>,
-    count: _count,
-    items: _items,
+    items,
+    count,
+    basketIds,
+    pageIndex,
+    loading,
+    error,
+    revision,
+    currentNamespace,
+    togglingIds,
+    dialogVisible,
     add,
     addMany,
-    removeMany,
     remove,
-    reorder,
+    removeMany,
+    removeSubmittedEntries,
     clear,
-    togglingIds: _togglingIds,
+    has,
     isLoading,
-    dialogVisible: _dialogVisible,
+    switchNamespace,
     openDialog,
     closeDialog,
     syncFromServer,
-    hydrateMissingBlockJson,
-    composeAndDownload,
-    currentNamespace: _ns as Readonly<Ref<string>>,
-    switchNamespace,
+    loadForComposition,
+  }
+})
+
+export function useQuestionBasket() {
+  const store = useQuestionBasketStore()
+  const refs = storeToRefs(store)
+  return {
+    ...refs,
+    get togglingIds() {
+      return new Set(
+        [...store.togglingIds].flatMap((key) =>
+          key.startsWith('q:') ? [key, key.slice(2)] : [key],
+        ),
+      )
+    },
+    pageSize: BASKET_PAGE_SIZE,
+    add: store.add,
+    addMany: store.addMany,
+    remove: store.remove,
+    removeMany: store.removeMany,
+    removeSubmittedEntries: store.removeSubmittedEntries,
+    clear: store.clear,
+    has: store.has,
+    isLoading: store.isLoading,
+    switchNamespace: store.switchNamespace,
+    openDialog: store.openDialog,
+    closeDialog: store.closeDialog,
+    syncFromServer: store.syncFromServer,
+    hydrateMissingBlockJson: store.syncFromServer,
+    loadForComposition: store.loadForComposition,
   }
 }
+
+export type UseQuestionBasket = ReturnType<typeof useQuestionBasket>

@@ -47,6 +47,11 @@ export interface FreeTagVo {
 // 业务字段（questionType / difficult / score / status / examYear）保留 number。
 export interface QuestionItem {
   id: string
+  /** Selection identity is distinct from the source question ID. */
+  entryKey?: string
+  sourceBookId?: string | null
+  sourceItemId?: string | null
+  paperQuestionId?: string | null
   questionType: number // 1=选择 / 4=填空 / 5=简答
   difficult: number | null   // ⚠️ 真实字段名是 difficult 不是 difficulty（4星制）
   stemImg: string | null      // 题干图 URL（完整 CDN URL）
@@ -489,7 +494,7 @@ export type SimilarQuestion = QuestionItem
 // 原卷题目单条（GET /teacher/paper/source/{id} 下的题列表项）
 // 字段基于 QuestionItem 推断，是否一致待 playwright 验证
 // E 卡 段② BE 真接口 /teacher/exam/paper/detail 也返这个结构（含 sortNum / pqScore）
-export interface PaperSourceQuestion extends QuestionItem {
+export interface PaperSourceQuestion extends QuestionDetail {
   sort?: number | null            // biz_paper_question.sort（跨 section 全局题号；BE 也返这个字段）
   sortNum?: number | null         // E 卡 段② BE 真返：跨 section 全局题号（别名）
   pqScore?: number | null         // E 卡 段② BE 真返：单题分（biz_paper_question.score）
@@ -527,10 +532,10 @@ export interface PaperDetailVo {
   examYear?: string
   paperType?: number
   /**
-   * 创建人 user_id（PRD-A-005 收尾新增，BE PaperDetailVo.createBy = String）。
-   * owner 判定：String(createBy) === String(userStore.userInfo.id) → 本人卷可编辑；否则公共卷锁死。
+   * 创建人ID，仅供来源展示；当前调用者的管理权限由canManage决定。
    */
   createBy?: string | null
+  canManage?: boolean
   /**
    * AI 命题分析（biz_paper.remark）—— 录入 agent 读透全卷后的教师视角定性总评（markdown）。
    * PRD-C-1000：与前端现算的难度/题型分布互补；为空（老卷/未打标卷）则不渲染该卡。
@@ -664,68 +669,61 @@ export const getQuestionLineage = (id: string) =>
   request.get<QuestionLineage, QuestionLineage>(`/teacher/question/${id}/lineage`)
 
 
-// Q' 卡 段① BE 新端点 — 按 ids 批查完整字段（含 answer / explain / freeTags / questionStdKnowledges）。
-// query string = ?ids=1,2,3 逗号分隔（axios params 对 string 不会重复 key）；
-// 软删自动过滤（BE WHERE status<>'2'）；BE 顺序按 FIND_IN_SET 保入参顺序（本函数仍显式 reorder 兜底）。
-// PRD-A-013 T2 — ids 雪花 string[]
-// PRD-A-015：BE listByIds 已批量回填 blockJson（与单题 selectById 对称），故卷库预览/PDF 走本接口
-//    也能拿到结构化内容、命中 QuestionBlockRender 网格渲染（PaperPreview blockDocOf 分支）。
-//
-// 🔴 中心化分批（≤100/批）——BE `/teacher/question/list` 有两条硬约束，一次性拼整本 ids 必炸：
-//   ① ids 太多 → URL/Header 过长 → HTTP 431（Request Header Fields Too Large）；
-//   ② 即便够短，BE 也有 100 题硬上限 → 500『单次最多100题导出』。
-//   任一都会让调用方 catch 到空结果：整本每题 itemStemText 返 null 全渲染「暂无内容」，
-//   顶部弹「网络请求失败，请检查网络连接」（request.ts 错误分支）。凡 >100 题的书（几乎所有真实教辅，
-//   如 834 题《暑假课本》bookId=2076707736518717441）书主打开整本即不可用。
-//   故在本函数内部按 ≤100 切片 → Promise.all 并发 → 按【入参顺序】合并（跨批稳定，软删/缺失自动跳过）。
-//   中心化修在此，book.vue load() / PaperPreview 卷库预览 / PDF 导出等所有调用方全部免改且同样受益。
+// Explicit selections/exports only. Books use the paginated shelf read API.
 const QUESTION_LIST_BATCH = 100
+const QUESTION_LIST_CONCURRENCY = 3
+
+export interface QuestionBatchResult {
+  items: QuestionDetail[]
+  missingIds: string[]
+}
+
+export class MissingQuestionsError extends Error {
+  readonly missingIds: string[]
+
+  constructor(missingIds: string[]) {
+    super(`有 ${missingIds.length} 道题不存在或已不可用，请刷新后重新选择`)
+    this.name = 'MissingQuestionsError'
+    this.missingIds = missingIds
+  }
+}
 
 export const questionListByIds = async (ids: string[]): Promise<QuestionDetail[]> => {
   if (!ids || ids.length === 0) return []
-
-  // 去重保序：BE SQL IN 本就按行去重，FE 先去重可避免重复 id 白撑大 URL / 合并阶段重复入列。
-  const uniqueIds: string[] = []
-  const seen = new Set<string>()
-  for (const raw of ids) {
-    const id = String(raw)
-    if (id && !seen.has(id)) {
-      seen.add(id)
-      uniqueIds.push(id)
-    }
+  if (ids.some((id) => typeof id !== 'string' || !/^[1-9]\d{0,18}$/.test(id))) {
+    throw new Error('题目 ID 格式不正确')
   }
-  if (uniqueIds.length === 0) return []
-
-  // ≤100/批切片
+  const uniqueIds = [...new Set(ids)]
   const chunks: string[][] = []
   for (let i = 0; i < uniqueIds.length; i += QUESTION_LIST_BATCH) {
     chunks.push(uniqueIds.slice(i, i + QUESTION_LIST_BATCH))
   }
-
-  // 各批并发拉取（任一批失败即整体 reject，与原单请求语义一致；但 ≤100 已规避尺寸类失败）
-  const batches = await Promise.all(
-    chunks.map((chunk) =>
-      request.get<QuestionDetail[], QuestionDetail[]>('/teacher/question/list', {
-        params: { ids: chunk.join(',') },
-      }),
-    ),
-  )
-
-  // 建 id→题 映射，再按【入参顺序】取回：跨批稳定、显式 reorder 兜底；软删/BE 未返的 id 自动跳过。
   const byId = new Map<string, QuestionDetail>()
-  for (const batch of batches) {
-    if (Array.isArray(batch)) {
-      for (const q of batch) {
-        if (q && q.id != null) byId.set(String(q.id), q)
+  let nextBatch = 0
+  let failed = false
+  async function consumeBatches() {
+    while (!failed && nextBatch < chunks.length) {
+      const chunk = chunks[nextBatch++]!
+      try {
+        const result = await request.post<QuestionBatchResult, QuestionBatchResult>(
+          '/teacher/question/batch',
+          { ids: chunk },
+        )
+        if (result.missingIds.length > 0) throw new MissingQuestionsError(result.missingIds)
+        const returnedIds = new Set(result.items.map((question) => String(question.id)))
+        const missing = chunk.filter((id) => !returnedIds.has(id))
+        if (missing.length > 0) throw new MissingQuestionsError(missing)
+        for (const question of result.items) byId.set(String(question.id), question)
+      } catch (error) {
+        failed = true
+        throw error
       }
     }
   }
-  const result: QuestionDetail[] = []
-  for (const id of uniqueIds) {
-    const q = byId.get(id)
-    if (q) result.push(q)
-  }
-  return result
+  await Promise.all(
+    Array.from({ length: Math.min(QUESTION_LIST_CONCURRENCY, chunks.length) }, consumeBatches),
+  )
+  return uniqueIds.map((id) => byId.get(id)!)
 }
 
 /**

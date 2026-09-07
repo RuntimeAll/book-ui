@@ -137,7 +137,7 @@ instance.interceptors.response.use(
     // 这类可操作文案吞成泛化"系统内部错误"。两种 envelope 都兜。
     const errMsg = data.message || (data as unknown as { msg?: string }).msg || '系统内部错误'
     ElMessage.error(errMsg)
-    return Promise.reject(new Error(errMsg))
+    return Promise.reject(Object.assign(new Error(errMsg), { businessCode: data.code }))
   },
   (error) => {
     // PRD-A-013 T5 M-10 — 列表竞态防护：上一个请求被 AbortController 主动 cancel，

@@ -11,42 +11,43 @@
  * 缺陷1（父节点看不到后代内容）：collectBlocks 先序递归收集「讲及其全部后代」的 items，
  *   按 seq 有序、分组带层级标题、题号按讲连续（1..N，跨知识点/题型不重置，同原书）。
  *
- * 性能：整本书 600+ 题不一次性 render——每「讲」为一段 section，用 IntersectionObserver
- *   懒挂载（滚到视口附近才挂 body，未挂时占位撑高），跳转前强制挂载目标讲。
+ * 性能：轻量目录与节点正文分离，正文按可见节点分页读取；整书导出仍走后端导出服务。
  *
  * 数据源：
- *  - GET /teacher/shelf/book/{id}/structure → 整树（节点 + 内容项，含 override/explain 回显）
- *  - GET /teacher/question/list?ids= → 批量取 question 内容项的题面（override 缺省时用原题）
+ *  - GET /teacher/shelf/book/{id}/outline → 目录（不含题目 ID 或正文）
+ *  - GET /teacher/shelf/book/{id}/node/{nodeId}/items → 节点正文分页
  *  - override 编辑 → PUT /teacher/shelf/item/{id}（只改本书，题库原题不动，D3）
  *  - 入专项 → POST /teacher/special/{specialId}/pick（C 线契约§3；未上线容错不崩页）
  */
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import QuestionContent from '@/components/business/QuestionContent/index.vue'
 import QuestionBlockRender from '@/components/business/QuestionBlockRender/index.vue'
 import { parseBlockDoc, type QuestionBlockDoc } from '@/utils/blockSchema'
 import {
-  getBookStructure,
   updateItem,
   incrItemUsed,
   pickToSpecial,
   exportBook,
   BOOK_TYPE_LABEL,
   type BookType,
-  type ShelfNodeVO,
-  type ShelfItemVO,
-  type ShelfStructureVO,
+  type ShelfOutlineNode,
+  type ShelfReadingItem,
+  type ShelfReadingQuestion,
   type BookExportResult,
 } from '@/api/shelf'
-import { questionListByIds, type QuestionDetail, type QuestionItem } from '@/api/question'
+import { type QuestionDetail } from '@/api/question'
 import { useUserStore } from '@/store/user'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
+import { useShelfReader } from '@/composables/useShelfReader'
 
 const route = useRoute()
 const router = useRouter()
-const bookId = String(route.params.id)
+const bookId = computed(() => String(route.params.id))
 const userStore = useUserStore()
+const reader = useShelfReader()
+const { book, loading, error: loadError, pages, flatNodes, nodeById } = reader
 
 /** 公开书全员可读，但改题仅 owner / 超管（与 BE requireOwnedBook 对齐）。 */
 const canEdit = computed(() => {
@@ -56,24 +57,8 @@ const canEdit = computed(() => {
   return !!uid && !!owner && String(uid) === String(owner)
 })
 
-const loading = ref(false)
-const book = ref<ShelfStructureVO | null>(null)
-
-// 扁平节点（带 depth，用于左树缩进渲染）
-interface FlatNode {
-  node: ShelfNodeVO
-  depth: number
-  questionCount: number
-}
-const flatNodes = ref<FlatNode[]>([])
-const nodeById = ref<Record<string, ShelfNodeVO>>({})
-/** 任意节点 → 其所属顶层「讲」id（懒挂载定位用）。 */
-const nodeToSection = ref<Record<string, string>>({})
 /** 当前高亮节点（滚动联动 / 点击定位）。 */
 const activeNodeId = ref<string>('')
-
-// 题内容 map（questionId → QuestionDetail）
-const qMap = ref<Record<string, QuestionDetail>>({})
 
 const bookTypeLabel = computed(() =>
   book.value ? BOOK_TYPE_LABEL[book.value.bookType as BookType] ?? book.value.bookType : '',
@@ -92,33 +77,6 @@ function bySeq(a: { seq?: number }, b: { seq?: number }) {
   return (a.seq ?? 0) - (b.seq ?? 0)
 }
 
-/** 递归统计某节点子树内 question 项数（含自身节点直属项）。 */
-function countQuestions(n: ShelfNodeVO): number {
-  let c = (n.items ?? []).filter((it) => it.kind === 'question').length
-  for (const ch of n.children ?? []) c += countQuestions(ch)
-  return c
-}
-
-/** 深度优先展平树 + 建 id 索引 + node→讲 映射 + 收集 questionId。 */
-function walk(
-  nodes: ShelfNodeVO[],
-  depth: number,
-  secId: string,
-  flat: FlatNode[],
-  ids: Set<string>,
-) {
-  for (const n of [...nodes].sort(bySeq)) {
-    nodeById.value[n.id] = n
-    const topId = depth === 0 ? n.id : secId
-    nodeToSection.value[n.id] = topId
-    flat.push({ node: n, depth, questionCount: countQuestions(n) })
-    for (const it of n.items ?? []) {
-      if (it.kind === 'question' && it.questionId) ids.add(it.questionId)
-    }
-    if (n.children?.length) walk(n.children, depth + 1, topId, flat, ids)
-  }
-}
-
 // ───────────────────────────────────────────────────────────────────────────
 // 缺陷1：先序遍历收集「节点 + 全部后代」的内容块。
 //   t='group'   → 分组小标题（node + 相对层级 level）
@@ -128,34 +86,37 @@ function walk(
 // 单接口而非联合类型，避免 vue-tsc 模板窄化失效。
 // ───────────────────────────────────────────────────────────────────────────
 interface RenderBlock {
-  t: 'group' | 'explain' | 'question'
+  t: 'group' | 'explain' | 'question' | 'page'
   key: string
-  node?: ShelfNodeVO
+  node?: ShelfOutlineNode
   level?: number
   qCount?: number
-  item?: ShelfItemVO
+  item?: ShelfReadingItem
 }
 
 /** 先序：node 分组头 → 自身 items（seq）→ 递归 children（seq）。 */
-function collectBlocks(node: ShelfNodeVO, level: number, out: RenderBlock[]) {
-  const items = [...(node.items ?? [])].sort(bySeq)
+function collectBlocks(node: ShelfOutlineNode, level: number, out: RenderBlock[]) {
+  const state = pages.value[node.id]
+  const items = state?.rows ?? []
   const children = [...(node.children ?? [])].sort(bySeq)
-  out.push({ t: 'group', key: `g_${node.id}`, node, level, qCount: countQuestions(node) })
+  out.push({ t: 'group', key: `g_${node.id}`, node, level, qCount: node.questionCount })
   for (const it of items) {
     if (it.kind === 'explain') {
       out.push({ t: 'explain', key: it.id, item: it })
-    } else {
+    } else if (it.kind === 'question') {
       out.push({ t: 'question', key: it.id, item: it })
     }
+  }
+  if (node.itemCount && (!state || state.loading || state.error || state.hasMore)) {
+    out.push({ t: 'page', key: `p_${node.id}`, node })
   }
   for (const ch of children) collectBlocks(ch, level + 1, out)
 }
 
-/** 每「讲」= 一段 section（body = 讲根分组之后的所有块；estH = 未挂载时占位高度估算）。 */
+/** 每讲保留连续排版，未读取的节点用分页占位，不依赖全书正文。 */
 interface DocSection {
-  node: ShelfNodeVO
+  node: ShelfOutlineNode
   body: RenderBlock[]
-  estH: number
 }
 const sections = computed<DocSection[]>(() => {
   const roots = [...(book.value?.tree ?? [])].sort(bySeq)
@@ -163,19 +124,9 @@ const sections = computed<DocSection[]>(() => {
     const out: RenderBlock[] = []
     collectBlocks(root, 0, out)
     const body = out.slice(1) // 去掉讲根分组（讲标题单独常驻渲染）
-    let estH = 60
-    for (const b of body) {
-      estH += b.t === 'question' ? 130 : b.t === 'explain' ? 120 : 34
-    }
-    return { node: root, body, estH: Math.max(estH, 180) }
+    return { node: root, body }
   })
 })
-
-// —— 懒挂载：已挂载的讲 id 集合（reactive Set 可被追踪）——
-const activeSecs = reactive(new Set<string>())
-function isActive(id: string) {
-  return activeSecs.has(id)
-}
 
 /** 面包屑：从根到高亮节点的名称链。 */
 const crumb = computed<string[]>(() => {
@@ -189,43 +140,34 @@ const crumb = computed<string[]>(() => {
   }
   return chain
 })
-const activeNode = computed<ShelfNodeVO | null>(() =>
+const activeNode = computed<ShelfOutlineNode | null>(() =>
   activeNodeId.value ? nodeById.value[activeNodeId.value] ?? null : null,
 )
 
+let bookViewVersion = 0
 async function load() {
-  loading.value = true
-  try {
-    const res = await getBookStructure(bookId)
-    book.value = res
-    nodeById.value = {}
-    nodeToSection.value = {}
-    const flat: FlatNode[] = []
-    const ids = new Set<string>()
-    walk(res.tree ?? [], 0, '', flat, ids)
-    flatNodes.value = flat
-    activeNodeId.value = flat[0]?.node.id ?? ''
-    // 批量拉题面
-    if (ids.size) {
-      try {
-        const list = await questionListByIds([...ids])
-        const m: Record<string, QuestionDetail> = {}
-        for (const q of list ?? []) m[String(q.id)] = q
-        qMap.value = m
-      } catch (e) {
-        console.warn('[book] 批量拉题面失败:', e)
-      }
-    }
-    // 挂载观察器（懒挂载 + 滚动联动）——等 DOM 出来
-    await nextTick()
-    setupObserver()
-    refreshHeadings()
-  } catch (e) {
-    console.warn('[book] 加载书结构失败:', e)
-    ElMessage.error('加载书结构失败')
-  } finally {
-    loading.value = false
-  }
+  const version = ++bookViewVersion
+  const id = bookId.value
+  clearViewEffects()
+  activeNodeId.value = ''
+  editVisible.value = false
+  editItem.value = null
+  editStem.value = ''
+  originalStem.value = null
+  editing.value = false
+  exportVisible.value = false
+  exportResult.value = null
+  exporting.value = false
+  if (contentEl.value) contentEl.value.scrollTop = 0
+  const loaded = await reader.load(id)
+  if (!loaded || bookViewVersion !== version) return
+  activeNodeId.value = flatNodes.value[0]?.node.id ?? ''
+  await nextTick()
+  if (bookViewVersion !== version) return
+  const target = String(route.query.nodeId ?? '')
+  if (target && nodeById.value[target]) await goToNode(target)
+  setupObserver()
+  refreshHeadings()
 }
 
 // ─── 懒挂载 IntersectionObserver（root = 内容滚动容器） ───────────────────────
@@ -238,21 +180,21 @@ function setupObserver() {
   if (!contentEl.value) return
   io = new IntersectionObserver(
     (entries) => {
-      let mounted = false
       for (const en of entries) {
         if (en.isIntersecting) {
-          const id = (en.target as HTMLElement).dataset.sec
-          if (id && !activeSecs.has(id)) {
-            activeSecs.add(id)
-            mounted = true
+          const id = (en.target as HTMLElement).dataset.loadNode
+          if (id && !pages.value[id]) {
+            io?.unobserve(en.target)
+            void reader.loadNode(id)
           }
         }
       }
-      if (mounted) nextTick(refreshHeadings)
     },
-    { root: contentEl.value, rootMargin: '900px 0px', threshold: 0 },
+    { root: contentEl.value, rootMargin: '300px 0px', threshold: 0 },
   )
-  for (const el of contentEl.value.querySelectorAll<HTMLElement>('.doc-section')) io.observe(el)
+  for (const el of contentEl.value.querySelectorAll<HTMLElement>('[data-load-node]')) {
+    if (!pages.value[el.dataset.loadNode!]) io.observe(el)
+  }
 }
 
 // ─── 滚动联动：高亮当前节点 + 目录树跟随 ──────────────────────────────────────
@@ -262,10 +204,21 @@ function refreshHeadings() {
   headingEls = Array.from(contentEl.value.querySelectorAll<HTMLElement>('.doc-h[data-node-id]'))
 }
 let spyScheduled = false
+let spyFrame = 0
+let anchorTimer = 0
+let navigationVersion = 0
+function clearViewEffects() {
+  navigationVersion++
+  io?.disconnect()
+  cancelAnimationFrame(spyFrame)
+  window.clearTimeout(anchorTimer)
+  headingEls = []
+  spyScheduled = false
+}
 function onScroll() {
   if (spyScheduled) return
   spyScheduled = true
-  requestAnimationFrame(() => {
+  spyFrame = requestAnimationFrame(() => {
     spyScheduled = false
     const sc = contentEl.value
     if (!sc || !headingEls.length) return
@@ -286,17 +239,21 @@ function ensureTreeVisible(id: string) {
   el?.scrollIntoView({ block: 'nearest' })
 }
 
-/** 目录点击 = 锚点跳转（先强制挂载目标讲，再滚到锚点）。 */
-function goToNode(id: string) {
+/** 目录点击只加载目标节点首页；后代继续按可见范围读取。 */
+async function goToNode(id: string) {
+  const version = ++navigationVersion
+  window.clearTimeout(anchorTimer)
   activeNodeId.value = id
-  const secId = nodeToSection.value[id] || id
-  activeSecs.add(secId)
-  nextTick(() => {
-    refreshHeadings()
-    scrollToAnchor(id)
-    // 内容懒挂 + KaTeX 渲染会撑高，二次校正
-    window.setTimeout(() => scrollToAnchor(id), 260)
-  })
+  scrollToAnchor(id)
+  await reader.loadNode(id)
+  if (version !== navigationVersion) return
+  await nextTick()
+  if (version !== navigationVersion) return
+  refreshHeadings()
+  scrollToAnchor(id)
+  anchorTimer = window.setTimeout(() => {
+    if (version === navigationVersion) scrollToAnchor(id)
+  }, 260)
 }
 function scrollToAnchor(id: string) {
   const sc = contentEl.value
@@ -311,42 +268,32 @@ function cssId(id: string) {
 }
 
 // —— 题面解析（override 优先，否则原题） ——
-function origQ(it: ShelfItemVO): QuestionDetail | undefined {
-  return it.questionId ? qMap.value[it.questionId] : undefined
+function itemQuestion(it: ShelfReadingItem): ShelfReadingQuestion | undefined {
+  return it.question ?? undefined
 }
-function itemStemText(it: ShelfItemVO): string | null {
-  if (it.override?.stem) return it.override.stem
-  const q = origQ(it)
+function itemStemText(it: ShelfReadingItem): string | null {
+  const q = itemQuestion(it)
   return q?.stemTextContent ?? q?.stemText ?? null
 }
-function itemStemImg(it: ShelfItemVO): string | null {
-  if (it.override?.stem) return null
-  return origQ(it)?.stemImg ?? null
+function itemStemImg(it: ShelfReadingItem): string | null {
+  return itemQuestion(it)?.stemImg ?? null
 }
-/** 原题结构化块（含选项网格）；override 改题 / 无块 → 富文本+图。 */
-function itemBlockJson(it: ShelfItemVO): string | null {
-  if (it.override?.stem) return null
-  return origQ(it)?.blockJson ?? null
+/** The server resolves all override fields with the basket/paper snapshot codec. */
+function itemBlockJson(it: ShelfReadingItem): string | null {
+  return itemQuestion(it)?.blockJson ?? null
 }
-/** override.options（原题选项已在 blockJson 网格内）。 */
-function itemOptions(it: ShelfItemVO): string[] | null {
-  const opts = it.override?.options
-  return opts && opts.length ? opts : null
-}
-function itemTypeLabel(it: ShelfItemVO): string | null {
-  const t = origQ(it)?.questionType
+function itemTypeLabel(it: ShelfReadingItem): string | null {
+  const t = itemQuestion(it)?.questionType
   return t != null ? QTYPE_LABEL[t] ?? null : null
 }
-function isEdited(it: ShelfItemVO): boolean {
+function isEdited(it: ShelfReadingItem): boolean {
   // 「本书已修改」只认真实改题（stem / options）；role/roleLabel/roleSeq 是迁移写入的角色元数据，
   // 不构成改题，否则教材配套书每道题都会误挂「本书已修改」旗标。
   const ov = it.override
   if (!ov) return false
-  const stemEdited = typeof ov.stem === 'string' && ov.stem.trim() !== ''
-  const optsEdited = Array.isArray(ov.options) && ov.options.length > 0
-  return stemEdited || optsEdited
+  return ['stem', 'options', 'answer', 'analysis', 'explain', 'analyze', 'figure', 'blockJson', 'answerBlockJson', 'analyzeBlockJson']
+    .some((key) => Object.prototype.hasOwnProperty.call(ov, key))
 }
-const optLetters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
 
 // ───────────────────────────────────────────────────────────────────────────
 // 题号改造（2026-07-14 用户拍板）：删掉本页自造的跨节连续大题号；题干若以原书小题号
@@ -370,7 +317,7 @@ function liftLeadingNo(text: string | null | undefined): { liftedNo: string | nu
 
 /**
  * 在 blockJson 里剥号：只动**文档序第一个 text 块**（= 题干开头），中段/其它 text 块一律不碰，
- * 避免误剥题干中段的 `N．`。命中则返回剥号后的新 doc（不污染原 qMap 对象）。
+ * 避免误剥题干中段的 `N．`。命中则返回剥号后的新 doc，不修改服务端读回的正文。
  */
 function liftFromBlockDoc(doc: QuestionBlockDoc): { liftedNo: string | null; doc: QuestionBlockDoc } {
   for (const row of doc.rows) {
@@ -400,7 +347,7 @@ interface RoleTag {
   /** 展示文案 = roleLabel + roleSeq（如「典型例题1」「对应练习2」） */
   label: string
 }
-function itemRole(it: ShelfItemVO): RoleTag | null {
+function itemRole(it: ShelfReadingItem): RoleTag | null {
   const ov = it.override
   if (!ov) return null
   const role = ov.role
@@ -419,7 +366,7 @@ interface QRender {
   stemImg: string | null
   roleTag: RoleTag | null
 }
-function buildQRender(it: ShelfItemVO): QRender {
+function buildQRender(it: ShelfReadingItem): QRender {
   const roleTag = itemRole(it)
   // 结构化块优先（override 改题时 itemBlockJson 返 null，走富文本分支）
   const raw = itemBlockJson(it)
@@ -441,7 +388,7 @@ function buildQRender(it: ShelfItemVO): QRender {
     roleTag,
   }
 }
-/** item.id → 渲染模型；随 sections（结构）/ qMap（题面）/ override 变化重算。 */
+/** item.id → 渲染模型；仅解析已加载的正文。 */
 const qRenderMap = computed<Record<string, QRender>>(() => {
   const map: Record<string, QRender> = {}
   for (const sec of sections.value) {
@@ -452,7 +399,7 @@ const qRenderMap = computed<Record<string, QRender>>(() => {
   return map
 })
 /** 模板取渲染模型（O(1) 查表）。 */
-function qr(it?: ShelfItemVO): QRender | undefined {
+function qr(it?: ShelfReadingItem): QRender | undefined {
   return it ? qRenderMap.value[it.id] : undefined
 }
 
@@ -499,50 +446,81 @@ const basket = useQuestionBasket()
  * 题面口径与页面渲染一致：override.stem 优先于原题（书内改过的题，进栏的也是改后的面）。
  * 无 questionId（纯讲解块 / 脏数据）返 null，由调用方过滤。
  */
-function itemToBasketQ(it: ShelfItemVO): QuestionItem | null {
+type BookBasketQuestion = QuestionDetail & {
+  entryKey: string
+  sourceBookId: string
+  sourceItemId: string
+}
+
+function itemToBasketQ(it: ShelfReadingItem): BookBasketQuestion | null {
   if (it.kind !== 'question' || !it.questionId) return null
-  const q = origQ(it)
+  const q = itemQuestion(it)
+  if (!q || q.questionType == null) return null
   return {
+    ...q,
     id: it.questionId,
-    questionType: q?.questionType ?? 1,
-    difficult: q?.difficult ?? null,
+    entryKey: `shelf:${it.id}`,
+    sourceBookId: it.bookId,
+    sourceItemId: it.id,
+    questionType: q.questionType,
+    subjectId: q.subjectId ?? undefined,
     stemImg: itemStemImg(it),
     stemText: itemStemText(it),
     stemTextContent: itemStemText(it),
-    // 🔴 PRD-011 bug轮：blockJson 必须带上——图/选项网格全在里面，漏了则试题栏/工作台
-    //   只剩纯文本（「看图列式（瓶）」图丢的根因）。override 改过题面的题不带（保改后文本）。
-    blockJson: it.override?.stem ? null : (q?.blockJson ?? null),
-  } as QuestionItem
+    blockJson: itemBlockJson(it),
+  }
 }
 
 /** 该题是否已在试题栏（模板按钮态；读 ref.value 以保持响应式追踪）。 */
-function inBasket(qid?: string | null): boolean {
-  return !!qid && basket.basketIds.value.has(qid)
+function inBasket(it: ShelfReadingItem): boolean {
+  return basket.basketIds.value.has(`shelf:${it.id}`)
 }
+
+const adding = ref(false)
 
 /** 单题加入试题栏（成功后给源书 item 的 used_count +1，与入专项同口径）。 */
-async function addToBasket(it: ShelfItemVO) {
+async function addToBasket(it: ShelfReadingItem) {
+  if (adding.value || inBasket(it)) return
   const q = itemToBasketQ(it)
   if (!q) {
-    ElMessage.warning('这一项不是题目，无法加入试题栏')
+    ElMessage.warning('题目不存在或题型不完整，无法加入试题栏')
     return
   }
-  await basket.add(q)
-  incrItemUsed(it.id).catch(() => {})
+  adding.value = true
+  try {
+    await basket.add(q)
+  } catch {
+    ElMessage.error('加入试题栏失败，请重试')
+  } finally {
+    adding.value = false
+  }
 }
 
-/** 整节点（含全部后代）加入试题栏：复用 collectBlocks 收集子树题目，批量入栏单条汇总提示。 */
-async function addNodeToBasket(node: ShelfNodeVO) {
-  const out: RenderBlock[] = []
-  collectBlocks(node, 0, out)
-  const items = out.filter((b) => b.t === 'question' && b.item).map((b) => b.item!)
-  const qs = items.map(itemToBasketQ).filter((q): q is QuestionItem => q !== null)
-  if (!qs.length) {
-    ElMessage.info('该节点下没有题目')
-    return
+/** Complete subtree, bounded sequential pages; an unloaded chapter is still fully selectable. */
+async function addNodeToBasket(node: ShelfOutlineNode) {
+  if (adding.value) return
+  adding.value = true
+  let added = 0
+  let questionCount = 0
+  try {
+    for await (const items of reader.readSubtree(node.id)) {
+      const questions: BookBasketQuestion[] = []
+      for (const item of items) {
+        if (item.kind !== 'question') continue
+        questionCount++
+        const question = itemToBasketQ(item)
+        if (!question) throw new Error('题目缺失或题型不完整')
+        if (!inBasket(item)) questions.push(question)
+      }
+      if (questions.length) added += await basket.addMany(questions)
+    }
+    if (!questionCount) ElMessage.info('该节点下没有题目')
+    else if (!added) ElMessage.info('所选题目均已在试题栏中')
+  } catch {
+    ElMessage.error(`章节加入未完成，已加入 ${added} 题；请重试剩余内容`)
+  } finally {
+    adding.value = false
   }
-  const added = await basket.addMany(qs)
-  if (added > 0) items.forEach((it) => incrItemUsed(it.id).catch(() => {}))
 }
 
 /** 顶栏「当前节点入试题栏」（跟随左树高亮节点）。 */
@@ -553,15 +531,14 @@ function addActiveNodeToBasket() {
 // —— override 编辑对话框 ——
 const editVisible = ref(false)
 const editing = ref(false)
-const editItem = ref<ShelfItemVO | null>(null)
+const editItem = ref<ShelfReadingItem | null>(null)
 const editStem = ref('')
 const originalStem = ref<string | null>(null)
 
-function openEdit(it: ShelfItemVO) {
+function openEdit(it: ShelfReadingItem) {
   editItem.value = it
   editStem.value = it.override?.stem ?? itemStemText(it) ?? ''
-  const q = origQ(it)
-  originalStem.value = q?.stemTextContent ?? q?.stemText ?? null
+  originalStem.value = it.originalStemText ?? null
   editVisible.value = true
 }
 
@@ -577,14 +554,17 @@ async function submitEdit() {
   try {
     const override = { ...(it.override ?? {}), stem }
     await updateItem(it.id, { override })
-    it.override = override
+    if (editItem.value !== it || bookId.value !== it.bookId) return
+    await reader.refreshItem(it)
+    if (editItem.value !== it || bookId.value !== it.bookId) return
     ElMessage.success('已修改（仅本书生效，题库原题不变）')
     editVisible.value = false
   } catch (e) {
+    if (editItem.value !== it || bookId.value !== it.bookId) return
     console.warn('[book] override 保存失败:', e)
     ElMessage.error('保存失败')
   } finally {
-    editing.value = false
+    if (editItem.value === it && bookId.value === it.bookId) editing.value = false
   }
 }
 
@@ -600,24 +580,28 @@ async function restoreOriginal() {
   } catch {
     return
   }
+  if (editItem.value !== it || bookId.value !== it.bookId) return
   editing.value = true
   try {
-    await updateItem(it.id, { override: {} as never })
-    it.override = null
+    await updateItem(it.id, { override: {} })
+    if (editItem.value !== it || bookId.value !== it.bookId) return
+    await reader.refreshItem(it)
+    if (editItem.value !== it || bookId.value !== it.bookId) return
     ElMessage.success('已还原')
     editVisible.value = false
   } catch (e) {
+    if (editItem.value !== it || bookId.value !== it.bookId) return
     console.warn('[book] 还原失败:', e)
     ElMessage.error('还原失败')
   } finally {
-    editing.value = false
+    if (editItem.value === it && bookId.value === it.bookId) editing.value = false
   }
 }
 
 function goShelf() {
   router.push('/bookshelf')
 }
-function viewInBank(it: ShelfItemVO) {
+function viewInBank(it: ShelfReadingItem) {
   if (it.questionId) router.push(`/question/detail/${it.questionId}`)
 }
 
@@ -638,10 +622,14 @@ function openExportDialog() {
 }
 
 async function doExportBook() {
+  if (exporting.value) return
+  const id = bookId.value
+  const version = bookViewVersion
   exporting.value = true
   exportResult.value = null
   try {
-    const res = await exportBook(bookId, isTextbook.value ? {} : { withAnswers: exportWithAnswers.value })
+    const res = await exportBook(id, isTextbook.value ? {} : { withAnswers: exportWithAnswers.value })
+    if (bookViewVersion !== version) return
     exportResult.value = res
     ElMessage.success(`已生成 PDF${res.pages ? `（${res.pages} 页）` : ''}`)
     if (res.url) window.open(res.url, '_blank')
@@ -649,7 +637,7 @@ async function doExportBook() {
     console.warn('[book] 导出失败:', e)
     /* http 拦截器已弹错，此处静默 */
   } finally {
-    exporting.value = false
+    if (bookViewVersion === version) exporting.value = false
   }
 }
 
@@ -657,14 +645,21 @@ function openExportUrl() {
   if (exportResult.value?.url) window.open(exportResult.value.url, '_blank')
 }
 
-onMounted(async () => {
-  loadCurrentSpecial()
-  await load()
-  // 从备课台「书籍章节」材料卡跳入：?nodeId= 直接锚定该讲/节
-  const qNode = route.query.nodeId ? String(route.query.nodeId) : ''
-  if (qNode && nodeById.value[qNode]) goToNode(qNode)
+watch(bookId, load, { immediate: true })
+watch(() => Object.values(pages.value).map((state) => [state.pageNum, state.loading, state.error]), async () => {
+  await nextTick()
+  setupObserver()
+  refreshHeadings()
 })
-onBeforeUnmount(() => io?.disconnect())
+watch(() => route.query.nodeId, (value) => {
+  const id = String(value ?? '')
+  if (nodeById.value[id]) void goToNode(id)
+})
+onMounted(loadCurrentSpecial)
+onBeforeUnmount(() => {
+  bookViewVersion++
+  clearViewEffects()
+})
 </script>
 
 <template>
@@ -679,7 +674,7 @@ onBeforeUnmount(() => io?.disconnect())
         <template v-if="currentSpecial">正在备课：<b>{{ currentSpecial.name }}</b></template>
         <template v-else>未选择专项</template>
       </span>
-      <el-button size="small" type="primary" plain @click="openExportDialog">导出本书</el-button>
+      <el-button size="small" type="primary" plain :disabled="!book" @click="openExportDialog">导出本书</el-button>
     </div>
 
     <!-- 导出本书 PDF 对话框 -->
@@ -741,7 +736,7 @@ onBeforeUnmount(() => io?.disconnect())
           <span class="tname">{{ f.node.name }}</span>
           <span v-if="f.questionCount" class="cnt">{{ f.questionCount }}</span>
         </div>
-        <div v-if="!flatNodes.length && !loading" class="tree-empty">这本书还没有目录</div>
+        <div v-if="!flatNodes.length && !loading && !loadError" class="tree-empty">这本书还没有目录</div>
       </div>
 
       <!-- 右内容（连续文档流） -->
@@ -755,7 +750,7 @@ onBeforeUnmount(() => io?.disconnect())
             </template>
           </span>
           <span class="crumb-ops">
-            <el-button size="small" type="success" plain class="crumb-pick" @click="addActiveNodeToBasket">＋ 当前节点入试题栏</el-button>
+            <el-button size="small" type="success" plain class="crumb-pick" :loading="adding" @click="addActiveNodeToBasket">＋ 当前节点入试题栏</el-button>
             <el-button size="small" type="primary" plain class="crumb-pick" @click="pickNode">＋ 当前节点入专项</el-button>
           </span>
         </div>
@@ -776,8 +771,7 @@ onBeforeUnmount(() => io?.disconnect())
               </span>
             </h1>
 
-            <!-- 讲正文（懒挂载） -->
-            <template v-if="isActive(sec.node.id)">
+            <!-- 节点标题常驻，正文按可见节点分页读取。 -->
               <template v-for="b in sec.body" :key="b.key">
                 <!-- 分组小标题：知识点(lv1)/题型(lv2)/更深(lv3) -->
                 <component
@@ -796,6 +790,21 @@ onBeforeUnmount(() => io?.disconnect())
                   </span>
                 </component>
 
+                <div
+                  v-else-if="b.t === 'page'"
+                  class="node-page"
+                  :data-load-node="b.node!.id"
+                  :style="{ minHeight: pages[b.node!.id]?.pageNum ? '56px' : `${Math.min(b.node!.itemCount, 20) * 130}px` }"
+                >
+                  <el-button
+                    :loading="pages[b.node!.id]?.loading"
+                    @click="reader.loadNode(b.node!.id, true)"
+                  >{{ pages[b.node!.id]?.error ? '加载失败，重试' : pages[b.node!.id]?.pageNum ? '加载更多' : '加载正文' }}</el-button>
+                  <span v-if="pages[b.node!.id]?.pageNum" class="node-progress">
+                    {{ pages[b.node!.id].rows.length }} / {{ pages[b.node!.id].total }} 项
+                  </span>
+                </div>
+
                 <!-- 讲解正文（书体散文，含【注意】等） -->
                 <div v-else-if="b.t === 'explain'" class="explain">
                   <div v-if="b.item?.explain?.title" class="explain-hd">{{ b.item.explain.title }}</div>
@@ -805,17 +814,13 @@ onBeforeUnmount(() => io?.disconnect())
                 </div>
 
                 <!-- 题目（题号=题干剥出的原书小号，无则留空；正文；操作悬浮嵌入） -->
-                <div v-else class="q" :class="{ edited: isEdited(b.item!) }">
+                <div v-else-if="b.t === 'question'" class="q" :class="{ edited: isEdited(b.item!) }">
                   <span class="q-no">{{ qr(b.item)?.noLabel }}</span>
                   <div class="q-body">
                     <div class="q-main prose">
-                      <QuestionBlockRender v-if="qr(b.item)?.blockDoc" :doc="qr(b.item)!.blockDoc!" />
+                      <span v-if="b.item!.questionMissing" class="missing-question">原题已失效，无法加入试题栏</span>
+                      <QuestionBlockRender v-else-if="qr(b.item)?.blockDoc" :doc="qr(b.item)!.blockDoc!" />
                       <QuestionContent v-else :text="qr(b.item)?.stemText ?? null" :img-url="qr(b.item)?.stemImg ?? null" />
-                    </div>
-                    <div v-if="itemOptions(b.item!)" class="q-opts">
-                      <span v-for="(op, i) in itemOptions(b.item!)" :key="i" class="opt">
-                        <b>{{ optLetters[i] }}.</b> {{ op }}
-                      </span>
                     </div>
                   </div>
                   <span v-if="isEdited(b.item!)" class="q-flag">本书已修改</span>
@@ -832,22 +837,21 @@ onBeforeUnmount(() => io?.disconnect())
                       v-if="b.item!.questionId"
                       size="small"
                       type="success"
-                      :disabled="inBasket(b.item!.questionId)"
+                      :disabled="adding || b.item!.questionMissing || inBasket(b.item!)"
                       @click="addToBasket(b.item!)"
-                    >{{ inBasket(b.item!.questionId) ? '✓ 已在试题栏' : '＋ 试题栏' }}</el-button>
+                    >{{ inBasket(b.item!) ? '✓ 已在试题栏' : '＋ 试题栏' }}</el-button>
                     <el-button size="small" type="primary" @click="pick({ questionId: b.item!.questionId ?? undefined }, b.item!.id)">＋ 入专项</el-button>
                     <el-button v-if="canEdit" size="small" @click="openEdit(b.item!)">✎ 改题</el-button>
                     <el-button v-if="b.item!.questionId" size="small" text @click="viewInBank(b.item!)">原题</el-button>
                   </div>
                 </div>
               </template>
-            </template>
-            <div v-else class="sec-ph" :style="{ height: sec.estH + 'px' }">
-              <span class="sec-ph-tip">滚动到此加载…</span>
-            </div>
           </section>
 
-          <el-empty v-if="!sections.length && !loading" description="这本书还没有内容" />
+          <el-empty v-if="loadError" description="讲义加载失败">
+            <el-button type="primary" @click="load">重试</el-button>
+          </el-empty>
+          <el-empty v-else-if="!sections.length && !loading" description="这本书还没有内容" />
         </div>
       </div>
     </div>
@@ -880,6 +884,20 @@ onBeforeUnmount(() => io?.disconnect())
 </template>
 
 <style scoped>
+.node-page {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 12px;
+  padding-top: 16px;
+}
+.node-progress {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+.missing-question {
+  color: var(--el-color-danger);
+}
 .book-page {
   max-width: 1180px;
   margin: 0 auto;
@@ -1313,29 +1331,6 @@ onBeforeUnmount(() => io?.disconnect())
   /* 顶部右侧给常驻题型标签 / 悬浮操作条留出空档，避免压住首行题干 */
   padding-right: 58px;
 }
-.q-opts {
-  margin-top: 7px;
-  display: grid;
-  /* 每选项独立成块，最多两列（短选项 A B / C D）；窄屏自动收成单列。
-     min(100%, 240px) 保证内容窄于 240px 时也退成单列，永不把 ABCD 挤成一行行文。 */
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
-  gap: 6px 24px;
-  font-size: 15px;
-  color: #1f2937;
-}
-/* 选项块级化：字母悬挂 + 正文换行对齐；长选项整块内换行不破版、不溢出栅格。 */
-.opt {
-  display: flex;
-  align-items: baseline;
-  gap: 5px;
-  min-width: 0;
-  line-height: 1.7;
-  overflow-wrap: anywhere;
-}
-.opt b {
-  flex: none;
-  color: var(--bk-teal-deep);
-}
 /* 标签组：右上角，角色徽标 + 题型标签横排 */
 .q-tags {
   position: absolute;
@@ -1409,18 +1404,6 @@ onBeforeUnmount(() => io?.disconnect())
   opacity: 1;
   transform: translateY(0);
   pointer-events: auto;
-}
-
-/* 懒挂载占位 */
-.sec-ph {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.sec-ph-tip {
-  font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  font-size: 12px;
-  color: #c3ccc9;
 }
 
 /* 还原对话框内的原题回看 */

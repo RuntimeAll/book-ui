@@ -15,6 +15,7 @@ import {
   type FreeTagVo,
 } from '@/api/question'
 import { typesetPaperPreview } from '@/utils/mathjax'
+import { getExamPaperDetail } from '@/api/paper'
 import { exportPaperToPdf } from '@/utils/pdf-export'
 import { proxyImage } from '@/utils/image-proxy'
 import { parseBlockDoc, type QuestionBlockDoc } from '@/utils/blockSchema'
@@ -28,6 +29,10 @@ const props = defineProps<{
   paperName: string
   // PRD-A-013 T2 — 雪花 ID string[]
   ids: string[]  // basket 提供的题目 id 列表（入参顺序 = 显示顺序）
+  /** 完整卷内快照或工作台实例，传入时不按原题 ID 回查。 */
+  sourceQuestions?: QuestionDetail[]
+  suggestTime?: number
+  totalScore?: number
   /** PRD-A-014 T2 — 整卷导出时传卷 ID（可选，自选题集不传） */
   paperId?: string
   /** 打开时的初始"显示答案"勾选态（可选，默认 false）— Wave2b 工作台右栏联动 */
@@ -96,6 +101,16 @@ function analyzeDocOf(q: QuestionDetail): QuestionBlockDoc | null {
 function stemTextOf(q: QuestionDetail): string | null {
   const t = q.stemTextContent || q.stemText
   return t && t.trim().length > 0 ? t : null
+}
+
+function answerTextOf(q: QuestionDetail): string | null {
+  const text = q.answerTextContent ?? q.answer
+  return text?.trim() ? text : null
+}
+
+function analyzeTextOf(q: QuestionDetail): string | null {
+  const text = q.analyzeTextContent ?? q.explain
+  return text?.trim() ? text : null
 }
 
 /** 手机号脱敏 138****1234 */
@@ -183,8 +198,7 @@ function groupByFreeTag(qs: QuestionDetail[]): { tagName: string; items: Questio
 // 按卷内大题分节切分（grouping=false 场景）：sections 的 count 顺序切段、组名=title；
 // title 支持 "父::子" 两层目录编码（备课卷知识点→考点细分），拆出 parent 供模板渲染一级标题；
 // 无 sections / 单节 / count 总和对不上题数 → 退回单组平铺（防御 BE 数据漂移）
-function splitBySections(qs: QuestionDetail[]): { tagName: string; parent?: string; items: QuestionDetail[] }[] {
-  const secs = props.sections ?? []
+function splitBySections(qs: QuestionDetail[], secs = props.sections ?? []): { tagName: string; parent?: string; items: QuestionDetail[] }[] {
   const total = secs.reduce((sum, s) => sum + (s.count || 0), 0)
   if (secs.length <= 1 || total !== qs.length) {
     return [{ tagName: '全部', items: qs }]
@@ -225,6 +239,12 @@ function difficultyStars(q: QuestionDetail): string {
   return d >= 1 && d <= 4 ? '★'.repeat(d) : ''
 }
 
+function paperScore(q: QuestionDetail): number | undefined {
+  if ('_score' in q && typeof q._score === 'number') return q._score
+  if ('pqScore' in q && typeof q.pqScore === 'number') return q.pqScore
+  return undefined
+}
+
 // 全卷连续序号 — 给每 group items 顺次编号（不是组内编号）
 function globalIndex(groupIdx: number, itemIdx: number): number {
   let count = 0
@@ -239,7 +259,9 @@ function globalIndex(groupIdx: number, itemIdx: number): number {
 // 4. 按 freeTag 分组
 // 5. nextTick + typesetPaperPreview（等 DOM 渲染完再 typeset MathJax）
 // 6. loading=false
+let loadSequence = 0
 async function loadAndRender() {
+  const sequence = ++loadSequence
   if (!props.ids || props.ids.length === 0) {
     questions.value = []
     groups.value = []
@@ -247,13 +269,26 @@ async function loadAndRender() {
   }
   loading.value = true
   try {
-    const raw = await questionListByIds(props.ids)
-    const list: QuestionDetail[] = Array.isArray(raw) ? raw : []
-    questions.value = reorderByIds(list, props.ids)
+    let list: QuestionDetail[]
+    let sections = props.sections
+    if (props.sourceQuestions !== undefined) {
+      list = props.sourceQuestions.map((question) => ({ ...question }))
+      if (list.length !== props.ids.length) throw new Error('导出数据不完整')
+    } else if (props.paperId) {
+      const detail = await getExamPaperDetail(props.paperId)
+      list = detail.sections.flatMap((section) => section.questions)
+      if (list.length !== detail.questionCount) throw new Error('试卷快照不完整')
+      sections = detail.sections.map((section) => ({ title: section.title, count: section.questions.length }))
+    } else {
+      list = reorderByIds(await questionListByIds(props.ids), props.ids)
+      if (list.length !== props.ids.length) throw new Error('导出题目不完整')
+    }
+    if (sequence !== loadSequence || !props.visible) return
+    questions.value = list
     // grouping=false（整卷导出）→ 有 sections 按卷内大题切分（知识点分层），否则单组平铺；
     // 模板 groups.length>1 才显组标题，单组不会冒"其他"头
     if (props.grouping === false) {
-      groups.value = splitBySections(questions.value)
+      groups.value = splitBySections(questions.value, sections)
     } else {
       groups.value = groupByFreeTag(questions.value)
     }
@@ -262,34 +297,26 @@ async function loadAndRender() {
       await typesetPaperPreview(previewRoot.value)
     }
   } catch (e) {
+    if (sequence !== loadSequence) return
     console.error('[PaperPreview] load failed', e)
     ElMessage.error('试题数据加载失败，请稍后重试')
     questions.value = []
     groups.value = []
   } finally {
-    loading.value = false
+    if (sequence === loadSequence) loading.value = false
   }
 }
 
 // visible 由 false → true 触发 fetch；true → false 不清数据（保留以便下次打开省一次 fetch — 但 ids 变了仍重 fetch）
-const lastLoadedIds = ref<string>('')
 watch(
   () => props.visible,
   async (vis) => {
-    if (!vis) return
+    if (!vis) { loadSequence++; loading.value = false; return }
     // 打开时同步外部传入的初始勾选态（外部未传则保持内部已有值）
     if (props.initialShowAnswer !== undefined) showAnswer.value = props.initialShowAnswer
     if (props.initialShowExplain !== undefined) showExplain.value = props.initialShowExplain
     // 标题（=导出文件名）每次打开重置为卷名，用户可在 header 直接改
     fileName.value = (props.paperName || '').trim() || '未命名草稿'
-    const idsKey = props.ids.join(',')
-    if (idsKey === lastLoadedIds.value && questions.value.length > 0) {
-      // 同一组 ids 已加载过 — 跳过 fetch，只重 typeset 一次（防上次切走 MathJax 残留）
-      await nextTick()
-      if (previewRoot.value) await typesetPaperPreview(previewRoot.value)
-      return
-    }
-    lastLoadedIds.value = idsKey
     await loadAndRender()
   },
 )
@@ -297,7 +324,7 @@ watch(
 // 段⑤ jsPDF + html2canvas 工艺管线（开发组长波 3 自接手 — utils/pdf-export.ts）
 // 工艺铁律：① await MathJax typeset ② await all <img> onload ③ html2canvas scale=2 ④ jsPDF a4 分页 ⑤ save
 async function handleExportPdf() {
-  if (exporting.value) return
+  if (exporting.value || loading.value) return
   if (!previewRoot.value) {
     ElMessage.error('预览未就绪，无法导出')
     return
@@ -365,6 +392,8 @@ async function handleExportPdf() {
             :disabled="exporting"
           />
           <span class="pp-date">{{ today }}</span>
+          <span v-if="suggestTime">{{ suggestTime }} 分钟</span>
+          <span v-if="totalScore !== undefined">{{ totalScore }} 分</span>
         </div>
         <div class="pp-header-right">
           <el-checkbox v-model="showAnswer">显示答案</el-checkbox>
@@ -401,6 +430,11 @@ async function handleExportPdf() {
         >{{ watermarkText }}</span>
       </div>
       <div ref="previewRoot" class="paper-preview-content">
+        <h1 v-if="groups.length" class="pp-paper-title">{{ fileName }}</h1>
+        <div v-if="groups.length && (suggestTime || totalScore !== undefined)" class="pp-paper-meta">
+          <span v-if="suggestTime">答题时间：{{ suggestTime }} 分钟</span>
+          <span v-if="totalScore !== undefined">总分：{{ totalScore }} 分</span>
+        </div>
         <div v-if="!loading && groups.length === 0" class="pp-empty">
           暂无试题数据
         </div>
@@ -416,13 +450,14 @@ async function handleExportPdf() {
           <h3 v-if="groups.length > 1" class="pp-group-title" :class="{ 'pp-group-title--sub': group.parent }">{{ group.tagName }}</h3>
           <div
             v-for="(q, qIdx) in group.items"
-            :key="q.id"
+            :key="q.paperQuestionId ?? q.entryKey ?? `${q.id}:${q.sourceItemId ?? ''}:${gIdx}:${qIdx}`"
             class="pp-question"
           >
             <!-- 题号（全卷连续序号，不显示题型标签）= flex 行左列 -->
             <span class="pp-q-no">{{ globalIndex(gIdx, qIdx) }}.<template v-if="showDifficulty && difficultyStars(q)"><span class="pp-q-diff">{{ difficultyStars(q) }}</span></template></span>
             <!-- 内容列（题干/答案/解析）= flex 行右列，与题号顶对齐，消除号与题干错位 -->
             <div class="pp-q-content">
+            <div v-if="paperScore(q) !== undefined" class="pp-q-score">（{{ paperScore(q) }} 分）</div>
 
             <!-- ── 纯图模式（PRD §0.4 misikt 真站铁证，当前默认）──────────────── -->
             <!-- 🟢 hotfix-4：图 URL 经 proxyImage() 改写走 BE /teacher/image-proxy 同源化（PRD §10.2 坑 #12）。 -->
@@ -467,7 +502,12 @@ async function handleExportPdf() {
                   alt="答案图"
                   class="ans-img"
                 />
-                <span v-else class="placeholder">（无答案图）</span>
+                <QuestionContent
+                  v-else-if="answerTextOf(q)"
+                  :text="answerTextOf(q)"
+                  class="pp-q-textonly"
+                />
+                <span v-else class="placeholder">（暂无答案）</span>
               </div>
 
               <!-- 解析 — checkbox 控显隐。PRD-C-204：结构化 analyzeBlockJson 优先(选项分析/小问/步骤拆块),否则回落解析图 -->
@@ -484,7 +524,12 @@ async function handleExportPdf() {
                   alt="解析图"
                   class="exp-img"
                 />
-                <span v-else class="placeholder">（无解析图）</span>
+                <QuestionContent
+                  v-else-if="analyzeTextOf(q)"
+                  :text="analyzeTextOf(q)"
+                  class="pp-q-textonly"
+                />
+                <span v-else class="placeholder">（暂无解析）</span>
               </div>
             </template>
 
@@ -498,6 +543,25 @@ async function handleExportPdf() {
 </template>
 
 <style scoped>
+.pp-paper-title {
+  margin: 0 0 16px;
+  font-size: 22px;
+  line-height: 1.4;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+.pp-paper-meta {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  margin-bottom: 20px;
+  font-size: 14px;
+}
+.pp-q-score {
+  margin-bottom: 4px;
+  font-size: 12px;
+}
 /* 🔴 header 固定顶部 + 正文独立滚动：导出控制台永远可见，长卷不再把按钮顶出视野 */
 .paper-preview-dialog {
   display: flex;

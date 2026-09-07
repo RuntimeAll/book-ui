@@ -18,97 +18,36 @@
  *   - 大题标题 ✏️ 重命名：inline 编辑，保存时带 sections[] 持久化
  *   - 「+ 添加分类」置灰（BE v1 未实现新建 section）
  */
-import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { ref, computed, onBeforeUnmount, watch, nextTick } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 // PRD-A-010 T3：题卡内的 Top/Bottom/Delete/InfoFilled/Refresh 图标随 WorkbenchCard
 // 子组件迁出，父组件仅保留顶栏 ArrowLeft + 大题重命名 Edit。
 import { ArrowLeft, Edit } from '@element-plus/icons-vue'
 import Sortable from 'sortablejs'
-import {
-  getPaperDetail,
-  type PaperDetailVo,
-  type PaperSourceQuestion,
-  type QuestionItem,
-} from '@/api/question/index'
-import {
-  createExamPaper,
-  updateExamPaper,
-  type UpdatePaperQuestion,
-  type UpdatePaperSection,
-} from '@/api/paper/index'
+import { type QuestionItem } from '@/api/question/index'
 import PaperPreview from '@/components/business/PaperPreview/index.vue'
 import ReplaceQuestionDialog from './components/ReplaceQuestionDialog.vue'
 import WorkbenchCard from './components/WorkbenchCard.vue'
-import { useQuestionBasket } from '@/composables/useQuestionBasket'
-import { useUserStore } from '@/store/user'
+import { usePaperWorkbench, rowKey, type WorkbenchEditRow as EditRow } from '@/composables/usePaperWorkbench'
 import { useDictStore, DICT_QUESTION_TYPE } from '@/store/dict'
-import { getCurrentUser } from '@/api/user'
 
 // ── 路由 ────────────────────────────────────────────────────────────────────
-const route = useRoute()
 const router = useRouter()
-const paperId = computed(() => route.params.id as string | undefined)
-const isEditMode = computed(() => !!paperId.value)
+const {
+  isEditMode, detailLoading, editRows, paperName, suggestTime,
+  defaultSectionId, sectionNameMap, canManage, saving, savedPaperId, draftError,
+  loadError, handleSave, initialize, addBasketToPaper, pendingCreate, editsLocked, clearDraft,
+} = usePaperWorkbench()
 
 // ── 试题栏（新建态数据源）────────────────────────────────────────────────────
-const basket = useQuestionBasket()
 
 // 🔴 PRD-003 D7：备课语境（prepContext）+ 卷位绑定整套退役——组卷回归纯日常组卷，
 //   课次材料统一走课程计划页「本课材料」的专项材料位。
 
-// ── 用户 / owner 判定 ────────────────────────────────────────────────────────
-const userStore = useUserStore()
-const isOwner = computed(() => {
-  if (!isEditMode.value) return true // 新建态 = 自己创建，不需 owner 校验
-  const uid = userStore.userInfo?.id
-  const createBy = paperDetail.value?.createBy
-  if (uid == null || createBy == null) return false
-  return String(createBy) === String(uid)
-})
-
-// ── 试卷详情（编辑态）────────────────────────────────────────────────────────
-const paperDetail = ref<PaperDetailVo | null>(null)
-const detailLoading = ref(false)
-
-async function loadPaperDetail() {
-  if (!paperId.value) return
-  detailLoading.value = true
-  paperDetail.value = null
-  try {
-    const res = await getPaperDetail(paperId.value)
-    if (res && (res as { paperId?: unknown }).paperId) {
-      paperDetail.value = res as PaperDetailVo
-      buildEditRows()
-    } else {
-      ElMessage.warning('试卷数据加载失败')
-    }
-  } catch (e) {
-    console.warn('[workbench] loadPaperDetail failed', e)
-    ElMessage.warning('试卷数据加载失败（接口需登录态）')
-  } finally {
-    detailLoading.value = false
-  }
-}
-
-// ── EditRow（统一编辑行，同时承载新建/编辑两态）────────────────────────────
-// PRD-A-013 T2 — _sectionId 雪花 string；空态用 '' 不用 0。
-interface EditRow extends PaperSourceQuestion {
-  _sectionId: string
-  _score: number
-  _showExplain: boolean // 解析 toggle（本地视图态）
-  _replacing: boolean   // 换一题 loading
-}
-
-const editRows = ref<EditRow[]>([])
-const paperName = ref('未命名草稿')
-const defaultSectionId = ref<string>('')
-const saving = ref(false)
-
 // ── 大题分组的 section 信息（重命名用）──────────────────────────────────────
 // key = sectionId，value = 当前显示名称（初始从 paperDetail sections 读入）
 // PRD-A-013 T2 — sectionId 雪花 string
-const sectionNameMap = ref<Map<string, string>>(new Map())
 // 当前处于内联编辑的 sectionId（null = 不在编辑）
 const editingSectionId = ref<string | null>(null)
 // 内联编辑中的临时值
@@ -141,50 +80,8 @@ function cancelRenameSection() {
 const paperQuestionIds = computed<string[]>(() => editRows.value.map((r) => r.id))
 
 const totalScore = computed<number>(() =>
-  editRows.value.reduce((sum, r) => sum + (Number(r._score) || 0), 0),
+  editRows.value.reduce((sum, r) => sum + Math.round(r._score * 100), 0) / 100,
 )
-
-// 新建态：从 basket 构建 editRows
-function buildEditRowsFromBasket() {
-  editRows.value = basket.items.value.map((q) => ({
-    ...(q as PaperSourceQuestion),
-    // PRD-A-013 T2 — 雪花空态 ''
-    _sectionId: '',
-    _score: Number(q.score ?? 0),
-    _showExplain: false,
-    _replacing: false,
-  }))
-}
-
-// 编辑态：从 detail 构建 editRows + 初始化 sectionNameMap
-function buildEditRows() {
-  const sections = paperDetail.value?.sections ?? []
-  if (sections.length > 0) defaultSectionId.value = sections[0].sectionId
-
-  // 初始化大题名称 map（PaperSectionVo 字段名 = title）
-  // PRD-A-013 T2 — sectionId 雪花 string
-  const nameMap = new Map<string, string>()
-  sections.forEach((sec) => {
-    nameMap.set(sec.sectionId, sec.title || `大题${sec.sectionId}`)
-  })
-  sectionNameMap.value = nameMap
-
-  const rows: EditRow[] = []
-  sections.forEach((sec) => {
-    ;(sec.questions || []).forEach((q) => {
-      rows.push({
-        ...q,
-        _sectionId: sec.sectionId,
-        _score: Number(q.pqScore ?? q.score ?? 0),
-        _showExplain: false,
-        _replacing: false,
-      })
-    })
-  })
-  rows.sort((a, b) => Number(a.sortNum ?? a.sort ?? 0) - Number(b.sortNum ?? b.sort ?? 0))
-  editRows.value = rows
-  paperName.value = paperDetail.value?.paperName || ''
-}
 
 // ── 大题分组（按题型分组，全卷连续序号）──────────────────────────────────────
 interface SectionGroup {
@@ -307,7 +204,7 @@ const freesortGroups = computed(() => {
         sectionId: '',
         sectionName: defaultName,
         items: editRows.value.map((r, i) => ({
-          id: r.id,
+          id: rowKey(r),
           globalIndex: i + 1,
           editRowIndex: i,
           sectionId: '',
@@ -327,7 +224,7 @@ const freesortGroups = computed(() => {
       groupOrder.push(sid)
       groupMap.set(sid, [])
     }
-    groupMap.get(sid)!.push({ id: r.id, globalIndex: i + 1, editRowIndex: i, sectionId: sid })
+    groupMap.get(sid)!.push({ id: rowKey(r), globalIndex: i + 1, editRowIndex: i, sectionId: sid })
   })
 
   return groupOrder.map((sid) => ({
@@ -385,20 +282,24 @@ function initSortable() {
           )
 
           const newOrder: number[] = []
+          const newSections = new Map<number, string>()
           allContainers.forEach((container) => {
+            const groupIndex = Number(container.getAttribute('data-group-idx'))
+            const sectionId = freesortGroups.value[groupIndex]?.sectionId ?? ''
             container
               .querySelectorAll<HTMLElement>('[data-edit-row-index]')
               .forEach((cell) => {
                 const idx = Number(cell.getAttribute('data-edit-row-index'))
                 newOrder.push(idx)
+                newSections.set(idx, sectionId)
               })
           })
 
-          if (newOrder.length !== editRows.value.length) return
+          if (newOrder.length !== editRows.value.length || new Set(newOrder).size !== newOrder.length) return
 
           // 按 newOrder 重排 editRows
           const oldRows = [...editRows.value]
-          editRows.value = newOrder.map((i) => oldRows[i])
+          editRows.value = newOrder.map((i) => ({ ...oldRows[i], _sectionId: newSections.get(i) ?? '' }))
 
           // 强制干净重渲染：递增 renderKey → freesort group :key 变化 → remount → sortable 重绑
           freesortRenderKey.value++
@@ -483,7 +384,7 @@ function onReplaceSelect(picked: QuestionItem) {
   if (idx < 0 || !origRow) return
 
   const newRow: EditRow = {
-    ...(picked as PaperSourceQuestion),
+    ...picked,
     _sectionId: origRow._sectionId,
     _score: origRow._score,        // 保留原分值
     _showExplain: false,
@@ -506,35 +407,21 @@ function scrollToQuestion(n: number) {
 }
 
 function handleDetail(row: EditRow) {
-  // 存 cache 供详情页兜底
-  try {
-    const cacheKey = 'book-ui:question-cache-by-id'
-    const existing = JSON.parse(localStorage.getItem(cacheKey) || '{}')
-    existing[String(row.id)] = row
-    localStorage.setItem(cacheKey, JSON.stringify(existing))
-  } catch (e) {
-    console.warn('[workbench] detail cache write failed', e)
-  }
+  // 卷内实例不得写入原题缓存；详情入口查看原题。
   router.push(`/question/detail/${row.id}`)
 }
 
 // ── 右栏状态 ────────────────────────────────────────────────────────────────
-const suggestTime = ref<number>(120)
 const showAnswer = ref(false)
 const showExplain = ref(false)
 const previewVisible = ref(false)
 
-// 编辑态加载后同步 suggestTime
-watch(paperDetail, (d) => {
-  if (d?.suggestTime) suggestTime.value = d.suggestTime
-})
-
 function handleTimeDecrease() {
-  if (suggestTime.value > 0) suggestTime.value -= 5
+  suggestTime.value = Math.max(1, suggestTime.value - 5)
 }
 
 function handleTimeIncrease() {
-  suggestTime.value += 5
+  suggestTime.value = Math.min(1440, suggestTime.value + 5)
 }
 
 // 继续挑题 → 跳题库
@@ -551,10 +438,7 @@ async function handleClearBasket() {
       cancelButtonText: '取消',
       type: 'warning',
     })
-    editRows.value = []
-    if (!isEditMode.value) {
-      await basket.clear()
-    }
+    await clearDraft()
   } catch {
     // 取消
   }
@@ -573,116 +457,21 @@ function handleExportPdf() {
 const exportQuestionIds = computed<string[]>(() => editRows.value.map((r) => r.id))
 const exportPaperName = computed(() => paperName.value.trim() || '未命名试卷')
 
-// ── 保存 / 创建 ──────────────────────────────────────────────────────────────
-async function handleSave() {
-  if (editRows.value.length === 0) {
-    ElMessage.warning('试卷至少需要 1 道题')
-    return
-  }
-  if (!paperName.value.trim()) {
-    ElMessage.warning('请输入试卷名称')
-    return
-  }
-  saving.value = true
-  try {
-    // sort = 拖拽后 editRows 位置 i+1（1-based 连续，拖拽单一数据源保证）
-    const questions: UpdatePaperQuestion[] = editRows.value.map((r, i) => ({
-      questionId: r.id,
-      sectionId: r._sectionId || defaultSectionId.value,
-      sort: i + 1,
-      score: Number(r._score) || 0,
-    }))
-
-    if (isEditMode.value) {
-      // 编辑态：updateExamPaper
-      // sections：仅发已有 sectionId 非空的重命名条目（BE v1 不支持新建 section）
-      const sections: UpdatePaperSection[] = []
-      let sortIdx = 0
-      sectionNameMap.value.forEach((name, sectionId) => {
-        sections.push({ sectionId, name, sort: ++sortIdx })
-      })
-
-      await updateExamPaper({
-        // PRD-A-013 T2 — paperId 雪花 string，禁 Number() 截尾；
-        // 编辑态由 isEditMode 守护 paperId 必存在，`!` 安全。
-        paperId: paperId.value!,
-        name: paperName.value.trim(),
-        questions,
-        suggestTime: suggestTime.value,
-        ...(sections.length > 0 ? { sections } : {}),
-      })
-      ElMessage.success('保存成功')
-      // 回查看态
-      router.push(`/papers/source/${paperId.value}`)
-    } else {
-      // 新建态：createExamPaper（不支持 sections，由 BE 自动建默认 section）
-      const result = await createExamPaper({
-        name: paperName.value.trim(),
-        questionIds: editRows.value.map((r) => r.id),
-      })
-      if (!result || !result.paperId) {
-        ElMessage.error('创建失败：服务器未返回试卷 ID')
-        return
-      }
-      await basket.clear()
-      ElMessage.success(`已创建试卷《${paperName.value.trim()}》— ${result.questionCount} 题`)
-      router.push(`/papers/source/${result.paperId}`)
-    }
-  } catch (e: unknown) {
-    const msg = (e as { message?: string })?.message || '操作失败，请稍后重试'
-    ElMessage.error(`操作失败：${msg}`)
-    console.warn('[workbench] save/create failed', e)
-  } finally {
-    saving.value = false
-  }
-}
-
 function goBack() {
   router.back()
 }
-
-// ── 初始化 ───────────────────────────────────────────────────────────────────
-onMounted(async () => {
-  if (!userStore.userInfo) {
-    try {
-      const info = await getCurrentUser()
-      if (info) userStore.setUserInfo(info)
-    } catch (e) {
-      console.warn('[workbench] getCurrentUser 兜底失败', e)
-    }
-  }
-
-  if (isEditMode.value) {
-    await loadPaperDetail()
-  } else {
-    // 新建态：从 basket 同步
-    buildEditRowsFromBasket()
-    // PRD-011：老缓存进栏的题可能缺 blockJson（书架旧映射/历史 LS）→ 补水回写后
-    // 由下面的 watch 自动重建行，图/选项网格恢复（「看图列式（瓶）」图丢根治）
-    void basket.hydrateMissingBlockJson()
-    // basket 变化时同步（SPA 内 basket 可能在题库页更新）
-    watch(
-      () => basket.items.value,
-      () => {
-        if (!isEditMode.value) buildEditRowsFromBasket()
-      },
-      { deep: true },
-    )
-  }
-})
-
-// SPA 内路由 id 变化时重新加载
-watch(paperId, async (newId) => {
-  if (newId) {
-    await loadPaperDetail()
-  } else {
-    buildEditRowsFromBasket()
-  }
-})
 </script>
 
 <template>
   <div class="workbench-page">
+    <el-alert v-if="draftError" :title="draftError" type="error" :closable="false" />
+    <el-alert v-if="loadError" :title="loadError" type="error" :closable="false">
+      <el-button link @click="initialize">重新载入</el-button>
+    </el-alert>
+    <el-alert v-if="savedPaperId" title="试卷已保存，正在等待读回确认或完成收尾" type="success" :closable="false">
+      <router-link :to="`/papers/source/${savedPaperId}`">打开已保存试卷</router-link>
+    </el-alert>
+    <el-alert v-else-if="pendingCreate" title="创建结果尚未确认，重试将继续提交已冻结的同一份试卷" type="warning" :closable="false" />
     <!-- 顶部导航栏 -->
     <div class="workbench-topbar">
       <el-button link class="back-btn" @click="goBack">
@@ -693,6 +482,7 @@ watch(paperId, async (newId) => {
       <!-- 试卷标题行内编辑 -->
       <el-input
         v-model="paperName"
+        :disabled="editsLocked"
         placeholder="请输入试卷名称"
         class="title-input"
         size="default"
@@ -710,7 +500,7 @@ watch(paperId, async (newId) => {
     <!-- 两栏主体 -->
     <div class="workbench-body">
       <!-- ══ 左主栏 ══ -->
-      <div class="workbench-left">
+      <div class="workbench-left" :inert="editsLocked">
         <!-- loading -->
         <div v-if="detailLoading" class="wb-loading">
           <el-skeleton :rows="10" animated style="max-width: 100%;" />
@@ -742,7 +532,7 @@ watch(paperId, async (newId) => {
                  根节点保留 wb-q-N id 供 scrollToQuestion 定位）-->
             <WorkbenchCard
               v-for="{ row, globalIndex, editRowIndex } in group.rows"
-              :key="row.id"
+              :key="rowKey(row)"
               :row="row"
               :global-index="globalIndex"
               :edit-row-index="editRowIndex"
@@ -772,7 +562,7 @@ watch(paperId, async (newId) => {
             <!-- 题卡（同上抽 WorkbenchCard，按知识点分组复用同一子组件）-->
             <WorkbenchCard
               v-for="{ row, globalIndex, editRowIndex } in group.rows"
-              :key="row.id"
+              :key="rowKey(row)"
               :row="row"
               :global-index="globalIndex"
               :edit-row-index="editRowIndex"
@@ -793,7 +583,7 @@ watch(paperId, async (newId) => {
       <div class="workbench-right">
         <div class="right-panel">
           <!-- 上部可滚区：tabs + 题号块网格 + 继续挑题/清空 -->
-          <div class="right-scroll-area">
+          <div class="right-scroll-area" :inert="editsLocked">
           <!-- 分组 tabs（按题型 / 按知识点 / 自由排序）-->
           <el-tabs v-model="activeTab" class="right-tabs">
             <el-tab-pane label="按题型" name="type" />
@@ -919,6 +709,7 @@ watch(paperId, async (newId) => {
 
           <!-- 继续挑题 / 清空试题 -->
           <div class="right-action-row">
+            <el-button v-if="isEditMode" size="small" :disabled="saving || !!savedPaperId" @click="addBasketToPaper">从试题栏加题</el-button>
             <el-button class="continue-btn" size="small" @click="handleContinuePick">
               &lt; 继续挑题
             </el-button>
@@ -934,9 +725,9 @@ watch(paperId, async (newId) => {
             <div class="right-section">
               <div class="right-section-label">答题时间</div>
               <div class="time-ctrl">
-                <el-button size="small" circle @click="handleTimeDecrease">−</el-button>
+                <el-button size="small" circle :disabled="editsLocked" @click="handleTimeDecrease">−</el-button>
                 <span class="time-value">{{ suggestTime }}</span>
-                <el-button size="small" circle @click="handleTimeIncrease">+</el-button>
+                <el-button size="small" circle :disabled="editsLocked" @click="handleTimeIncrease">+</el-button>
                 <span class="time-unit">分钟</span>
               </div>
             </div>
@@ -965,12 +756,12 @@ watch(paperId, async (newId) => {
               class="action-btn primary-btn"
               type="primary"
               :loading="saving"
-              :disabled="!isOwner"
+              :disabled="!canManage"
               @click="handleSave"
             >
               <el-tooltip
-                v-if="!isOwner"
-                content="公共试卷不可编辑"
+                v-if="!canManage"
+                content="无权编辑此试卷"
                 placement="left"
               >
                 <span>保存修改</span>
@@ -985,7 +776,7 @@ watch(paperId, async (newId) => {
               :disabled="editRows.length === 0"
               @click="handleSave"
             >
-              创建试卷
+              {{ savedPaperId ? '继续确认已保存试卷' : pendingCreate ? '重试原提交' : '创建试卷' }}
             </el-button>
           </div><!-- /right-console -->
         </div>
@@ -998,6 +789,10 @@ watch(paperId, async (newId) => {
       :visible="previewVisible"
       :paper-name="exportPaperName"
       :ids="exportQuestionIds"
+      :source-questions="editRows"
+      :grouping="false"
+      :suggest-time="suggestTime"
+      :total-score="totalScore"
       :initial-show-answer="showAnswer"
       :initial-show-explain="showExplain"
       @update:visible="previewVisible = $event"
@@ -1574,7 +1369,13 @@ watch(paperId, async (newId) => {
 /* 操作行 */
 .right-action-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
+}
+
+.right-action-row :deep(.el-button) {
+  margin-left: 0;
+  flex: 1 1 100px;
 }
 
 .continue-btn,
@@ -1685,5 +1486,39 @@ watch(paperId, async (newId) => {
 .ps-actions .el-button {
   flex: 1;
   margin-left: 0;
+}
+
+@media (max-width: 760px) {
+  .workbench-topbar {
+    padding: 10px 12px;
+    flex-wrap: wrap;
+  }
+
+  .title-input {
+    order: 1;
+    flex-basis: 100%;
+    max-width: none;
+  }
+
+  .workbench-body {
+    flex-direction: column;
+  }
+
+  .workbench-left,
+  .workbench-right {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 12px;
+  }
+
+  .workbench-right {
+    position: static;
+    height: auto;
+    max-height: none;
+  }
+
+  .right-scroll-area {
+    flex: none;
+  }
 }
 </style>

@@ -7,13 +7,15 @@
  *
  * 抽离自第十二波前的 src/views/question/index.vue（模板行 766-892 / style 1265-1410）。
  */
-import { ref, reactive, nextTick, watch, onBeforeUnmount } from 'vue'
+import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import Sortable from 'sortablejs'
-import { ShoppingCart, Delete, DocumentAdd, Close, ZoomIn, Rank } from '@element-plus/icons-vue'
+
+import { ShoppingCart, Delete, DocumentAdd, Close, ZoomIn } from '@element-plus/icons-vue'
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
-import { getQuestionDetail, type QuestionItem } from '@/api/question/index'
+import { useBasketQuestionPreview } from '@/composables/useBasketQuestionPreview'
+import { parseBlockDoc } from '@/utils/blockSchema'
+import QuestionBlockRender from '@/components/business/QuestionBlockRender/index.vue'
 import { useDictStore, DICT_QUESTION_TYPE } from '@/store/dict'
 // 放大预览复用题库/组卷工作台共享题卡组件（actions=[] 关掉操作按钮，纯展示题干大图 + meta），不另造预览渲染。
 import QuestionCard from '@/components/business/QuestionCard/index.vue'
@@ -23,8 +25,6 @@ const basket = useQuestionBasket()
 const router = useRouter()
 const composing = ref(false)
 
-// Q 卡段③ — "去组卷"改为跳工作台路由（原 composeAndDownload 走 /papers/edit 老逻辑作废）。
-// 工作台读 basket.items.value，无需 paperDraft LS 中转。
 async function handleGoCompose() {
   if (basket.count.value === 0) {
     ElMessage.warning('试题栏为空，请先加题')
@@ -33,67 +33,21 @@ async function handleGoCompose() {
   composing.value = true
   try {
     basket.closeDialog()
-    await router.push('/question/compose')
+    await router.push('/papers/workbench')
   } finally {
     composing.value = false
   }
 }
 
-function handleClearBasket() {
-  basket.clear()
+async function handleClearBasket() {
+  try { await basket.clear() } catch { /* 状态层已显示错误。 */ }
 }
-
-// PRD-A-013 T2 — id 雪花 string
-function handleRemoveBasket(id: string) {
-  basket.remove(id)
+async function handleRemoveBasket(id: string) {
+  try { await basket.remove(id) } catch { /* 状态层已显示错误。 */ }
 }
-
-// ── PRD-A-017 批2e：试题栏可拖拽重排（复用 ArtifactPanel 的 sortablejs 范式）──
-//   手柄 .drag-handle 拖动 .basket-item；drop 后按新 DOM 顺序读各项 data-item-id → 调
-//   basket.reorder 回写顺序（落 LS，不只动 DOM）。dialog 关闭时列表 DOM 销毁 → 重开再 init。
-const listEl = ref<HTMLElement | null>(null)
-let sortable: Sortable | null = null
-
-function onBasketDrop() {
-  const root = listEl.value
-  if (!root) return
-  const orderedIds: string[] = []
-  root.querySelectorAll<HTMLElement>('[data-item-id]').forEach((el) => {
-    const id = el.dataset.itemId
-    if (id) orderedIds.push(id)
-  })
-  basket.reorder(orderedIds)
+async function refreshBasket(page?: number) {
+  try { await basket.syncFromServer(page) } catch { /* 面板展示错误。 */ }
 }
-
-function initBasketSortable() {
-  if (sortable || !listEl.value) return
-  sortable = Sortable.create(listEl.value, {
-    handle: '.drag-handle',
-    animation: 160,
-    ghostClass: 'basket-item-ghost',
-    chosenClass: 'basket-item-chosen',
-    draggable: '.basket-item',
-    onEnd: onBasketDrop,
-  })
-}
-
-// dialog 开 → 等列表渲染后 init；关 → 销毁（重开重建，避免持有已卸载节点）
-watch(
-  () => basket.dialogVisible.value,
-  (open) => {
-    if (open) {
-      void nextTick(() => initBasketSortable())
-    } else {
-      sortable?.destroy()
-      sortable = null
-    }
-  },
-)
-
-onBeforeUnmount(() => {
-  sortable?.destroy()
-  sortable = null
-})
 
 // PRD-C-204：题型标签读字典 SSOT
 const dict = useDictStore()
@@ -107,78 +61,8 @@ function getQuestionTypeTag(type: number): 'success' | 'warning' | 'info' | 'pri
   return dict.tagType(DICT_QUESTION_TYPE, type, 'info') as 'success' | 'warning' | 'info' | 'primary' | 'danger'
 }
 
-// ── 展开解析（用户 2026-06-04 拍板实现）：toggle 显示该题解析；item 自带 explainImg/explain 优先，
-//    无则懒加载 getQuestionDetail 补取（试题栏 item 来自列表，可能不含解析）──
-// PRD-A-013 T2 — key 雪花 string
-// 兼容富文本：img = 解析图 URL（misikt 老题），text = 解析文本（AI 入库题）
-const explainState = reactive<Record<string, { open: boolean; img: string; text: string; loading: boolean }>>({})
-
-async function toggleExplain(item: QuestionItem) {
-  const id = item.id
-  if (!explainState[id]) explainState[id] = { open: false, img: '', text: '', loading: false }
-  const st = explainState[id]
-  st.open = !st.open
-  if (st.open && !st.img && !st.text && !st.loading) {
-    const own = (item as { explainImg?: string }).explainImg
-    const ownText = (item as { explain?: string }).explain
-    if (ownText) { st.text = ownText; return }
-    if (own) { st.img = own; return }
-    st.loading = true
-    try {
-      const res = await getQuestionDetail(id)
-      const d = res as { explainImg?: string; explain?: string }
-      st.text = d?.explain ?? ''
-      st.img = d?.explainImg ?? ''
-    } catch (e) {
-      console.warn('[basket] load explain failed', e)
-      st.img = ''
-      st.text = ''
-    } finally {
-      st.loading = false
-    }
-  }
-}
-
-// ── 放大预览（压缩题卡后的兼容入口）：点题卡/放大按钮打开 el-dialog，
-//    复用 QuestionCard 渲染完整题干大图 + meta；答案/解析（图/文）懒加载 getQuestionDetail 补取。──
-const previewVisible = ref(false)
-const previewItem = ref<QuestionItem | null>(null)
-const previewDetail = reactive<{
-  answerImg: string; answerText: string
-  explainImg: string; explainText: string
-  loading: boolean
-}>({
-  answerImg: '', answerText: '',
-  explainImg: '', explainText: '',
-  loading: false,
-})
-
-async function openPreview(item: QuestionItem) {
-  previewItem.value = item
-  previewDetail.answerImg = (item as { answerImg?: string }).answerImg ?? ''
-  previewDetail.answerText = (item as { answer?: string }).answer ?? ''
-  previewDetail.explainImg = (item as { explainImg?: string }).explainImg ?? ''
-  previewDetail.explainText = (item as { explain?: string }).explain ?? ''
-  previewVisible.value = true
-  // 列表来的 item 可能不含答案/解析（图/文）→ 懒加载详情补取
-  const needLoad = !previewDetail.answerImg && !previewDetail.answerText
-    || !previewDetail.explainImg && !previewDetail.explainText
-  if (needLoad) {
-    previewDetail.loading = true
-    try {
-      const res = await getQuestionDetail(item.id)
-      const d = res as { answerImg?: string; answer?: string; explainImg?: string; explain?: string }
-      if (!previewDetail.answerImg) previewDetail.answerImg = d?.answerImg ?? ''
-      if (!previewDetail.answerText) previewDetail.answerText = d?.answer ?? ''
-      if (!previewDetail.explainImg) previewDetail.explainImg = d?.explainImg ?? ''
-      if (!previewDetail.explainText) previewDetail.explainText = d?.explain ?? ''
-    } catch (e) {
-      console.warn('[basket] load preview detail failed', e)
-    } finally {
-      previewDetail.loading = false
-    }
-  }
-}
+const { explainState, previewVisible, previewItem, previewDetail, toggleExplain, openPreview } =
+  useBasketQuestionPreview()
 </script>
 
 <template>
@@ -217,14 +101,17 @@ async function openPreview(item: QuestionItem) {
         <div class="basket-dialog-title-area">
           <el-icon color="#1E8A8A" :size="18"><ShoppingCart /></el-icon>
           <span class="basket-dialog-title">试题栏</span>
-          <el-tag type="primary" size="small" round>{{ basket.items.value.length }} 题</el-tag>
+          <el-tag type="primary" size="small" round>{{ basket.count.value }} 题</el-tag>
         </div>
       </div>
     </template>
 
-    <div class="basket-dialog-body">
+    <div v-loading="basket.loading.value" class="basket-dialog-body">
+      <el-alert v-if="basket.error.value" :title="basket.error.value" type="error" :closable="false">
+        <el-button link @click="refreshBasket()">重试</el-button>
+      </el-alert>
       <el-empty
-        v-if="basket.items.value.length === 0"
+        v-if="!basket.loading.value && !basket.error.value && basket.count.value === 0"
         description="试题栏为空，请先在题库中加题"
       >
         <template #image>
@@ -232,23 +119,14 @@ async function openPreview(item: QuestionItem) {
         </template>
       </el-empty>
       <el-scrollbar max-height="380px">
-        <div ref="listEl" class="basket-list">
+        <div class="basket-list">
         <div
           v-for="item in basket.items.value"
-          :key="item.id"
+          :key="item.entryKey"
           class="basket-item"
-          :data-item-id="item.id"
+          :data-item-id="item.entryKey"
         >
           <div class="basket-item-header">
-            <!-- 拖手柄：按住可拖动重排（仅本手柄触发拖拽，不影响项内按钮） -->
-            <span
-              v-if="basket.items.value.length > 1"
-              class="drag-handle"
-              title="拖动调整顺序"
-              aria-label="拖动调整顺序"
-            >
-              <el-icon><Rank /></el-icon>
-            </span>
             <span class="type-tag" :class="`type-tag--${getQuestionTypeTag(item.questionType)}`">
               {{ getQuestionTypeLabel(item.questionType) }}
             </span>
@@ -284,13 +162,14 @@ async function openPreview(item: QuestionItem) {
                 link
                 @click="toggleExplain(item)"
               >
-                {{ explainState[item.id]?.open ? '收起解析' : '解析' }}
+                {{ explainState[item.entryKey]?.open ? '收起解析' : '解析' }}
               </el-button>
               <el-button
                 size="small"
                 link
                 type="danger"
-                @click="handleRemoveBasket(item.id)"
+                :loading="basket.isLoading(item.entryKey)"
+                @click="handleRemoveBasket(item.entryKey)"
               >
                 <el-icon><Close /></el-icon>移除
               </el-button>
@@ -298,21 +177,24 @@ async function openPreview(item: QuestionItem) {
           </div>
           <!-- 题干（点击放大）— 富文本/图片/占位统一走 QuestionContent -->
           <div class="basket-item-stem" style="cursor: zoom-in;" @click="openPreview(item)">
+            <QuestionBlockRender v-if="parseBlockDoc(item.blockJson)" :doc="parseBlockDoc(item.blockJson)!" />
             <QuestionContent
-              :text="item.stemText"
+              v-else
+              :text="item.stemTextContent ?? item.stemText"
               :img-url="item.stemImg"
               alt="题干（点击放大）"
               img-max-height="112px"
             />
           </div>
           <!-- 展开解析区（懒加载，富文本/图片统一走 QuestionContent）-->
-          <div v-if="explainState[item.id]?.open" class="basket-item-explain">
-            <el-skeleton v-if="explainState[item.id]?.loading" :rows="2" animated />
+          <div v-if="explainState[item.entryKey]?.open" class="basket-item-explain">
+            <el-skeleton v-if="explainState[item.entryKey]?.loading" :rows="2" animated />
             <template v-else>
+              <QuestionBlockRender v-if="parseBlockDoc(item.analyzeBlockJson)" :doc="parseBlockDoc(item.analyzeBlockJson)!" />
               <QuestionContent
-                v-if="explainState[item.id]?.img || explainState[item.id]?.text"
-                :text="explainState[item.id]?.text || null"
-                :img-url="explainState[item.id]?.img || null"
+                v-else-if="explainState[item.entryKey]?.img || explainState[item.entryKey]?.text"
+                :text="explainState[item.entryKey]?.text || null"
+                :img-url="explainState[item.entryKey]?.img || null"
                 alt="解析"
               />
               <span v-else class="basket-explain-empty">暂无解析</span>
@@ -321,6 +203,9 @@ async function openPreview(item: QuestionItem) {
         </div>
         </div>
       </el-scrollbar>
+      <el-pagination v-if="basket.count.value > basket.pageSize" small layout="prev, pager, next"
+        :total="basket.count.value" :page-size="basket.pageSize" :current-page="basket.pageIndex.value"
+        @current-change="refreshBasket" />
     </div>
 
     <template #footer>
@@ -343,7 +228,7 @@ async function openPreview(item: QuestionItem) {
             @click="handleGoCompose"
           >
             <el-icon><DocumentAdd /></el-icon>
-            组卷（{{ basket.items.value.length }} 题）
+            组卷（{{ basket.count.value }} 题）
           </el-button>
         </div>
       </div>
@@ -373,29 +258,33 @@ async function openPreview(item: QuestionItem) {
         <el-skeleton v-if="previewDetail.loading" :rows="3" animated />
         <template v-else>
           <div
-            v-if="previewDetail.answerImg || previewDetail.answerText"
+            v-if="previewItem.answerBlockJson || previewDetail.answerImg || previewDetail.answerText"
             class="basket-preview-block"
           >
             <span class="basket-preview-label">【答案】</span>
+            <QuestionBlockRender v-if="parseBlockDoc(previewItem.answerBlockJson)" :doc="parseBlockDoc(previewItem.answerBlockJson)!" />
             <QuestionContent
+              v-else
               :text="previewDetail.answerText || null"
               :img-url="previewDetail.answerImg || null"
               alt="答案"
             />
           </div>
           <div
-            v-if="previewDetail.explainImg || previewDetail.explainText"
+            v-if="previewItem.analyzeBlockJson || previewDetail.explainImg || previewDetail.explainText"
             class="basket-preview-block"
           >
             <span class="basket-preview-label">【解析】</span>
+            <QuestionBlockRender v-if="parseBlockDoc(previewItem.analyzeBlockJson)" :doc="parseBlockDoc(previewItem.analyzeBlockJson)!" />
             <QuestionContent
+              v-else
               :text="previewDetail.explainText || null"
               :img-url="previewDetail.explainImg || null"
               alt="解析"
             />
           </div>
           <span
-            v-if="!previewDetail.answerImg && !previewDetail.answerText && !previewDetail.explainImg && !previewDetail.explainText"
+            v-if="!previewItem.answerBlockJson && !previewItem.analyzeBlockJson && !previewDetail.answerImg && !previewDetail.answerText && !previewDetail.explainImg && !previewDetail.explainText"
             class="basket-preview-empty"
           >
             暂无答案 / 解析

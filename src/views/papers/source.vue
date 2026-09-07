@@ -1,19 +1,18 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 // PRD-A-010 T3：查看态题卡的 Check/ShoppingCart/Star/InfoFilled 随 PaperSourceCard
 // 子组件迁出，父组件保留顶栏/编辑态用到的图标。
-import { ArrowLeft, Edit, Download, Top, Bottom, Delete, Plus, DocumentChecked, Close, ShoppingCart } from '@element-plus/icons-vue'
+import { ArrowLeft, Edit, Download, ShoppingCart } from '@element-plus/icons-vue'
 import {
-  getPaperDetail,
   removeFavorite,
   type PaperDetailVo,
   type PaperSectionVo,
   type PaperSourceQuestion,
-  type QuestionItem,
+
 } from '@/api/question/index'
-import { updateExamPaper, type UpdatePaperQuestion, type PaperListItem } from '@/api/paper/index'
+import { getExamPaperDetail, type PaperListItem } from '@/api/paper/index'
 import { usePaperBasket } from '@/composables/usePaperBasket'
 import { useAbortableRequest } from '@/composables/useAbortableRequest'
 import { useLoginGuard } from '@/composables/useLoginGuard'
@@ -23,16 +22,17 @@ import FavoriteFolderDrawer from '@/components/FavoriteFolderDrawer/index.vue'
 // PRD-A-010 T3：查看态题卡抽 PaperSourceCard、增题弹窗抽 AddFromBasketDialog
 // （FreeTagList/QuestionCard 共享组件随之迁入子组件，父组件不再直接引用）
 import PaperSourceCard from './components/PaperSourceCard.vue'
-import AddFromBasketDialog from './components/AddFromBasketDialog.vue'
-import QuestionContent from '@/components/business/QuestionContent/index.vue'
-import QuestionBlockRender from '@/components/business/QuestionBlockRender/index.vue'
+
+
+
 import PaperAnalysisPanel from './components/PaperAnalysisPanel.vue'
 import type { WorkbenchPaper } from '@/composables/useBasketWorkbench'
-import { parseBlockDoc } from '@/utils/blockSchema'
-import { useDictStore, DICT_QUESTION_TYPE } from '@/store/dict'
+
+
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
 import { useUserStore } from '@/store/user'
 import { getCurrentUser } from '@/api/user'
+import { selectionKey } from '@/api/questionBasket'
 
 // ── 路由 ────────────────────────────────────────────────────
 const route = useRoute()
@@ -77,20 +77,14 @@ async function handleTogglePaperBasket(): Promise<void> {
   }
 }
 
-// ── owner 判定（PRD-A-005 收尾 C 段）──
-// 本人卷 = detail.createBy === 当前登录用户 id（PaperDetailVo.createBy = String）→ 可编辑；
-// 公共卷（非本人）→ "编辑试卷"按钮置灰 + tooltip。
+// Read and write entry points share the server-calculated permission.
 const userStore = useUserStore()
-const isOwner = computed(() => {
-  const uid = userStore.userInfo?.id
-  const createBy = detail.value?.createBy
-  if (uid == null || createBy == null) return false
-  return String(createBy) === String(uid)
-})
+const canManage = computed(() => detail.value?.canManage === true)
 
 // ── 卷详情数据（E 段② BE 真接口 POST /teacher/exam/paper/detail） ──
 const detail = ref<PaperDetailVo | null>(null)
 const loading = ref(false)
+let detailSequence = 0
 
 // PRD-A-013 T5 M-10 — 切卷竞态防护
 // 用户从一个卷详情快速跳另一个卷（watch paperId 触发）时, 旧请求自动 abort,
@@ -125,15 +119,17 @@ async function handleExportPaper() {
 }
 
 async function loadPaperDetail() {
+  const sequence = ++detailSequence
+  previewVisible.value = false
   loading.value = true
   detail.value = null
   try {
     // PRD-A-013 T5 M-10 — 走 useAbortableRequest 包装, signal 透传到 axios。
     // 切卷时上一个请求自动 abort, 返回 null 表示被取消（不更新 UI）。
     const res = await runAbortable((signal) =>
-      getPaperDetail(paperId.value, { signal }),
+      getExamPaperDetail(paperId.value, { signal }),
     )
-    if (res === null) {
+    if (res === null || sequence !== detailSequence) {
       // 被新一次请求取消, 保持当前 UI（loading 由更新的请求结束时关闭）
       return
     }
@@ -145,11 +141,12 @@ async function loadPaperDetail() {
       ElMessage.warning('试卷数据加载失败：响应为空')
     }
   } catch (e) {
+    if (sequence !== detailSequence) return
     console.warn('[paper-detail] POST /teacher/exam/paper/detail failed', e)
     detail.value = null
     ElMessage.warning('试卷数据加载失败（接口需登录态）')
   } finally {
-    loading.value = false
+    if (sequence === detailSequence) loading.value = false
   }
 }
 
@@ -213,48 +210,18 @@ function sectionTotalScore(section: PaperSectionVo): number {
   return Math.round(sum * 100) / 100
 }
 
-// 题分（优先 pqScore，没有用 score）
-// PRD-A-010 T3：查看态题卡的分值展示已随 PaperSourceCard 子组件迁出（内有同名实现）；
-// 编辑态走 row._score 不用此函数。父组件保留（纯函数、零副作用），未真删避免误伤。
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function getQuestionScore(q: PaperSourceQuestion): number | null {
-  const s = q.pqScore ?? q.score
-  return s == null ? null : Number(s)
-}
-void getQuestionScore
-
-// ── 题型 ── label 走字典 SSOT（biz_question_type，超管可维护，含全 8 类）。
-const dict = useDictStore()
-dict.load(DICT_QUESTION_TYPE)
-function getQuestionTypeLabel(type: number): string {
-  return dict.label(DICT_QUESTION_TYPE, type) || `题型${type}`
-}
-
-function getQuestionTypeTag(type: number): 'success' | 'warning' | 'info' | 'primary' | 'danger' {
-  // 徽标颜色走字典 list_class（biz_question_type，超管可维护）
-  return dict.tagType(DICT_QUESTION_TYPE, type, 'info') as 'success' | 'warning' | 'info' | 'primary' | 'danger'
-}
-
 // ── 详情按钮 — 路由跳详情独立页（跟题库 question/index.vue:257-269 一致）──
 function handleDetail(q: PaperSourceQuestion) {
-  // 存 cache 供详情页兜底（接口 500 时从 localStorage 读）
-  try {
-    const cacheKey = 'book-ui:question-cache-by-id'
-    const existing = JSON.parse(localStorage.getItem(cacheKey) || '{}')
-    existing[String(q.id)] = q
-    localStorage.setItem(cacheKey, JSON.stringify(existing))
-  } catch (e) {
-    console.warn('[paper-source] detail cache write failed', e)
-  }
+  // 已保存卷的实例快照不进入原题缓存。
   router.push(`/question/detail/${q.id}`)
 }
 
 // ── 试题栏 toggle ──
 async function handleBasketToggle(q: PaperSourceQuestion) {
   if (!(await ensureLogin())) return
-  if (basket.isLoading(q.id)) return
-  if (basket.basketIds.value.has(q.id)) {
-    await basket.remove(q.id)
+  if (basket.isLoading(selectionKey(q))) return
+  if (basket.has(q)) {
+    await basket.remove(selectionKey(q))
   } else {
     await basket.add(q)
   }
@@ -329,133 +296,11 @@ function goBack() {
 // 编辑态复用查看态题卡骨架（同 .source-question-card），仅右上操作区从
 // 草稿/收藏/试题栏 换成 上移/下移/删除 + 分值（用户视觉铁则：禁另起一套卡）。
 // ══════════════════════════════════════════════════════════════
-type ViewMode = 'view' | 'edit'
-const mode = ref<ViewMode>('view')
-
-// PRD-A-013 T2 — sectionId 雪花 string
-interface EditRow extends PaperSourceQuestion {
-  _sectionId: string // 所属大题（新增题落默认 section）
-  _score: number // 本地编辑分值
-}
-const editRows = ref<EditRow[]>([])
-const editPaperName = ref<string>('')
-const defaultSectionId = ref<string>('')
-const saving = ref(false)
-const addDialogVisible = ref(false)
-
-const totalScore = computed<number>(() =>
-  editRows.value.reduce((sum, r) => sum + (Number(r._score) || 0), 0),
-)
-// PRD-A-013 T2 — Set 雪花 string
-const paperQuestionIds = computed<Set<string>>(
-  () => new Set(editRows.value.map((r) => r.id)),
-)
-
-// 从当前 detail 构建编辑行（flatten 大题，保留各自 sectionId + 单题分）
-function buildEditRowsFromDetail() {
-  const sections = detail.value?.sections ?? []
-  if (sections.length > 0) defaultSectionId.value = sections[0].sectionId
-  const rows: EditRow[] = []
-  sections.forEach((sec) => {
-    ;(sec.questions || []).forEach((q) => {
-      rows.push({ ...q, _sectionId: sec.sectionId, _score: Number(q.pqScore ?? q.score ?? 0) })
-    })
-  })
-  rows.sort((a, b) => Number(a.sortNum ?? a.sort ?? 0) - Number(b.sortNum ?? b.sort ?? 0))
-  editRows.value = rows
-  editPaperName.value = detail.value?.paperName || ''
-}
-
-// PRD-A-007：编辑按钮改指新两栏工作台（不再原地切 source.vue 内联编辑态）
 function enterEdit() {
-  if (!detail.value || !isOwner.value) return
+  if (!detail.value || !canManage.value) return
   router.push(`/papers/workbench/${paperId.value}`)
 }
-
-function cancelEdit() {
-  mode.value = 'view'
-  editRows.value = []
-}
-
-function moveUp(idx: number) {
-  if (idx <= 0) return
-  const arr = [...editRows.value]
-  ;[arr[idx - 1], arr[idx]] = [arr[idx], arr[idx - 1]]
-  editRows.value = arr
-}
-function moveDown(idx: number) {
-  if (idx >= editRows.value.length - 1) return
-  const arr = [...editRows.value]
-  ;[arr[idx], arr[idx + 1]] = [arr[idx + 1], arr[idx]]
-  editRows.value = arr
-}
-function deleteRow(idx: number) {
-  const arr = [...editRows.value]
-  arr.splice(idx, 1)
-  editRows.value = arr
-  ElMessage.success('已移除该题')
-}
-
-// 增题（从试题栏挑，复用 useQuestionBasket，禁重造）
-function openAddDialog() {
-  addDialogVisible.value = true
-}
-const addableBasketItems = computed<QuestionItem[]>(() =>
-  basket.items.value.filter((q) => !paperQuestionIds.value.has(q.id)),
-)
-function addQuestionFromBasket(q: QuestionItem) {
-  if (paperQuestionIds.value.has(q.id)) {
-    ElMessage.info('该题已在试卷中')
-    return
-  }
-  editRows.value = [
-    ...editRows.value,
-    { ...(q as PaperSourceQuestion), _sectionId: defaultSectionId.value, _score: Number(q.score ?? 0) },
-  ]
-  ElMessage.success('已添加到试卷')
-}
-
-// 保存（调 update，owner 校验沿用；成功回查看态刷新；失败阻断不显示假已保存态）
-async function handleSave() {
-  if (editRows.value.length === 0) {
-    ElMessage.warning('试卷至少需要 1 道题')
-    return
-  }
-  if (!editPaperName.value.trim()) {
-    ElMessage.warning('请输入试卷名称')
-    return
-  }
-  saving.value = true
-  try {
-    const questions: UpdatePaperQuestion[] = editRows.value.map((r, i) => ({
-      questionId: r.id,
-      sectionId: r._sectionId,
-      sort: i + 1,
-      score: Number(r._score) || 0,
-    }))
-    await updateExamPaper({
-      // PRD-A-013 T2 — paperId 雪花 string，禁 Number() 截尾
-      paperId: paperId.value,
-      name: editPaperName.value.trim(),
-      questions,
-    })
-    ElMessage.success('保存成功')
-    mode.value = 'view'
-    editRows.value = []
-    await loadPaperDetail()
-  } catch (e: unknown) {
-    const msg = (e as { message?: string })?.message || '保存失败，请稍后重试'
-    ElMessage.error(`保存失败：${msg}`)
-    console.warn('[paper-source] save failed', e)
-  } finally {
-    saving.value = false
-  }
-}
-
-// PRD-A-007：编辑试卷 → 跳新两栏工作台
-function handleEditPaper() {
-  enterEdit()
-}
+function handleEditPaper() { enterEdit() }
 
 onMounted(async () => {
   // owner 判定依赖 userInfo —— 刷新进详情页时内存态丢失，先兜底拉一次。
@@ -469,20 +314,19 @@ onMounted(async () => {
   }
   await loadPaperDetail()
   // PRD-A-006：旧路由 /papers/edit/:id 重定向带 ?edit=1 → 自动进编辑态（owner 才生效）
-  if (route.query.edit === '1' && isOwner.value) {
+  if (route.query.edit === '1' && canManage.value) {
     enterEdit()
   }
 })
 
 // SPA 内 route.params.id 变化（从一个卷详情直接跳另一个卷）时重新加载 ——
 // 否则 vue-router 复用本组件、onMounted 不重跑，detail 停留旧卷，
-// 题目列表与 isOwner（编辑按钮显隐）全错（PRD-A-005 G6 回归暴露）。
+// 切换卷ID时同时重读题目与服务端管理权限。
 // 切卷时回查看态、丢弃未保存的编辑行（PRD-A-006）。
-watch(paperId, async () => {
-  mode.value = 'view'
-  editRows.value = []
+watch([paperId, () => userStore.accessToken], async () => {
   await loadPaperDetail()
 })
+onBeforeUnmount(() => { detailSequence++ })
 </script>
 
 <template>
@@ -495,22 +339,22 @@ watch(paperId, async () => {
       </el-button>
 
       <!-- ══ 查看态顶栏 ══ -->
-      <template v-if="mode === 'view'">
+
         <div class="topbar-info">
           <span class="topbar-title">{{ detail?.paperName || '原卷预览' }}</span>
           <el-tag v-if="detail?.examYear" type="info" size="small">{{ detail.examYear }}</el-tag>
         </div>
         <div class="topbar-actions">
           <el-tooltip
-            :disabled="!detail || isOwner"
-            content="公共试卷不可编辑"
+            :disabled="!detail || canManage"
+            content="无权编辑此试卷"
             placement="bottom"
           >
             <!-- 公共卷锁死：非本人卷 disabled + tooltip（span 包裹保证 disabled 按钮仍能触发 tooltip）-->
             <span>
               <el-button
                 class="topbar-edit-btn"
-                :disabled="!detail || !isOwner"
+                :disabled="!detail || !canManage"
                 @click="handleEditPaper"
               >
                 <el-icon><Edit /></el-icon>
@@ -537,42 +381,6 @@ watch(paperId, async () => {
             <span>导出 PDF</span>
           </el-button>
         </div>
-      </template>
-
-      <!-- ══ 编辑态顶栏（卷名输入居中、操作靠右）══ -->
-      <template v-else>
-        <div class="topbar-edit-name">
-          <el-input
-            v-model="editPaperName"
-            placeholder="请输入试卷名称"
-            class="edit-name-input"
-            size="default"
-          />
-        </div>
-        <div class="topbar-actions">
-          <div class="edit-stat-pill">
-            <span class="stat-num">{{ editRows.length }}</span><span class="stat-unit">题</span>
-            <span class="stat-sep">·</span>
-            <span class="stat-num total">{{ totalScore }}</span><span class="stat-unit">分</span>
-          </div>
-          <el-button
-            :type="inPaperBasket ? 'danger' : 'default'"
-            :disabled="!detail"
-            @click="handleTogglePaperBasket"
-          >
-            <el-icon><ShoppingCart /></el-icon><span>{{ inPaperBasket ? '移出试卷篮' : '加入试卷篮' }}</span>
-          </el-button>
-          <el-button @click="openAddDialog">
-            <el-icon><Plus /></el-icon><span>增题</span>
-          </el-button>
-          <el-button @click="cancelEdit">
-            <el-icon><Close /></el-icon><span>取消</span>
-          </el-button>
-          <el-button type="primary" :loading="saving" @click="handleSave">
-            <el-icon><DocumentChecked /></el-icon><span>保存</span>
-          </el-button>
-        </div>
-      </template>
     </div>
 
     <!-- 内容区 -->
@@ -589,7 +397,7 @@ watch(paperId, async () => {
 
       <div v-else class="question-list">
         <!-- ══ 查看态：左题目 + 右试卷分析侧栏（PRD-C-1000 两栏）══ -->
-        <template v-if="mode === 'view'">
+
         <div class="view-layout">
           <!-- 左栏：卷头 + 大题分组 -->
           <div class="view-main">
@@ -622,10 +430,10 @@ watch(paperId, async () => {
                    PRD-A-010 T3：抽 PaperSourceCard 子组件，basket 状态 props 传入、动作 emit -->
               <PaperSourceCard
                 v-for="q in section.questions"
-                :key="q.id"
+                :key="q.paperQuestionId ?? selectionKey(q)"
                 :q="q"
-                :in-basket="basket.basketIds.value.has(q.id)"
-                :basket-loading="basket.isLoading(q.id)"
+                :in-basket="basket.has(q)"
+                :basket-loading="basket.isLoading(selectionKey(q))"
                 @draft="handleDraft"
                 @favorite="handleFavorite"
                 @basket-toggle="handleBasketToggle"
@@ -642,102 +450,14 @@ watch(paperId, async () => {
             </div>
           </aside>
         </div>
-        </template>
-
-        <!-- ══ 编辑态：平铺题列表（PRD-A-006 edit 分支，复用查看题卡骨架 .source-question-card）══ -->
-        <template v-else>
-          <div
-            v-for="(row, idx) in editRows"
-            :key="row.id"
-            class="source-question-card edit-card"
-          >
-            <!-- 顶部 meta 行：左 难度+知识点（同查看）/ 右 题号+排序+删除 -->
-            <div class="q-meta-top">
-              <div class="q-meta-top-left">
-                <span class="meta-label">难度:</span>
-                <el-rate :model-value="row.difficult ?? 0" :max="4" disabled class="meta-rate" />
-                <span class="meta-label">知识点:</span>
-                <el-tag
-                  v-if="row.questionKnowledges && row.questionKnowledges.length > 0"
-                  type="primary"
-                  size="small"
-                  class="primary-knowledge-tag"
-                >
-                  {{ row.questionKnowledges[0].knowledgeName || row.questionKnowledges[0].knowledgeId }}
-                </el-tag>
-                <span v-else class="knowledge-empty">暂无</span>
-              </div>
-              <div class="q-meta-top-right edit-ops">
-                <span class="edit-row-index">{{ idx + 1 }}</span>
-                <el-button size="small" circle :disabled="idx === 0" @click="moveUp(idx)">
-                  <el-icon><Top /></el-icon>
-                </el-button>
-                <el-button size="small" circle :disabled="idx === editRows.length - 1" @click="moveDown(idx)">
-                  <el-icon><Bottom /></el-icon>
-                </el-button>
-                <el-button size="small" type="danger" plain circle @click="deleteRow(idx)">
-                  <el-icon><Delete /></el-icon>
-                </el-button>
-              </div>
-            </div>
-
-            <!-- 题干区（同查看骨架）-->
-            <div class="q-stem-area">
-              <div class="q-stem-header">
-                <span class="q-type-tag" :class="`q-type--${getQuestionTypeTag(row.questionType)}`">
-                  {{ getQuestionTypeLabel(row.questionType) }}
-                </span>
-              </div>
-              <!-- 题干内容：结构化题(blockJson)走 QuestionBlockRender 网格(题干+选项+图)；老题回落 QuestionContent 扁平 -->
-              <div class="q-stem-body">
-                <QuestionBlockRender
-                  v-if="parseBlockDoc(row.blockJson)"
-                  :doc="parseBlockDoc(row.blockJson)"
-                />
-                <QuestionContent
-                  v-else
-                  :text="row.stemText"
-                  :img-url="row.stemImg"
-                  alt="题干"
-                />
-              </div>
-            </div>
-
-            <!-- 底部 meta 行：左 来源 / 右 分值编辑 -->
-            <div class="q-meta-bottom edit-bottom">
-              <div class="q-meta-bottom-left">
-                <span v-if="row.examPaperName" class="source-text">
-                  来源: {{ row.examPaperName }}{{ row.examYear ? ` · ${row.examYear}年` : '' }}
-                </span>
-              </div>
-              <div class="q-meta-bottom-right edit-score">
-                <span class="row-score-label">分值</span>
-                <el-input-number
-                  v-model="row._score"
-                  :min="0"
-                  :max="100"
-                  :step="1"
-                  size="small"
-                  controls-position="right"
-                  style="width: 110px;"
-                />
-                <span class="row-score-unit">分</span>
-              </div>
-            </div>
-          </div>
-
-          <el-empty
-            v-if="editRows.length === 0"
-            description="试卷暂无题目，点「增题」从试题栏添加"
-          >
-            <el-button type="primary" @click="openAddDialog">增题</el-button>
-          </el-empty>
-        </template>
       </div>
     </div>
 
     <!-- 导出 PDF：复用 PaperPreview 干净打印版预览（自带答案/解析勾选 + jsPDF 无损导出按钮） -->
     <PaperPreview
+      :source-questions="allQuestions"
+      :suggest-time="detail?.suggestTime"
+      :total-score="detail?.score"
       :visible="previewVisible"
       :paper-name="exportPaperName"
       :ids="exportQuestionIds"
@@ -746,14 +466,7 @@ watch(paperId, async () => {
       @update:visible="previewVisible = $event"
     />
 
-    <!-- 增题弹窗（编辑态）：从试题栏挑（复用 useQuestionBasket + 共享 QuestionCard，禁重造）
-         PRD-A-010 T3：抽 AddFromBasketDialog 子组件，逻辑仍在父（basket 单例/过滤/加题）-->
-    <AddFromBasketDialog
-      v-model:visible="addDialogVisible"
-      :basket-empty="basket.items.value.length === 0"
-      :addable-items="addableBasketItems"
-      @add="addQuestionFromBasket"
-    />
+
 
     <!-- 收藏目录抽屉（与题库一致：未收藏题点收藏 → 选目录）-->
     <FavoriteFolderDrawer
@@ -800,12 +513,14 @@ watch(paperId, async () => {
 }
 
 .topbar-info {
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
 .topbar-title {
+  overflow-wrap: anywhere;
   font-size: 16px;
   font-weight: 600;
   color: var(--bk-ink);
@@ -816,6 +531,25 @@ watch(paperId, async () => {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+}
+
+@media (max-width: 640px) {
+  .source-topbar {
+    flex-wrap: wrap;
+    padding: 10px 12px;
+    gap: 10px;
+  }
+  .topbar-info {
+    flex: 1;
+  }
+  .topbar-actions {
+    flex: 1 0 100%;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .topbar-actions :deep(.el-button) {
+    margin-left: 0;
+  }
 }
 
 /* ── 内容区 ── */

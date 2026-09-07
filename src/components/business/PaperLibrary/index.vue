@@ -14,9 +14,10 @@
  *   - 'mine-only' = 备课台「我的卷库」分区专用：scope 锁 'mine'，类型 seg 不渲染。
  *   固定 mode 下缓存读写走独立 key 后缀，避免与顶导航页缓存互相污染。
  */
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, watch, onBeforeUnmount } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Star, ArrowDown } from '@element-plus/icons-vue'
+import { Search, Star, ArrowDown, RefreshLeft } from '@element-plus/icons-vue'
+import PaperVisibilitySwitch from './PaperVisibilitySwitch.vue'
 import { useRouter, useRoute } from 'vue-router'
 import {
   getPaperLazyTree,
@@ -51,7 +52,6 @@ const dict = useDictStore()
 const { ensureLogin } = useLoginGuard()
 
 // ══ 分类树（结构化字段驱动）══════════════════════════════════
-const NO_MATCH = 'NONE' // 空学科/学段兜底 subjectId（前缀匹配不到任何分类 → 0 条）
 const treeLoading = ref(false)
 const gradeNodes = ref<PaperTreeNode[]>([]) // nodeKind=grade（年级册节点）
 const examNodes = ref<PaperTreeNode[]>([])  // nodeKind=exam（中考模拟/真题）
@@ -67,15 +67,15 @@ const scope = ref<'public' | 'mine'>(props.mode === 'mine-only' ? 'mine' : 'publ
 const kindTab = ref<'all' | 'prep'>('all')
 const showKindTab = computed(() => scope.value === 'mine')
 const prepOnly = computed(() => scope.value === 'mine' && kindTab.value === 'prep')
-const subject = ref(1) // 学科（1数学 2科学）
-const stage = ref(2)   // 学段（1小学 2初中 3高中）
-const gradeCode = ref<number | null>(7) // 选中年级（null=走中考）
-const vol = ref(1)     // 册（1上 2下）
+const subject = ref(0)
+const stage = ref(0)
+const gradeCode = ref<number | null>(null)
+const vol = ref(0)
 const examId = ref('') // 选中的中考节点 id（非空=中考态）
 const paperType = ref<number | ''>('') // 卷型（''=该年级全部）
+const hasCategory = computed(() => gradeCode.value != null || !!examId.value)
 
 // ══ 维度派生 ════════════════════════════════════════════════
-const uniq = <T,>(a: T[]) => [...new Set(a)]
 const subjectList = computed(() => dict.list(DICT_EDU_SUBJECT))
 const stageList = computed(() => dict.list(DICT_EDU_STAGE))
 const ptypeList = computed(() => dict.list(DICT_PAPER_TYPE))
@@ -121,10 +121,10 @@ const crumbTag = computed(() => (scope.value === 'public' ? '公共试卷' : '�
 const crumbMain = computed(() => `${dict.label(DICT_EDU_SUBJECT, subject.value)}·${dict.label(DICT_EDU_STAGE, stage.value)}`)
 
 // ══ 目标节点解析 → subjectId（前缀匹配）══════════════════════
-function resolveTargetId(): string {
-  if (isExam.value) return examId.value
+function resolveTargetId(): string | undefined {
+  if (isExam.value) return examList.value.find((node) => node.id === examId.value)?.id
   const gn = currentGradeNode.value
-  if (!gn) return NO_MATCH // 没选到具体年级（空学科/学段）→ 0 条，不回退到全部数学卷
+  if (!gn) return undefined
   if (paperType.value !== '') {
     const pn = ptypeNodes.value.find((n) => n.parentId === gn.id && n.paperType === paperType.value)
     if (pn) return pn.id
@@ -134,6 +134,7 @@ function resolveTargetId(): string {
 
 // ══ 面包屑 ══════════════════════════════════════════════════
 const crumb = computed(() => {
+  if (!hasCategory.value || prepOnly.value) return [crumbTag.value, '全部分类']
   const parts = [scope.value === 'public' ? '公共试卷' : '我的卷库', dict.label(DICT_EDU_SUBJECT, subject.value), dict.label(DICT_EDU_STAGE, stage.value)]
   if (isExam.value) {
     const e = examList.value.find((n) => n.id === examId.value)
@@ -160,13 +161,14 @@ function persist() {
 // ══ 应用筛选 → 拉列表 ═══════════════════════════════════════
 function applyFilter() {
   persist()
-  pageParams.subjectId = resolveTargetId()
+  pageParams.subjectId = resolveTargetId() ?? ''
   pageParams.pageIndex = 1
   fetchPapers()
 }
 
 // ══ 交互 ════════════════════════════════════════════════════
-function pickScope(s: 'public' | 'mine') { if (props.mode) return; scope.value = s; kindTab.value = 'all'; applyFilter() } // mode 固定时类型 seg 不渲染，此处兜底防误触
+function clearCategory() { gradeCode.value = null; examId.value = ''; paperType.value = ''; applyFilter() }
+function pickScope(s: 'public' | 'mine') { if (props.mode) return; scope.value = s; kindTab.value = 'all'; clearCategory() }
 // PRD-B-101 卷型 tab 切换（全部 / 备课卷）
 function pickKind(k: 'all' | 'prep') { if (kindTab.value === k) return; kindTab.value = k; pageParams.pageIndex = 1; fetchPapers() }
 
@@ -194,6 +196,22 @@ function normalizeStageGrade() {
   if (gradeCode.value != null && !volsAvail.value.has(vol.value)) vol.value = [...volsAvail.value][0] ?? 1
 }
 
+function selectFirstCategory() {
+  const subjects = new Set(subjectList.value.map((item) => Number(item.dictValue)))
+  const stages = new Set(stageList.value.map((item) => Number(item.dictValue)))
+  const first = [...gradeNodes.value, ...examNodes.value]
+    .filter((node) => node.subject != null && node.stage != null
+      && subjects.has(node.subject) && stages.has(node.stage))
+    .sort((a, b) => a.sort - b.sort || a.id.localeCompare(b.id))[0]
+  if (!first) { gradeCode.value = null; examId.value = ''; return }
+  subject.value = first.subject!
+  stage.value = first.stage!
+  gradeCode.value = first.grade ?? null
+  vol.value = first.volume ?? 0
+  examId.value = first.nodeKind === 'exam' ? first.id : ''
+  paperType.value = ''
+}
+
 // ── 顶部搜索框 ─────────────────────────────────────────────
 const searchName = ref('')
 const searchLoading = ref(false)
@@ -203,23 +221,32 @@ function onSearch() { pageParams.name = searchName.value.trim(); pageParams.page
 const papers = ref<PaperListItem[]>([])
 const listLoading = ref(false)
 const total = ref(0)
+const listError = ref('')
+let listSequence = 0
+let ready = false
 const pageParams = reactive({ name: '', subjectId: '', pageIndex: 1, pageSize: 10 })
 const { run: runAbortable } = useAbortableRequest<MisiktPageVo<PaperListItem>>()
 
 async function fetchPapers() {
+  const sequence = ++listSequence
   if (scope.value === 'mine' && !userStore.userInfo) {
     try { const info = await getCurrentUser(); if (info) userStore.setUserInfo(info) } catch (e) { console.warn('[PaperLibrary] getCurrentUser 兜底失败', e) }
   }
   listLoading.value = true
   searchLoading.value = true
+  listError.value = ''
   try {
     // 备课卷 tab：绕过年级/学科树（subjectId 置空），加 paperKind='2'（仅 mine 生效）
     const usePrep = prepOnly.value
+    if (!usePrep && hasCategory.value && !resolveTargetId()) {
+      papers.value = []; total.value = 0
+      return
+    }
     const result = await runAbortable((signal) =>
       getPaperPage(
         {
           name: pageParams.name || '',
-          subjectId: usePrep ? '' : pageParams.subjectId || '',
+          subjectId: usePrep ? undefined : resolveTargetId(),
           pageIndex: pageParams.pageIndex,
           pageSize: pageParams.pageSize,
           scope: scope.value,
@@ -228,12 +255,14 @@ async function fetchPapers() {
         { signal },
       ),
     )
-    if (result === null) return
+    if (result === null || sequence !== listSequence) return
     if (result && Array.isArray(result.list)) { papers.value = result.list; total.value = result.total ?? 0 } else { papers.value = []; total.value = 0 }
   } catch (e) {
+    if (sequence !== listSequence) return
+    listError.value = e instanceof Error ? e.message : '试卷列表加载失败'
     console.warn('[paper-list] page failed', e); papers.value = []; total.value = 0
   } finally {
-    listLoading.value = false; searchLoading.value = false
+    if (sequence === listSequence) { listLoading.value = false; searchLoading.value = false }
   }
 }
 function handlePageChange(p: number) { pageParams.pageIndex = p; fetchPapers() }
@@ -242,10 +271,10 @@ function handleSizeChange(s: number) { pageParams.pageSize = s; pageParams.pageI
 // ── 业务动作（保留原逻辑）─────────────────────────────────
 function handleView(item: PaperListItem) { router.push(`/papers/source/${item.id}`) }
 function handleEdit(item: PaperListItem) { router.push(`/papers/edit/${item.id}`) }
-function isOwner(item: PaperListItem): boolean {
-  const uid = userStore.userInfo?.id
-  if (uid == null || item.createUser == null) return false
-  return String(item.createUser) === String(uid)
+function handleVisibilityUpdated(item: PaperListItem, published: boolean) {
+  item.published = published
+  item.status = published ? 1 : 0
+  void fetchPapers()
 }
 async function handleDelete(item: PaperListItem) {
   try {
@@ -292,7 +321,7 @@ onMounted(async () => {
     loadTree(),
   ])
 
-  // 恢复缓存 > 页面默认（数学·初中·七上）
+  // 缓存只保留仍有效的组合；无缓存时从分类树及字典选首个有效组合。
   const c = readCache()
   if (c) {
     // mode 固定时忽略缓存里的 scope，防止缓存把它拽回另一侧
@@ -301,15 +330,24 @@ onMounted(async () => {
     gradeCode.value = c.gradeCode; vol.value = c.vol; examId.value = c.examId; paperType.value = c.paperType
     // 缓存的选择在当前数据下若失效则归一化
     if (!isExam.value) normalizeStageGrade()
+    if (!resolveTargetId()) selectFirstCategory()
   } else {
-    normalizeStageGrade()
+    selectFirstCategory()
   }
   // ?mine=1 进入 → 我的卷库（mode 固定场景跳过，scope 已由 prop 锁死）
   if (!props.mode && route.query.mine === '1') scope.value = 'mine'
 
-  pageParams.subjectId = resolveTargetId()
+  // Keep the directory context, but only filter after an explicit category selection.
+  gradeCode.value = null; examId.value = ''; paperType.value = ''
+  pageParams.subjectId = ''
+  ready = true
   fetchPapers()
 })
+watch(() => userStore.accessToken, () => {
+  papers.value = []; total.value = 0; listSequence++
+  if (ready) void fetchPapers()
+})
+onBeforeUnmount(() => { listSequence++ })
 </script>
 
 <template>
@@ -318,9 +356,20 @@ onMounted(async () => {
     <aside class="dir">
       <div class="dir-head">
         <div class="t"><span class="bar" /><b>卷库目录</b></div>
-        <span class="n">{{ total }} 卷</span>
+        <div class="dir-head-actions">
+          <el-tooltip v-if="hasCategory && !prepOnly" content="清除分类" placement="top">
+            <el-button text circle :icon="RefreshLeft" aria-label="清除分类" @click="clearCategory" />
+          </el-tooltip>
+          <span class="n">{{ total }} 卷</span>
+        </div>
       </div>
       <div v-loading="treeLoading" class="dir-body">
+        <div v-if="!props.mode" class="grp">
+          <div class="seg">
+            <button :class="{ on: scope === 'public' }" @click="pickScope('public')">公共试卷</button>
+            <button :class="{ on: scope === 'mine' }" @click="pickScope('mine')">我的卷库</button>
+          </div>
+        </div>
         <!-- PRD-B-101 卷型 tab（仅我的卷库）：全部 / 备课卷 -->
         <div v-if="showKindTab" class="grp kind-grp">
           <div class="grp-lab">卷型</div>
@@ -347,13 +396,6 @@ onMounted(async () => {
         <div v-show="!prepOnly" class="picker" :class="{ collapsed: !pickerOpen }">
         <div class="picker-in">
         <!-- 类型（mode 固定时不渲染切换段） -->
-        <div v-if="!props.mode" class="grp">
-          <div class="grp-lab">类型</div>
-          <div class="seg">
-            <button :class="{ on: scope === 'public' }" @click="pickScope('public')">公共试卷</button>
-            <button :class="{ on: scope === 'mine' }" @click="pickScope('mine')">我的卷库</button>
-          </div>
-        </div>
         <!-- 学科 -->
         <div class="grp">
           <div class="grp-lab">学科</div>
@@ -438,6 +480,7 @@ onMounted(async () => {
         </template>
       </div>
 
+      <el-alert v-if="listError" :title="listError" type="error" :closable="false" />
       <div v-loading="listLoading" class="paper-list">
         <div v-for="item in papers" :key="item.id" class="paper-card">
           <div class="paper-card-row1">
@@ -446,9 +489,16 @@ onMounted(async () => {
               <span class="paper-name" @click="handleView(item)">{{ item.name }}</span>
             </div>
             <div class="paper-card-actions">
+              <PaperVisibilitySwitch
+                v-if="item.canChangeVisibility"
+                :paper-id="item.id"
+                :name="item.name"
+                :published="item.published === true"
+                @updated="handleVisibilityUpdated(item, $event)"
+              />
               <el-link type="primary" :underline="false" @click="handleView(item)">查看</el-link>
-              <el-link v-if="isOwner(item)" type="primary" :underline="false" @click="handleEdit(item)">编辑</el-link>
-              <el-link v-if="isOwner(item)" type="danger" :underline="false" @click="handleDelete(item)">删除</el-link>
+              <el-link v-if="item.canManage" type="primary" :underline="false" @click="handleEdit(item)">编辑</el-link>
+              <el-link v-if="item.canManage" type="danger" :underline="false" @click="handleDelete(item)">删除</el-link>
               <el-link :type="basket.basketIds.value.has(item.id) ? 'danger' : 'primary'" :underline="false" :disabled="basket.isLoading(item.id)" @click="handleToggleBasket(item)">
                 {{ basket.basketIds.value.has(item.id) ? '移出试卷篮' : '加入试卷篮' }}
               </el-link>
@@ -491,6 +541,7 @@ onMounted(async () => {
 .dir-head .bar { width: 3px; height: 15px; border-radius: 2px; background: #7b6cf0; }
 .dir-head b { font-size: 14px; font-weight: 700; color: var(--bk-ink); }
 .dir-head .n { font-size: 10.5px; color: #a8b2b6; }
+.dir-head-actions { display: flex; align-items: center; gap: 6px; }
 .dir-body { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 10px 10px; }
 
 /* 卡头 + 收放（对齐题库目录） */
@@ -552,13 +603,13 @@ onMounted(async () => {
 .paper-card { padding: 16px 20px; border-bottom: 1px solid #ebeef5; display: flex; flex-direction: column; gap: 12px; background: #fff; transition: background .15s ease; }
 .paper-card:last-child { border-bottom: none; }
 .paper-card:hover { background: #fafcfc; }
-.paper-card-row1 { display: flex; justify-content: space-between; align-items: center; }
+.paper-card-row1 { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px 16px; }
 .paper-card-title-area { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
 .paper-star { font-size: 16px; color: #c0c4cc; cursor: pointer; transition: color .15s ease; }
 .paper-star:hover { color: var(--bk-teal); }
 .paper-name { font-size: 14px; font-weight: 600; color: var(--bk-teal); cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .paper-name:hover { text-decoration: underline; }
-.paper-card-actions { display: flex; gap: 16px; flex-shrink: 0; }
+.paper-card-actions { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; max-width: 100%; }
 .paper-card-row2 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; color: #606266; font-size: 13px; }
 .paper-field { display: flex; align-items: center; }
 .paper-field-label { color: #909399; }
