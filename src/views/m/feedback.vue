@@ -20,8 +20,9 @@
  *    probeShells 懒探针、isShell 定性口径、saveEdit 回传 sessionId/planId 防覆盖绑定 —— 逻辑一行未动。
  */
 import { computed, onMounted, ref } from 'vue'
-import { showFailToast, showSuccessToast, showToast } from 'vant'
+import { showConfirmDialog, showFailToast, showSuccessToast, showToast } from 'vant'
 import 'vant/es/toast/style'
+import 'vant/es/dialog/style'
 import {
   createSheet,
   downloadArtifact,
@@ -41,6 +42,7 @@ import {
   type TargetCardVO,
 } from '@/api/teacher/schedule'
 import MSheet from './components/MSheet.vue'
+import { hasFeedbackContent, mergeBulkRows, parseFeedbackBulk } from './feedback-bulk-parser'
 import { todayStr } from './shared'
 
 const EXPORT_MODE_KEY = 'fb_export_mode'
@@ -62,7 +64,9 @@ const restChips = computed(() => students.value.filter((s) => !todayIds.value.ha
 const planTitle = computed(() => {
   const s = selStudent.value
   if (!s) return ''
-  return s.planId ? `计划：${s.name} · ${s.planName || '未命名计划'}（序号自动递增）` : `${s.name}：暂无计划`
+  return s.planId
+    ? `计划：${s.name} · ${s.planName || '未命名计划'}（序号自动递增）`
+    : `${s.name}：暂无计划`
 })
 
 async function loadStudents() {
@@ -211,6 +215,7 @@ function openNew() {
   }
   newDate.value = todayStr()
   newLessonId.value = ''
+  resetBulkDraft()
   newOpen.value = true
   void loadPlanLessons()
 }
@@ -272,6 +277,7 @@ const editLoading = ref(false)
 const saving = ref(false)
 const editDetail = ref<FeedbackSheetDetail | null>(null)
 const editRows = ref<FeedbackRow[]>([])
+let editRequestToken = 0
 
 const editTitle = computed(() => (editDetail.value ? rowTitle(editDetail.value) : '填写反馈'))
 
@@ -280,12 +286,15 @@ function emptyRow(): FeedbackRow {
 }
 
 async function openEdit(sheetId: string) {
+  const requestToken = ++editRequestToken
   editOpen.value = true
   editLoading.value = true
   editDetail.value = null
   editRows.value = []
+  resetBulkDraft()
   try {
     const d = await getSheet(sheetId)
+    if (requestToken !== editRequestToken) return
     editDetail.value = d
     rowCounts.value = { ...rowCounts.value, [d.id]: (d.rows || []).length }
     editRows.value = (d.rows && d.rows.length ? d.rows : [emptyRow()]).map((r) => ({
@@ -296,10 +305,11 @@ async function openEdit(sheetId: string) {
       kp_id: r.kp_id ?? null,
     }))
   } catch {
+    if (requestToken !== editRequestToken) return
     showFailToast('加载失败')
     editOpen.value = false
   } finally {
-    editLoading.value = false
+    if (requestToken === editRequestToken) editLoading.value = false
   }
 }
 
@@ -316,62 +326,51 @@ function delRow(i: number) {
 // 「1.同类项 / 2.合并同类项 / …」这样一段现成文本。这里就是把那段文本一键铺成行。
 const bulkOpen = ref(false)
 const bulkText = ref('')
+const bulkApplying = ref(false)
 
-/** 「1. xxx」式编号行；行首若有「乐乐第十次课:」这类前缀，从冒号后切开 */
-const BULK_ITEM = /^\s*(\d{1,2})\s*[.、．：:）)]?\s*(\S.*?)\s*$/
-
-/** 「所属模块 | 学习内容」；不带竖线则模块留空 —— 🔴 绝不猜模块，猜错是挂在家长卷面上 */
-function splitModule(s: string): { module: string; content: string } {
-  for (const sep of ['|', '｜']) {
-    const i = s.indexOf(sep)
-    if (i > 0) {
-      const module = s.slice(0, i).trim()
-      const content = s.slice(i + 1).trim()
-      if (module && content) return { module, content }
-    }
-  }
-  return { module: '', content: s }
+function resetBulkDraft() {
+  bulkOpen.value = false
+  bulkText.value = ''
 }
 
-/**
- * 解析粘贴的文本 → 行。
- * 优先吃编号行；整段一个编号都没有时，退化成「一行一条」（手机上很多人懒得打序号）。
- */
-function parseBulk(text: string): FeedbackRow[] {
-  const numbered: { n: number; body: string }[] = []
-  const plain: string[] = []
-  for (const raw of (text || '').split(/\r?\n/)) {
-    const seg = raw.trim().replace(/^.*?[:：]\s*(?=\d)/, '')
-    if (!seg) continue
-    const m = BULK_ITEM.exec(seg)
-    if (m) numbered.push({ n: Number(m[1]), body: m[2].replace(/^[.、\s]+|[.、\s]+$/g, '') })
-    else plain.push(seg)
-  }
-  const picked = numbered.length
-    ? [...new Map(numbered.map((x) => [x.n, x])).values()]
-        .sort((a, b) => a.n - b.n)
-        .map((x) => x.body)
-    : plain
-  return picked
-    .filter(Boolean)
-    .map((s) => ({ ...splitModule(s), mastery: '', weakness: '', kp_id: null }))
-}
+const bulkPreview = computed(() => parseFeedbackBulk(bulkText.value))
 
-const bulkPreview = computed(() => parseBulk(bulkText.value))
-
-function applyBulk(mode: 'replace' | 'append') {
+async function applyBulk(mode: 'replace' | 'append') {
+  if (!editOpen.value || editLoading.value || saving.value || bulkApplying.value) return
+  const requestToken = editRequestToken
+  const sheetId = editDetail.value?.id
   const rows = bulkPreview.value
   if (!rows.length) {
     showToast('没解析出条目')
     return
   }
-  // 覆盖时若原来只有一条空行（新建单的默认态），本来就该被顶掉
-  editRows.value = mode === 'replace' ? rows : [...editRows.value.filter(
-    (r) => r.module || r.content || r.mastery || r.weakness,
-  ), ...rows]
-  bulkText.value = ''
-  bulkOpen.value = false
-  showSuccessToast(`已铺成 ${rows.length} 条，可逐条微调`)
+
+  bulkApplying.value = true
+  try {
+    if (mode === 'replace' && editRows.value.some(hasFeedbackContent)) {
+      await showConfirmDialog({
+        title: '覆盖已有内容？',
+        message: '当前反馈单已有内容，覆盖后只保留这次解析出的条目。',
+        confirmButtonText: '确认覆盖',
+        cancelButtonText: '取消',
+      })
+    }
+    // A delayed confirmation must never apply to a closed or different sheet.
+    if (
+      !editOpen.value ||
+      saving.value ||
+      requestToken !== editRequestToken ||
+      sheetId !== editDetail.value?.id
+    )
+      return
+    editRows.value = mergeBulkRows(editRows.value, rows, mode) as FeedbackRow[]
+    resetBulkDraft()
+    showSuccessToast(`已铺成 ${rows.length} 条`)
+  } catch {
+    // Cancelling replacement leaves both drafts intact.
+  } finally {
+    bulkApplying.value = false
+  }
 }
 
 async function saveEdit() {
@@ -500,7 +499,12 @@ onMounted(async () => {
 <template>
   <section>
     <van-loading v-if="loading" class="m-note" size="18">加载中…</van-loading>
-    <van-empty v-else-if="!students.length" image="search" image-size="70" description="还没有学生" />
+    <van-empty
+      v-else-if="!students.length"
+      image="search"
+      image-size="70"
+      description="还没有学生"
+    />
 
     <template v-else>
       <div class="m-chiprow">
@@ -539,7 +543,12 @@ onMounted(async () => {
           </template>
         </van-cell>
         <van-loading v-if="sheetsLoading" class="m-note" size="18">加载中…</van-loading>
-        <van-empty v-else-if="!sheets.length" image="search" image-size="70" description="该学生还没有反馈">
+        <van-empty
+          v-else-if="!sheets.length"
+          image="search"
+          image-size="70"
+          description="该学生还没有反馈"
+        >
           <van-button round type="primary" icon="plus" @click="openNew">建第一张</van-button>
         </van-empty>
         <template v-else>
@@ -592,7 +601,11 @@ onMounted(async () => {
           :model-value="newLessonTitle"
           label="课次主题"
           :placeholder="
-            lessonsLoading ? '正在读计划…' : planLessons.length ? '可选，用来带出默认内容' : '该生没有计划课次，直接建'
+            lessonsLoading
+              ? '正在读计划…'
+              : planLessons.length
+                ? '可选，用来带出默认内容'
+                : '该生没有计划课次，直接建'
           "
           readonly
           :is-link="!!planLessons.length"
@@ -601,7 +614,13 @@ onMounted(async () => {
       </van-cell-group>
       <template #acts>
         <van-button block @click="newOpen = false">取消</van-button>
-        <van-button block type="primary" :loading="creating" loading-text="创建中…" @click="submitNew">
+        <van-button
+          block
+          type="primary"
+          :loading="creating"
+          loading-text="创建中…"
+          @click="submitNew"
+        >
           建单并填内容
         </van-button>
       </template>
@@ -637,7 +656,6 @@ onMounted(async () => {
         <van-cell-group inset>
           <van-cell
             title="批量录入"
-            :label="bulkOpen ? '粘贴后点「铺成条目」' : '把「1.同类项 2.合并同类项…」整段贴进来'"
             is-link
             :arrow-direction="bulkOpen ? 'up' : 'down'"
             @click="bulkOpen = !bulkOpen"
@@ -650,27 +668,34 @@ onMounted(async () => {
               autosize
               maxlength="2000"
               show-word-limit
-              placeholder="1.同类项&#10;2.合并同类项&#10;3.整式的加减 | 去括号&#10;&#10;带竖线的话，竖线前会填进「所属模块」；没有序号就一行算一条。"
+              placeholder="1.同类项&#10;2.合并同类项&#10;3.整式的加减 | 去括号"
             />
             <van-cell v-if="bulkText.trim()" :title="`解析出 ${bulkPreview.length} 条`">
               <template #label>
                 <div v-for="(r, i) in bulkPreview" :key="i" class="m-bulkline">
                   {{ i + 1 }}.
-                  <van-tag v-if="r.module" type="primary" plain size="medium">{{ r.module }}</van-tag>
+                  <van-tag v-if="r.module" type="primary" plain size="medium">{{
+                    r.module
+                  }}</van-tag>
                   {{ r.content }}
                 </div>
               </template>
             </van-cell>
             <van-cell>
               <template #value>
-                <van-button size="small" plain :disabled="!bulkPreview.length" @click="applyBulk('append')">
+                <van-button
+                  size="small"
+                  plain
+                  :disabled="!bulkPreview.length || bulkApplying || saving"
+                  @click="applyBulk('append')"
+                >
                   追加
                 </van-button>
                 <van-button
                   size="small"
                   type="primary"
                   style="margin-left: 8px"
-                  :disabled="!bulkPreview.length"
+                  :disabled="!bulkPreview.length || bulkApplying || saving"
                   @click="applyBulk('replace')"
                 >
                   铺成条目（覆盖）
@@ -682,9 +707,30 @@ onMounted(async () => {
 
         <van-cell-group v-for="(r, i) in editRows" :key="i" inset :title="`第 ${i + 1} 条`">
           <van-field v-model="r.module" label="所属模块" placeholder="如：分数应用题" />
-          <van-field v-model="r.content" label="学习内容" placeholder="这节讲了什么" type="textarea" rows="1" autosize />
-          <van-field v-model="r.mastery" label="掌握情况" placeholder="学生表现" type="textarea" rows="1" autosize />
-          <van-field v-model="r.weakness" label="不足点" placeholder="待加强的地方" type="textarea" rows="1" autosize />
+          <van-field
+            v-model="r.content"
+            label="学习内容"
+            placeholder="这节讲了什么"
+            type="textarea"
+            rows="1"
+            autosize
+          />
+          <van-field
+            v-model="r.mastery"
+            label="掌握情况"
+            placeholder="学生表现"
+            type="textarea"
+            rows="1"
+            autosize
+          />
+          <van-field
+            v-model="r.weakness"
+            label="不足点"
+            placeholder="待加强的地方"
+            type="textarea"
+            rows="1"
+            autosize
+          />
           <van-cell v-if="editRows.length > 1">
             <template #value>
               <van-button size="mini" type="danger" plain @click="delRow(i)">删除这条</van-button>
@@ -728,7 +774,9 @@ onMounted(async () => {
       <template #acts>
         <van-button block @click="expOpen = false">关闭</van-button>
         <van-button block :disabled="!expUrl" @click="downloadExport">下载图片</van-button>
-        <van-button block type="primary" :loading="expLoading" @click="sendToBot">发到飞书</van-button>
+        <van-button block type="primary" :loading="expLoading" @click="sendToBot"
+          >发到飞书</van-button
+        >
       </template>
     </MSheet>
   </section>
