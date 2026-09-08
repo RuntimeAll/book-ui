@@ -19,6 +19,7 @@ import {
 import { useQuestionBasket } from '@/composables/useQuestionBasket'
 import { useUserStore } from '@/store/user'
 import { getCurrentUser } from '@/api/user'
+import { createClientUuid } from '@/utils/clientUuid'
 
 export interface WorkbenchEditRow extends PaperSourceQuestion {
   basketNamespace?: string
@@ -232,7 +233,7 @@ export function usePaperWorkbench() {
       if (current !== generation || !user.userInfo) return
       const id = paperId.value
       activeStorageKey = `book-ui:paper-draft:v2:${user.userInfo.id}:${basket.currentNamespace.value}:${id ?? 'new'}`
-      requestId.value = crypto.randomUUID()
+      requestId.value = createClientUuid()
       const restored = restoreDraft()
       if (id) {
         const detail = await getExamPaperDetail(id)
@@ -394,7 +395,7 @@ export function usePaperWorkbench() {
       if (current !== generation) return
       if (!savedPaperId.value && e instanceof PaperCreateRejectedError) {
         pendingCreate.value = undefined
-        requestId.value = crypto.randomUUID()
+        requestId.value = createClientUuid()
         persistDraft()
       }
       const message = e instanceof Error ? e.message : '操作失败，请稍后重试'
