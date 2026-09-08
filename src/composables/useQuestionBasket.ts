@@ -21,6 +21,18 @@ import {
 } from '@/api/questionBasket'
 
 const SYNC_KEY = 'book-ui:question-basket:v2:changed'
+let changeNonce = 0
+
+/**
+ * The sync nonce is only a cache-invalidation marker, not a security token.
+ * Production is currently served over HTTP, where randomUUID may be unavailable.
+ */
+function createChangeNonce(): string {
+  const randomUUID = globalThis.crypto?.randomUUID
+  if (typeof randomUUID === 'function') return randomUUID.call(globalThis.crypto)
+  changeNonce += 1
+  return `${Date.now()}-${changeNonce}`
+}
 
 const useQuestionBasketStore = defineStore('question-basket-v2', () => {
   const user = useUserStore()
@@ -52,7 +64,7 @@ const useQuestionBasketStore = defineStore('question-basket-v2', () => {
   }
 
   function notifyChanged(ctx: ReturnType<typeof context>) {
-    const value = { userId: ctx.userId, namespace: ctx.namespace, nonce: crypto.randomUUID() }
+    const value = { userId: ctx.userId, namespace: ctx.namespace, nonce: createChangeNonce() }
     channel?.postMessage(value)
     try {
       localStorage.setItem(SYNC_KEY, JSON.stringify(value))
@@ -251,12 +263,15 @@ const useQuestionBasketStore = defineStore('question-basket-v2', () => {
     if (!entries.length) return
     if (entries.length > BASKET_MAX_SIZE || entries.some((entry) => !entry.basketEntryId))
       throw new Error('试题栏记录版本缺失，未清理已提交题目')
-    await mutate(entries.map((entry) => entry.entryKey), async (ns, assertCurrent) => {
-      for (let offset = 0; offset < entries.length; offset += BASKET_BATCH_SIZE) {
-        assertCurrent()
-        await removeBasketEntryVersions(ns, entries.slice(offset, offset + BASKET_BATCH_SIZE))
-      }
-    })
+    await mutate(
+      entries.map((entry) => entry.entryKey),
+      async (ns, assertCurrent) => {
+        for (let offset = 0; offset < entries.length; offset += BASKET_BATCH_SIZE) {
+          assertCurrent()
+          await removeBasketEntryVersions(ns, entries.slice(offset, offset + BASKET_BATCH_SIZE))
+        }
+      },
+    )
   }
 
   async function clear(): Promise<void> {
